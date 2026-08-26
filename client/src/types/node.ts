@@ -1,0 +1,2 @@
+export type NodeStatus = 'REGISTERING' | 'ONLINE' | 'AVAILABLE' | 'BUSY' | 'DEGRADED' | 'OFFLINE' | 'SUSPENDED';
+export interface Node { id: string; owner_id: string; name: string; status: NodeStatus; region: string; last_heartbeat: string; reputation_score: number; created_at: string; hardware?: any; pricing?: any; }
