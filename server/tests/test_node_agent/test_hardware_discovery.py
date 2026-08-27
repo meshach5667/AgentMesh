@@ -1,4 +1,4 @@
-from server.node_agent.hardware.discovery import discover_cpu_ram_storage, discover_all
+from node_agent.hardware.discovery import discover_cpu_ram_storage, discover_all
 
 def test_discover_cpu_ram_storage():
     hw = discover_cpu_ram_storage()

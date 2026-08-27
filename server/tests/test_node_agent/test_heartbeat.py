@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
-from server.node_agent.heartbeat.service import HeartbeatService
-from server.node_agent.metrics.collector import MetricsCollector
+from node_agent.heartbeat.service import HeartbeatService
+from node_agent.metrics.collector import MetricsCollector
 
 @pytest.mark.asyncio
 async def test_heartbeat_service():
@@ -12,4 +12,3 @@ async def test_heartbeat_service():
         mock_post.return_value.raise_for_status = AsyncMock()
         await service.start()
         await service.stop()
-        # Ensure it doesn't crash

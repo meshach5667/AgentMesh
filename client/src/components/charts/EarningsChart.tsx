@@ -2,7 +2,13 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-export function EarningsChart({ data }: { data: any[] }) {
+export interface EarningsDataPoint {
+  date: string;
+  amount: number;
+  [key: string]: unknown;
+}
+
+export function EarningsChart({ data }: { data: EarningsDataPoint[] }) {
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer>

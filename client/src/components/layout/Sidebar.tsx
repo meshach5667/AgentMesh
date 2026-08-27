@@ -7,7 +7,7 @@ import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
 import { 
   LayoutDashboard, Server, Activity, DollarSign, 
-  Box, CreditCard, Network, Settings
+  Box, CreditCard, Network
 } from 'lucide-react';
 
 export function Sidebar() {

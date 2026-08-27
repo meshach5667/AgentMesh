@@ -2,7 +2,13 @@
 import React from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-export function UsageChart({ data }: { data: any[] }) {
+export interface UsageDataPoint {
+  time: string;
+  usage: number;
+  [key: string]: unknown;
+}
+
+export function UsageChart({ data }: { data: UsageDataPoint[] }) {
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer>

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
-from server.node_agent.deployment.manager import DeploymentManager
-from server.node_agent.runtime.base import ModelRuntime, DeploymentResult
+from node_agent.deployment.manager import DeploymentManager
+from node_agent.runtime.base import ModelRuntime, DeploymentResult
 
 class DummyRuntime(ModelRuntime):
     async def deploy(self, model_id, model_source, config):

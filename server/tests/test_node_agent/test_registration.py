@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, mock_open
-from server.node_agent.registration import is_registered
+from node_agent.registration import is_registered
 
 def test_is_registered_false():
     with patch("os.path.exists", return_value=False):

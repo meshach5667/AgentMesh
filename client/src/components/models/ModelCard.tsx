@@ -18,7 +18,7 @@ export function ModelCard({ model }: { model: Model }) {
         </div>
       </CardContent>
       <CardFooter>
-        <Link href={\`/customer/deployments/new?model=\${model.id}\`} className="w-full">
+        <Link href={`/customer/deployments/new?model=${model.id}`} className="w-full">
           <Button className="w-full">Deploy</Button>
         </Link>
       </CardFooter>

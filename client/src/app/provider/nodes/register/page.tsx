@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../../../../components
 import { Button } from '../../../../components/ui/Button';
 
 export default function RegisterNodePage() {
-  const command = \`python -m node_agent register --control-plane-url https://api.agentmesh.network --owner-token abc123xyz\`;
+  const command = `python -m node_agent register --control-plane-url https://api.agentmesh.network --owner-token abc123xyz`;
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Register New Node</h1>

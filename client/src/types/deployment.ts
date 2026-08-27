@@ -1,7 +1,17 @@
 import { Model } from './model';
 import { Node } from './node';
 
-export type DeploymentStatus = 'REQUESTED' | 'VALIDATING' | 'SCHEDULING' | 'ASSIGNED' | 'DEPLOYING' | 'HEALTH_CHECK' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'FAILED';
+export type DeploymentStatus =
+  | 'REQUESTED'
+  | 'VALIDATING'
+  | 'SCHEDULING'
+  | 'ASSIGNED'
+  | 'DEPLOYING'
+  | 'HEALTH_CHECK'
+  | 'RUNNING'
+  | 'STOPPING'
+  | 'STOPPED'
+  | 'FAILED';
 
 export interface Deployment {
   id: string;
@@ -10,11 +20,11 @@ export interface Deployment {
   node_id: string;
   status: DeploymentStatus;
   endpoint: string | null;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
-  model?: Model;
-  node?: Node;
+  model?: Partial<Model>;
+  node?: Partial<Node>;
   total_cost?: number;
 }
