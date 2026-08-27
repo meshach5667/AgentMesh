@@ -1,4 +1,4 @@
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../../../components/ui/Table';
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../../../components/ui/table';
 
 export default function OperatorModels() {
   const dummyModels = [{ id: 'm1', name: 'Llama 3', is_approved: true }];

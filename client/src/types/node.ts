@@ -41,3 +41,10 @@ export interface Node {
   hardware?: NodeHardware;
   pricing?: NodePricing;
 }
+export interface NodeMetrics {
+  gpu_utilization_percent: number;
+}
+
+export interface ExtendedNode extends Node {
+  metrics?: NodeMetrics;
+}

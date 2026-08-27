@@ -1,6 +1,6 @@
 import React from 'react';
 import type { NodeHardware } from '../../types';
-import { Card, CardContent } from '../ui/Card';
+import { Card, CardContent } from '../ui/card';
 
 export function HardwareInfo({ hardware }: { hardware?: NodeHardware }) {
   if (!hardware) return <p>No hardware info available</p>;

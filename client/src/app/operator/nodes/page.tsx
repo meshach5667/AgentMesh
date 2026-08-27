@@ -1,4 +1,4 @@
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../../../components/ui/Table';
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../../../components/ui/table';
 import { NodeStatusBadge } from '../../../components/nodes/NodeStatusBadge';
 import type { NodeStatus } from '../../../types';
 

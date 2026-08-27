@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
+import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { NodeStatusBadge } from '../nodes/NodeStatusBadge';
 import type { Deployment } from '../../types';
 import Link from 'next/link';

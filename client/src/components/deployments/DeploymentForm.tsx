@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { Button } from '../ui/Button';
+import { Button } from '../ui/button';
 
 export function DeploymentForm({ modelId, onSubmit }: { modelId: string, onSubmit: () => void }) {
   return (
