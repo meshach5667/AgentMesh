@@ -1,6 +1,6 @@
 import React from 'react';
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../ui/Table';
-import { Badge } from '../ui/Badge';
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../ui/table';
+import { Badge } from '../ui/badge';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import type { Transaction } from '../../types';
 
