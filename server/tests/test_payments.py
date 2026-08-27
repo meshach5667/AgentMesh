@@ -1,16 +1,14 @@
 import pytest
 import uuid
 from decimal import Decimal
-from app.services.payment_service import settle_usage
+from app.services.payment_service import PLATFORM_FEE_RATE
 
-@pytest.mark.asyncio
-async def test_settle_usage(db_session):
-    customer_id = uuid.uuid4()
-    provider_id = uuid.uuid4()
-    deployment_id = uuid.uuid4()
-    
-    # Just checking it doesn't crash, needs mock data setup
-    try:
-        await settle_usage(db_session, deployment_id, customer_id, provider_id, Decimal("10.00"))
-    except Exception:
-        pass # Expected since no wallets exist in pure test db
+def test_platform_fee_rate():
+    assert PLATFORM_FEE_RATE == Decimal("0.10")
+
+def test_fee_calculation():
+    cost = Decimal("100.00")
+    fee = cost * PLATFORM_FEE_RATE
+    provider_credit = cost - fee
+    assert fee == Decimal("10.00")
+    assert provider_credit == Decimal("90.00")

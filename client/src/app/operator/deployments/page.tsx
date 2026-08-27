@@ -1,13 +1,13 @@
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../../../components/ui/Table';
 import { NodeStatusBadge } from '../../../components/nodes/NodeStatusBadge';
-import type { NodeStatus } from '../../../types';
+import type { DeploymentStatus } from '../../../types';
 
 interface DummyDeployment {
   id: string;
   model_id: string;
   customer_id: string;
   node_id: string;
-  status: NodeStatus;
+  status: DeploymentStatus;
 }
 
 export default function OperatorDeployments() {

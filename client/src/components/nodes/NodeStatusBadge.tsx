@@ -1,8 +1,12 @@
 import React from 'react';
 import { Badge, type BadgeProps } from '../ui/Badge';
-import type { NodeStatus } from '../../types';
+import type { NodeStatus, DeploymentStatus } from '../../types';
 
-export function NodeStatusBadge({ status }: { status: NodeStatus }) {
+export function NodeStatusBadge({
+  status,
+}: {
+  status: NodeStatus | DeploymentStatus | string;
+}) {
   const variantMap: Record<string, BadgeProps['variant']> = {
     ONLINE: 'success',
     AVAILABLE: 'success',
