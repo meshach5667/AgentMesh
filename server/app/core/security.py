@@ -1,3 +1,4 @@
+from typing import Any
 from datetime import datetime, timedelta
 
 from jose import jwt
@@ -17,7 +18,7 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 
-def create_access_token(subject: str | any, expires_delta: timedelta = None) -> str:
+def create_access_token(subject: str | Any, expires_delta: timedelta = None) -> str:
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
