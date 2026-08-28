@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh"
@@ -12,9 +12,10 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: str = "dev"
     LOG_LEVEL: str = "INFO"
-    CORS_ORIGINS: List[str] = ["*"]
-    
+    CORS_ORIGINS: list[str] = ["*"]
+
     class Config:
         env_file = ".env"
+
 
 settings = Settings()

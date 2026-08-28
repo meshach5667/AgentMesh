@@ -1,5 +1,7 @@
-import structlog
 import logging
+
+import structlog
+
 
 def setup_logging():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -10,7 +12,7 @@ def setup_logging():
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            structlog.dev.ConsoleRenderer()
+            structlog.dev.ConsoleRenderer(),
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),

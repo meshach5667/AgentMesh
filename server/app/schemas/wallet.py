@@ -1,8 +1,8 @@
-from pydantic import BaseModel, Field
-from decimal import Decimal
-from typing import Optional
 import uuid
-from datetime import datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, Field
+
 
 class WalletResponse(BaseModel):
     id: uuid.UUID
@@ -11,8 +11,10 @@ class WalletResponse(BaseModel):
     currency: str
     model_config = {"from_attributes": True}
 
+
 class DepositRequest(BaseModel):
     amount: Decimal = Field(..., gt=0, description="Amount to deposit")
+
 
 class DepositResponse(BaseModel):
     wallet: WalletResponse

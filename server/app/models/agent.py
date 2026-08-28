@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
+
 
 class AgentTask(Base):
     __tablename__ = "agent_tasks"
@@ -14,6 +17,7 @@ class AgentTask(Base):
     error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+
 
 class AgentAction(Base):
     __tablename__ = "agent_actions"

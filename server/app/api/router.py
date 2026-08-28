@@ -1,5 +1,6 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, nodes, models, deployments, marketplace, wallets, transactions, usage, earnings, agent
+
+from app.api.v1 import agent, auth, deployments, earnings, marketplace, models, nodes, transactions, usage, wallets
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])

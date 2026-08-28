@@ -1,24 +1,29 @@
-import uuid
 import enum
-from sqlalchemy import Column, String, Numeric, DateTime, Enum, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Numeric, String
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
 
+
 class TransactionType(str, enum.Enum):
-    DEPOSIT = 'DEPOSIT'
-    COMPUTE_CHARGE = 'COMPUTE_CHARGE'
-    PROVIDER_CREDIT = 'PROVIDER_CREDIT'
-    PLATFORM_FEE = 'PLATFORM_FEE'
-    REFUND = 'REFUND'
-    PAYOUT = 'PAYOUT'
+    DEPOSIT = "DEPOSIT"
+    COMPUTE_CHARGE = "COMPUTE_CHARGE"
+    PROVIDER_CREDIT = "PROVIDER_CREDIT"
+    PLATFORM_FEE = "PLATFORM_FEE"
+    REFUND = "REFUND"
+    PAYOUT = "PAYOUT"
+
 
 class TransactionStatus(str, enum.Enum):
-    PENDING = 'PENDING'
-    AUTHORIZED = 'AUTHORIZED'
-    SETTLED = 'SETTLED'
-    REFUNDED = 'REFUNDED'
-    FAILED = 'FAILED'
+    PENDING = "PENDING"
+    AUTHORIZED = "AUTHORIZED"
+    SETTLED = "SETTLED"
+    REFUNDED = "REFUNDED"
+    FAILED = "FAILED"
+
 
 class Transaction(Base):
     __tablename__ = "transactions"

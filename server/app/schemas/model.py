@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
 import uuid
+from typing import Any
+
+from pydantic import BaseModel
+
 
 class ModelOut(BaseModel):
     id: uuid.UUID
@@ -13,6 +15,7 @@ class ModelOut(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ModelCreate(BaseModel):
     name: str
     version: str
@@ -22,5 +25,5 @@ class ModelCreate(BaseModel):
     minimum_ram: int
     minimum_cpu: int
     storage_requirement: int
-    supported_gpu_families: Dict[str, Any]
-    deployment_config: Dict[str, Any]
+    supported_gpu_families: dict[str, Any]
+    deployment_config: dict[str, Any]

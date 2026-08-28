@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, JSON
-from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, String
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
+
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
@@ -14,6 +17,7 @@ class AuditLog(Base):
     details = Column(JSON)
     ip_address = Column(String(50))
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Event(Base):
     __tablename__ = "events"

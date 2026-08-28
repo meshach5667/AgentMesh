@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+
 from ..runtime.base import ModelRuntime
+
 
 @dataclass
 class DeploymentInfo:
@@ -12,16 +13,19 @@ class DeploymentInfo:
     endpoint_url: str
     status: str
 
+
 class DeploymentManager:
     def __init__(self, runtime: ModelRuntime):
         self.runtime = runtime
-        self._deployments: Dict[str, DeploymentInfo] = {}
+        self._deployments: dict[str, DeploymentInfo] = {}
 
-    async def deploy(self, deployment_id: str, model_source: str, model_name: str, runtime_name: str, config: dict) -> DeploymentInfo:
+    async def deploy(
+        self, deployment_id: str, model_source: str, model_name: str, runtime_name: str, config: dict
+    ) -> DeploymentInfo:
         result = await self.runtime.deploy(deployment_id, model_source, config)
         if not result.success:
             raise Exception(f"Deployment failed: {result.error}")
-            
+
         info = DeploymentInfo(
             deployment_id=deployment_id,
             model_source=model_source,
@@ -29,7 +33,7 @@ class DeploymentManager:
             runtime_name=runtime_name,
             container_id=result.container_id,
             endpoint_url=result.endpoint_url,
-            status="running"
+            status="running",
         )
         self._deployments[deployment_id] = info
         return info
@@ -53,8 +57,8 @@ class DeploymentManager:
             info.status = "running"
         return success
 
-    async def get_status(self, deployment_id: str) -> Optional[DeploymentInfo]:
+    async def get_status(self, deployment_id: str) -> DeploymentInfo | None:
         return self._deployments.get(deployment_id)
 
-    def list_deployments(self) -> List[DeploymentInfo]:
+    def list_deployments(self) -> list[DeploymentInfo]:
         return list(self._deployments.values())

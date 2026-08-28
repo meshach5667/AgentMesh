@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, Float, Numeric, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Numeric
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
+
 
 class UsageRecord(Base):
     __tablename__ = "usage_records"

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
+
 from ..hardware.discovery import discover_all
 from ..metrics.collector import MetricsCollector
 
@@ -12,11 +13,13 @@ deployment_manager = None
 metrics_collector = MetricsCollector()
 settings = None
 
+
 async def verify_api_key(api_key: str = Security(api_key_header)):
     token = api_key.replace("Bearer ", "") if api_key.startswith("Bearer ") else api_key
     if not settings or token != settings.NODE_API_KEY:
         raise HTTPException(status_code=403, detail="Invalid API Key")
     return token
+
 
 class DeployRequest(BaseModel):
     deployment_id: str
@@ -26,21 +29,22 @@ class DeployRequest(BaseModel):
     runtime: str
     config: dict = {}
 
+
 @router.get("/status")
 async def get_status(api_key: str = Depends(verify_api_key)):
     deployments = deployment_manager.list_deployments() if deployment_manager else []
-    return {
-        "status": "online",
-        "active_deployments": len(deployments)
-    }
+    return {"status": "online", "active_deployments": len(deployments)}
+
 
 @router.get("/hardware")
 async def get_hardware(api_key: str = Depends(verify_api_key)):
     return discover_all()
 
+
 @router.get("/metrics")
 async def get_metrics(api_key: str = Depends(verify_api_key)):
     return metrics_collector.collect_metrics()
+
 
 @router.post("/deploy")
 async def deploy_model(req: DeployRequest, api_key: str = Depends(verify_api_key)):
@@ -52,11 +56,12 @@ async def deploy_model(req: DeployRequest, api_key: str = Depends(verify_api_key
             model_source=req.model_source,
             model_name=req.model_name,
             runtime_name=req.runtime,
-            config=req.config
+            config=req.config,
         )
         return info
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/deployments/{id}")
 async def get_deployment_status(id: str, api_key: str = Depends(verify_api_key)):
@@ -67,6 +72,7 @@ async def get_deployment_status(id: str, api_key: str = Depends(verify_api_key))
         raise HTTPException(status_code=404, detail="Not found")
     return info
 
+
 @router.post("/deployments/{id}/restart")
 async def restart_deployment(id: str, api_key: str = Depends(verify_api_key)):
     if not deployment_manager:
@@ -75,6 +81,7 @@ async def restart_deployment(id: str, api_key: str = Depends(verify_api_key)):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to restart")
     return {"status": "restarted"}
+
 
 @router.post("/deployments/{id}/stop")
 async def stop_deployment(id: str, api_key: str = Depends(verify_api_key)):
