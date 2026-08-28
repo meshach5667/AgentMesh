@@ -1,5 +1,5 @@
 import React from 'react';
-import { Badge, type BadgeProps } from '../ui/Badge';
+import { Badge } from '../ui/badge';
 import type { NodeStatus, DeploymentStatus } from '../../types';
 
 export function NodeStatusBadge({
@@ -7,18 +7,18 @@ export function NodeStatusBadge({
 }: {
   status: NodeStatus | DeploymentStatus | string;
 }) {
-  const variantMap: Record<string, BadgeProps['variant']> = {
-    ONLINE: 'success',
-    AVAILABLE: 'success',
-    RUNNING: 'success',
-    BUSY: 'warning',
-    DEPLOYING: 'warning',
-    OFFLINE: 'error',
-    STOPPED: 'error',
-    REGISTERING: 'info',
-    SCHEDULING: 'info',
-    DEGRADED: 'warning',
-    FAILED: 'error',
+  const variantMap: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+    ONLINE: 'default',
+    AVAILABLE: 'default',
+    RUNNING: 'default',
+    BUSY: 'secondary',
+    DEPLOYING: 'secondary',
+    OFFLINE: 'destructive',
+    STOPPED: 'destructive',
+    REGISTERING: 'secondary',
+    SCHEDULING: 'secondary',
+    DEGRADED: 'destructive',
+    FAILED: 'destructive',
   };
   return <Badge variant={variantMap[status] || 'default'}>{status}</Badge>;
 }

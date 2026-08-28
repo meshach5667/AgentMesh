@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 import { Copy } from 'lucide-react';
-import { Button } from '../ui/Button';
+import { Button } from '../ui/button';
 
 export function InferenceEndpoint({ url }: { url: string }) {
   const copy = () => navigator.clipboard.writeText(url);

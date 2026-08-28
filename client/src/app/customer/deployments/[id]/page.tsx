@@ -3,9 +3,9 @@
 import { useParams } from 'next/navigation';
 import { useDeployment, useStopDeployment } from '@/hooks/useDeployments';
 import { InferenceEndpoint } from '@/components/deployments/InferenceEndpoint';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/Spinner';
 import { UsageChart } from '@/components/charts/UsageChart';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -50,7 +50,7 @@ export default function DeploymentDetailPage() {
               <Button variant="secondary" onClick={() => toast.success('Restart requested')}>
                 <RotateCcw className="w-4 h-4 mr-2" />Restart
               </Button>
-              <Button variant="danger" onClick={handleStop} disabled={stopMutation.isPending}>
+              <Button variant="destructive" onClick={handleStop} disabled={stopMutation.isPending}>
                 <Square className="w-4 h-4 mr-2" />Stop
               </Button>
             </>

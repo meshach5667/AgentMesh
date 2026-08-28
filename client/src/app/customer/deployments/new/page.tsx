@@ -1,7 +1,7 @@
 'use client';
 import { DeploymentForm } from '../../../../components/deployments/DeploymentForm';
 import { useSearchParams } from 'next/navigation';
-import { Card, CardHeader, CardTitle, CardContent } from '../../../../components/ui/Card';
+import { Card, CardHeader, CardTitle, CardContent } from '../../../../components/ui/card';
 
 export default function NewDeployment() {
   const searchParams = useSearchParams();

@@ -1,6 +1,6 @@
 'use client';
-import { Card, CardHeader, CardTitle, CardContent } from '../../../../components/ui/Card';
-import { Button } from '../../../../components/ui/Button';
+import { Card, CardHeader, CardTitle, CardContent } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
 
 export default function RegisterNodePage() {
   const command = `python -m node_agent register --control-plane-url https://api.agentmesh.network --owner-token abc123xyz`;

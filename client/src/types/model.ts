@@ -10,3 +10,7 @@ export interface Model {
   storage_requirement: number;
   is_approved: boolean;
 }
+
+export interface ExtendedModel extends Model {
+  supported_gpu_families?: string[];
+}
