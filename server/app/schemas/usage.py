@@ -1,8 +1,9 @@
-from pydantic import BaseModel
-from decimal import Decimal
-from typing import Optional
 import uuid
 from datetime import datetime
+from decimal import Decimal
+
+from pydantic import BaseModel
+
 
 class UsageRecordResponse(BaseModel):
     id: uuid.UUID
@@ -18,6 +19,7 @@ class UsageRecordResponse(BaseModel):
     created_at: datetime
     model_config = {"from_attributes": True}
 
+
 class UsageCreateRequest(BaseModel):
     deployment_id: uuid.UUID
     gpu_seconds: float = 0
@@ -26,6 +28,7 @@ class UsageCreateRequest(BaseModel):
     bandwidth_usage: float = 0
     period_start: datetime
     period_end: datetime
+
 
 class UsageSummaryResponse(BaseModel):
     total_gpu_hours: float

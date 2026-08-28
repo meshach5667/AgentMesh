@@ -1,12 +1,15 @@
-from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
+
 
 class NodeCreate(BaseModel):
     name: str
     public_key: str
     region: str
+
 
 class NodeOut(BaseModel):
     id: uuid.UUID
@@ -16,20 +19,22 @@ class NodeOut(BaseModel):
     region: str
     reputation_score: float
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
+
 
 class NodeHardwareUpdate(BaseModel):
     cpu_model: str
     cpu_cores: int
     ram_gb: int
     storage_gb: int
-    gpu_model: Optional[str] = None
+    gpu_model: str | None = None
     gpu_count: int = 0
-    gpu_vram_gb: Optional[int] = None
+    gpu_vram_gb: int | None = None
     os_info: str
-    capabilities: Dict[str, Any]
+    capabilities: dict[str, Any]
+
 
 class NodePricingUpdate(BaseModel):
     gpu_hour_price: float

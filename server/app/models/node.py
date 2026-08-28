@@ -1,19 +1,23 @@
-import uuid
 import enum
-from sqlalchemy import Column, String, Text, Numeric, Integer, DateTime, Enum, ForeignKey, JSON
+import uuid
+from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from datetime import datetime
+
 from app.core.database import Base
 
+
 class NodeStatus(str, enum.Enum):
-    REGISTERING = 'REGISTERING'
-    ONLINE = 'ONLINE'
-    AVAILABLE = 'AVAILABLE'
-    BUSY = 'BUSY'
-    DEGRADED = 'DEGRADED'
-    OFFLINE = 'OFFLINE'
-    SUSPENDED = 'SUSPENDED'
+    REGISTERING = "REGISTERING"
+    ONLINE = "ONLINE"
+    AVAILABLE = "AVAILABLE"
+    BUSY = "BUSY"
+    DEGRADED = "DEGRADED"
+    OFFLINE = "OFFLINE"
+    SUSPENDED = "SUSPENDED"
+
 
 class Node(Base):
     __tablename__ = "nodes"
@@ -28,10 +32,11 @@ class Node(Base):
     reputation_score = Column(Numeric(5, 2), default=100.00)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     owner = relationship("Provider", back_populates="nodes")
     hardware = relationship("NodeHardware", back_populates="node", uselist=False)
     pricing = relationship("NodePricing", back_populates="node", uselist=False)
+
 
 class NodeHardware(Base):
     __tablename__ = "node_hardware"
@@ -46,12 +51,14 @@ class NodeHardware(Base):
     gpu_vram_gb = Column(Integer, nullable=True)
     os_info = Column(String(255))
     capabilities = Column(JSON)
-    
+
     node = relationship("Node", back_populates="hardware")
 
+
 class PricingMode(str, enum.Enum):
-    PROVIDER_FIXED = 'PROVIDER_FIXED'
-    AGENTMESH_RECOMMENDED = 'AGENTMESH_RECOMMENDED'
+    PROVIDER_FIXED = "PROVIDER_FIXED"
+    AGENTMESH_RECOMMENDED = "AGENTMESH_RECOMMENDED"
+
 
 class NodePricing(Base):
     __tablename__ = "node_pricing"
@@ -63,6 +70,6 @@ class NodePricing(Base):
     storage_gb_month_price = Column(Numeric(10, 4), default=0)
     bandwidth_gb_price = Column(Numeric(10, 4), default=0)
     pricing_mode = Column(Enum(PricingMode), default=PricingMode.PROVIDER_FIXED)
-    currency = Column(String(10), default='USD')
-    
+    currency = Column(String(10), default="USD")
+
     node = relationship("Node", back_populates="pricing")

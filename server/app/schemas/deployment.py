@@ -1,21 +1,25 @@
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
 import uuid
 from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
+
 from app.models.deployment import DeploymentStatus
+
 
 class DeploymentCreate(BaseModel):
     model_id: uuid.UUID
-    config: Dict[str, Any]
+    config: dict[str, Any]
+
 
 class DeploymentOut(BaseModel):
     id: uuid.UUID
     customer_id: uuid.UUID
     model_id: uuid.UUID
-    node_id: Optional[uuid.UUID]
+    node_id: uuid.UUID | None
     status: DeploymentStatus
-    endpoint: Optional[str]
+    endpoint: str | None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True

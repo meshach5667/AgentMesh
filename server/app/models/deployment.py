@@ -1,21 +1,25 @@
-import uuid
 import enum
-from sqlalchemy import Column, String, DateTime, Enum, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, Enum, ForeignKey, String
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
 
+
 class DeploymentStatus(str, enum.Enum):
-    REQUESTED = 'REQUESTED'
-    VALIDATING = 'VALIDATING'
-    SCHEDULING = 'SCHEDULING'
-    ASSIGNED = 'ASSIGNED'
-    DEPLOYING = 'DEPLOYING'
-    HEALTH_CHECK = 'HEALTH_CHECK'
-    RUNNING = 'RUNNING'
-    STOPPING = 'STOPPING'
-    STOPPED = 'STOPPED'
-    FAILED = 'FAILED'
+    REQUESTED = "REQUESTED"
+    VALIDATING = "VALIDATING"
+    SCHEDULING = "SCHEDULING"
+    ASSIGNED = "ASSIGNED"
+    DEPLOYING = "DEPLOYING"
+    HEALTH_CHECK = "HEALTH_CHECK"
+    RUNNING = "RUNNING"
+    STOPPING = "STOPPING"
+    STOPPED = "STOPPED"
+    FAILED = "FAILED"
+
 
 class Deployment(Base):
     __tablename__ = "deployments"

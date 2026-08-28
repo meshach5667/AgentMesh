@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON
-from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
+
 
 class Model(Base):
     __tablename__ = "models"

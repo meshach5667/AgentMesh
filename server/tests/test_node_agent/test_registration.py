@@ -1,10 +1,12 @@
-import pytest
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open, patch
+
 from node_agent.registration import is_registered
+
 
 def test_is_registered_false():
     with patch("os.path.exists", return_value=False):
         assert not is_registered()
+
 
 def test_is_registered_true():
     m = mock_open(read_data='{"node_id": "1", "api_key": "2"}')

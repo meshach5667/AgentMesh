@@ -76,7 +76,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: test-secret-key
-        run: cd server && pytest tests/ -v --cov=app --cov-report=xml
+        run: cd server && pytest tests/ -v --cov=app --cov-report=xml --cov-fail-under=60
         
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

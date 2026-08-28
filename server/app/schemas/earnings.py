@@ -1,8 +1,7 @@
-from pydantic import BaseModel
 from decimal import Decimal
-from typing import Optional
-import uuid
-from datetime import datetime
+
+from pydantic import BaseModel
+
 
 class EarningsSummary(BaseModel):
     total_earnings: Decimal
@@ -11,10 +10,12 @@ class EarningsSummary(BaseModel):
     total_deployments: int
     active_deployments: int
 
+
 class EarningsHistoryItem(BaseModel):
     date: str
     earnings: Decimal
     deployment_count: int
+
 
 class EarningsHistoryResponse(BaseModel):
     history: list[EarningsHistoryItem]

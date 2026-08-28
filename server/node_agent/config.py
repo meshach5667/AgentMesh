@@ -1,5 +1,7 @@
 import os
+
 from pydantic_settings import BaseSettings
+
 
 class NodeSettings(BaseSettings):
     CONTROL_PLANE_URL: str = "http://localhost:8000"
@@ -12,10 +14,11 @@ class NodeSettings(BaseSettings):
     NODE_API_KEY: str = ""
     NODE_ID: str = ""
     LOG_LEVEL: str = "INFO"
-    DOCKER_SOCKET: str = "npipe://./pipe/docker_engine" if os.name == 'nt' else "unix:///var/run/docker.sock"
+    DOCKER_SOCKET: str = "npipe://./pipe/docker_engine" if os.name == "nt" else "unix:///var/run/docker.sock"
     DEFAULT_RUNTIME: str = "vllm"
 
     class Config:
         env_file = ".env"
+
 
 settings = NodeSettings()

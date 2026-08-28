@@ -1,9 +1,10 @@
-from pydantic import BaseModel
-from decimal import Decimal
-from typing import Optional
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
+
+from pydantic import BaseModel
+
 
 class TransactionTypeEnum(str, Enum):
     DEPOSIT = "DEPOSIT"
@@ -13,6 +14,7 @@ class TransactionTypeEnum(str, Enum):
     REFUND = "REFUND"
     PAYOUT = "PAYOUT"
 
+
 class TransactionStatusEnum(str, Enum):
     PENDING = "PENDING"
     AUTHORIZED = "AUTHORIZED"
@@ -20,18 +22,20 @@ class TransactionStatusEnum(str, Enum):
     REFUNDED = "REFUNDED"
     FAILED = "FAILED"
 
+
 class TransactionResponse(BaseModel):
     id: uuid.UUID
-    from_wallet: Optional[uuid.UUID] = None
-    to_wallet: Optional[uuid.UUID] = None
+    from_wallet: uuid.UUID | None = None
+    to_wallet: uuid.UUID | None = None
     amount: Decimal
     type: TransactionTypeEnum
     status: TransactionStatusEnum
-    deployment_id: Optional[uuid.UUID] = None
-    reference: Optional[str] = None
-    description: Optional[str] = None
+    deployment_id: uuid.UUID | None = None
+    reference: str | None = None
+    description: str | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
+
 
 class TransactionListResponse(BaseModel):
     transactions: list[TransactionResponse]

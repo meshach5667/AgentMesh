@@ -1,18 +1,21 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from app.api.router import api_router
-from app.core.config import settings
-from app.core.logging import setup_logging
-from app.core.exceptions import AgentMeshException, agentmesh_exception_handler
+from app.background.deployment_monitor import deployment_monitor_loop
 from app.background.heartbeat_monitor import heartbeat_monitor_loop
 from app.background.usage_collector import usage_collector_loop
-from app.background.deployment_monitor import deployment_monitor_loop
-import logging
+from app.core.config import settings
+from app.core.exceptions import AgentMeshException, agentmesh_exception_handler
+from app.core.logging import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,6 +38,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+
 app = FastAPI(
     title="AgentMesh API",
     description="Decentralized AI Compute Marketplace - Control Plane API",
@@ -55,6 +59,7 @@ app.add_middleware(
 
 app.add_exception_handler(AgentMeshException, agentmesh_exception_handler)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
 
 @app.get("/health", tags=["Health"])
 async def health_check():
