@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { Network } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ThemeToggle } from '@/components/ui/ThemeToggle';
 
 export function Header() {
   return (
-    <header className="fixed top-0 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-50">
+    <header className="fixed top-0 w-full border-b border-border/40 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60 z-50">
       <div className="container flex h-16 items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2">
           <Network className="h-6 w-6 text-blue-500" />
@@ -15,12 +16,13 @@ export function Header() {
           <Link href="#network" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Network</Link>
           <Link href="#economics" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Economics</Link>
         </nav>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <ThemeToggle />
           <Link href="/login">
             <Button variant="ghost" size="sm">Log in</Button>
           </Link>
           <Link href="/register">
-            <Button size="sm" className="bg-white text-black hover:bg-gray-200">Start Building</Button>
+            <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90">Start Building</Button>
           </Link>
         </div>
       </div>

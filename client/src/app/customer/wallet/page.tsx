@@ -6,12 +6,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Wallet, CreditCard, Activity } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function CustomerWalletPage() {
   const { data: wallet, isLoading } = useWallet();
 
   if (isLoading) {
-    return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading wallet data...</div>;
+    return <PageSkeleton />;
   }
 
   return (

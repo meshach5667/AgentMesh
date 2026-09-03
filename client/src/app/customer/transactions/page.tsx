@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Activity } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 export default function CustomerTransactionsPage() {
   const transactions = [
@@ -13,6 +14,9 @@ export default function CustomerTransactionsPage() {
     { id: 'tx_c3', date: '2024-03-09 10:00', type: 'Deposit', deployment: '-', amount: 50.00, status: 'Completed' },
     { id: 'tx_c4', date: '2024-03-08 18:20', type: 'Compute Deduction', deployment: 'dep-llama-1', amount: 0.45, status: 'Settled' },
   ];
+
+  const isLoading = false;
+  if (isLoading) return <TableSkeleton />;
 
   return (
     <div className="space-y-6">

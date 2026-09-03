@@ -5,14 +5,16 @@ import { formatCurrency } from '../../lib/utils';
 import { Activity, CreditCard, DollarSign } from 'lucide-react';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useWallet } from '@/hooks/useWallet';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function CustomerDashboard() {
-  const { data: deployments } = useDeployments();
-  const { data: wallet } = useWallet();
+  const { data: deployments, isLoading: deploymentsLoading } = useDeployments();
+  const { data: wallet, isLoading: walletLoading } = useWallet();
+
+  if (deploymentsLoading || walletLoading) return <PageSkeleton />;
 
   const activeDeployments = deployments?.filter(d => d.status === 'RUNNING').length || 0;
-  // Fallback to 0 if wallet data is incomplete
-  const totalSpend = 0;
+  const totalDeployments = deployments?.length || 0;
   const balance = wallet?.balance || 0;
 
   return (
@@ -28,15 +30,16 @@ export default function CustomerDashboard() {
             </CardHeader>
             <CardContent>
                 <div className="text-3xl font-bold text-blue-500">{activeDeployments}</div>
+                <p className="text-xs text-muted-foreground mt-1">{totalDeployments} total</p>
             </CardContent>
         </Card>
         <Card className="border-border">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Spend</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Deployments</CardTitle>
                 <DollarSign className="w-4 h-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-                <div className="text-3xl font-bold text-foreground">{formatCurrency(totalSpend)}</div>
+                <div className="text-3xl font-bold text-foreground">{totalDeployments}</div>
             </CardContent>
         </Card>
         <Card className="border-border border-blue-500/30 bg-blue-500/5">
@@ -45,7 +48,7 @@ export default function CustomerDashboard() {
                 <CreditCard className="w-4 h-4 text-blue-500" />
             </CardHeader>
             <CardContent>
-                <div className="text-3xl font-bold text-foreground">{formatCurrency(balance)}</div>
+                <div className="text-3xl font-bold text-foreground">{formatCurrency(Number(balance))}</div>
             </CardContent>
         </Card>
       </div>

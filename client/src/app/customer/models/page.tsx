@@ -7,12 +7,13 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Search, Box, Zap, MemoryStick } from 'lucide-react';
 import { useModels } from '@/hooks/useModels';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function CustomerModelsPage() {
   const { data: models, isLoading } = useModels();
 
   if (isLoading) {
-    return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading model catalog...</div>;
+    return <PageSkeleton />;
   }
 
   return (

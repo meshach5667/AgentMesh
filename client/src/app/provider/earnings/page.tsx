@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { DollarSign, ArrowUpRight, Wallet, History } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useEarnings, usePayoutHistory } from '@/hooks/useEarnings';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function EarningsPage() {
   const { data: earnings, isLoading: earningsLoading } = useEarnings();
@@ -16,7 +17,7 @@ export default function EarningsPage() {
   const total = earnings?.total_earned || 0;
 
   if (earningsLoading) {
-     return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading earnings...</div>;
+     return <PageSkeleton />;
   }
 
   return (

@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { Server, Activity, Plus, RefreshCw } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ExtendedNode } from '@/types';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function ProviderNodesPage() {
   const { data: nodes, isLoading, error, refetch } = useNodes();
@@ -24,7 +25,7 @@ export default function ProviderNodesPage() {
   };
 
   if (isLoading) {
-    return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading node registry...</div>;
+    return <PageSkeleton />;
   }
 
   if (error) {

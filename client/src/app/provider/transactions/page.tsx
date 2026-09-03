@@ -6,12 +6,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Activity } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useTransactions } from '@/hooks/useTransactions';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 export default function ProviderTransactionsPage() {
   const { data: transactions, isLoading } = useTransactions();
 
   if (isLoading) {
-    return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading ledger...</div>;
+    return <TableSkeleton />;
   }
 
   return (

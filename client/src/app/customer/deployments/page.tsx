@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw, Play, Square, Activity, Bot, } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Deployment } from '@/types';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function CustomerDeploymentsPage() {
   const { data: deployments, isLoading, refetch } = useDeployments();
@@ -24,7 +25,7 @@ export default function CustomerDeploymentsPage() {
   };
 
   if (isLoading) {
-    return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading deployments...</div>;
+    return <PageSkeleton />;
   }
 
   return (

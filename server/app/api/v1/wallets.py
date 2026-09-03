@@ -1,22 +1,20 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.schemas.wallet import WalletResponse, DepositRequest, DepositResponse
+from app.services import wallet_service
 
 router = APIRouter()
 
-
-class DepositRequest(BaseModel):
-    amount: float
-
-
-@router.get("")
+@router.get("", response_model=WalletResponse)
 async def get_wallet(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    return {"balance": 0, "currency": "USD"}
+    wallet = await wallet_service.get_or_create_wallet(db, current_user.id)
+    return wallet
 
-
-@router.post("/deposit")
+@router.post("/deposit", response_model=DepositResponse)
 async def deposit(req: DepositRequest, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    return {"status": "success"}
+    wallet = await wallet_service.get_or_create_wallet(db, current_user.id)
+    tx = await wallet_service.deposit(db, current_user.id, float(req.amount))
+    await db.refresh(wallet)
+    return DepositResponse(wallet=wallet, transaction_id=tx.id, message=f"Deposited ${req.amount}")

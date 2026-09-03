@@ -1,23 +1,27 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { Wallet, Transaction } from '../types';
+import { Wallet } from '../types';
 
 export const useWallet = () => {
   return useQuery({
     queryKey: ['wallet'],
     queryFn: async () => {
-      const { data } = await api.get<Wallet>('/wallet');
+      const { data } = await api.get<Wallet>('/wallets');
       return data;
     },
   });
 };
 
-export const useTransactions = () => {
-  return useQuery({
-    queryKey: ['transactions'],
-    queryFn: async () => {
-      const { data } = await api.get<Transaction[]>('/transactions');
+export const useDeposit = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (amount: number) => {
+      const { data } = await api.post('/wallets/deposit', { amount });
       return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
     },
   });
 };

@@ -6,14 +6,19 @@ import { Server, Activity, DollarSign, ActivityIcon } from 'lucide-react';
 import { useNodes } from '@/hooks/useNodes';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useEarnings } from '@/hooks/useEarnings';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 export default function ProviderDashboard() {
-  const { data: nodes } = useNodes();
-  const { data: deployments } = useDeployments();
-  const { data: earnings } = useEarnings();
+  const { data: nodes, isLoading: nodesLoading } = useNodes();
+  const { data: deployments, isLoading: deploymentsLoading } = useDeployments();
+  const { data: earnings, isLoading: earningsLoading } = useEarnings();
+
+  const isLoading = nodesLoading || deploymentsLoading || earningsLoading;
+
+  if (isLoading) return <PageSkeleton />;
 
   const totalNodes = nodes?.length || 0;
-  const onlineNodes = nodes?.filter(n => n.status === 'AVAILABLE' || n.status === 'BUSY').length || 0;
+  const onlineNodes = nodes?.filter(n => n.status === 'AVAILABLE' || n.status === 'BUSY' || n.status === 'ONLINE').length || 0;
   const activeDeployments = deployments?.filter(d => d.status === 'RUNNING').length || 0;
   const totalEarned = earnings?.total_earned || 0;
 
@@ -56,14 +61,13 @@ export default function ProviderDashboard() {
                 <DollarSign className="w-4 h-4 text-green-500" />
             </CardHeader>
             <CardContent>
-                <div className="text-3xl font-bold text-green-500">${totalEarned.toFixed(2)}</div>
+                <div className="text-3xl font-bold text-green-500">${Number(totalEarned).toFixed(2)}</div>
             </CardContent>
         </Card>
       </div>
       <Card className="border-border">
         <CardHeader><CardTitle>Earnings History</CardTitle></CardHeader>
         <CardContent>
-          {/* Note: In a fully connected app, we'd pass real historical data here */}
           <EarningsChart data={[{date: 'Mon', amount: 40}, {date: 'Tue', amount: 60}, {date: 'Wed', amount: 45}]} />
         </CardContent>
       </Card>

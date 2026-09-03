@@ -26,7 +26,7 @@ async def register_user(db: AsyncSession, user_data: UserCreate):
 
     await db.commit()
     access_token = create_access_token(subject=user.id)
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user": user}
 
 
 async def login(db: AsyncSession, user_data: UserLogin):
@@ -36,4 +36,4 @@ async def login(db: AsyncSession, user_data: UserLogin):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(subject=user.id)
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user": user}

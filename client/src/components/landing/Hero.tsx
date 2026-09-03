@@ -9,10 +9,10 @@ export function Hero() {
       <div className="container px-6 mx-auto">
         <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-24">
           <div className="flex-1 text-center lg:text-left z-10">
-            <div className="inline-flex items-center rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-sm text-blue-400 mb-6">
+            {/* <div className="inline-flex items-center rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-sm text-blue-400 mb-6">
               <span className="flex w-2 h-2 rounded-full bg-blue-500 mr-2 animate-pulse"></span>
-              Mainnet Beta is Live
-            </div>
+            Agent Mesh is live!
+            </div> */}
 
             <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6">
               AI infrastructure <br className="hidden md:block" />
