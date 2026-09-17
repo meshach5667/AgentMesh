@@ -9,7 +9,7 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
-class NodeStatus(str, enum.Enum):
+class NodeStatus(str, enum.Enum):  # noqa: UP042
     REGISTERING = "REGISTERING"
     ONLINE = "ONLINE"
     AVAILABLE = "AVAILABLE"
@@ -55,7 +55,7 @@ class NodeHardware(Base):
     node = relationship("Node", back_populates="hardware")
 
 
-class PricingMode(str, enum.Enum):
+class PricingMode(str, enum.Enum):  # noqa: UP042
     PROVIDER_FIXED = "PROVIDER_FIXED"
     AGENTMESH_RECOMMENDED = "AGENTMESH_RECOMMENDED"
 

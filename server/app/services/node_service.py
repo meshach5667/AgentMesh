@@ -5,7 +5,8 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.models.node import Node, NodeStatus
+from app.core.security import get_password_hash, verify_node_api_key
+from app.models.node import Node, NodeHardware, NodeStatus
 from app.models.user import Provider
 from app.schemas.node import NodeCreate
 
@@ -16,18 +17,22 @@ async def register_node(db: AsyncSession, node_data: NodeCreate, user_id: uuid.U
     if not provider:
         raise HTTPException(status_code=400, detail="User is not a provider")
 
-    api_key = str(uuid.uuid4())
+    api_key = f"am_node_{uuid.uuid4().hex}"
     node = Node(
         owner_id=provider.id,
         name=node_data.name,
         public_key=node_data.public_key,
         region=node_data.region,
-        api_key_hash=api_key,
+        api_key_hash=get_password_hash(api_key),
     )
     db.add(node)
     await db.commit()
     await db.refresh(node)
-    return {"id": node.id, "api_key": api_key, "status": node.status}
+    if node_data.hardware:
+        hardware = NodeHardware(node_id=node.id, **node_data.hardware.model_dump())
+        db.add(hardware)
+        await db.commit()
+    return {"id": node.id, "node_id": node.id, "api_key": api_key, "status": node.status}
 
 
 async def list_nodes(db: AsyncSession, user_id: uuid.UUID):
@@ -53,3 +58,10 @@ async def process_heartbeat(db: AsyncSession, node_id: str):
     node.status = NodeStatus.ONLINE
     await db.commit()
     return {"status": "ok"}
+
+
+async def authenticate_node(db: AsyncSession, node_id: str, api_key: str):
+    node = await get_node(db, node_id)
+    if not verify_node_api_key(api_key, node.api_key_hash):
+        raise HTTPException(status_code=401, detail="Invalid node credentials")
+    return node

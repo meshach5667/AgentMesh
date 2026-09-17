@@ -10,6 +10,7 @@ from app.core.database import Base
 class UsageRecord(Base):
     __tablename__ = "usage_records"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workload_id = Column(UUID(as_uuid=True), ForeignKey("workloads.id"), nullable=True)
     deployment_id = Column(UUID(as_uuid=True), ForeignKey("deployments.id"))
     node_id = Column(UUID(as_uuid=True), ForeignKey("nodes.id"))
     gpu_seconds = Column(Float, default=0)

@@ -7,7 +7,7 @@ from app.schemas.model import ModelCreate
 
 
 async def list_models(db: AsyncSession):
-    result = await db.execute(select(Model).filter(Model.is_approved == True))
+    result = await db.execute(select(Model).filter(Model.is_approved))
     return result.scalars().all()
 
 

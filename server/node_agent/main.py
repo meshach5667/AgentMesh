@@ -13,8 +13,6 @@ from .deployment.tracker import DeploymentTracker
 from .heartbeat.service import HeartbeatService
 from .metrics.collector import MetricsCollector
 from .registration import load_registration
-from .runtime.ollama import OllamaRuntime
-from .runtime.vllm import VLLMRuntime
 from .usage.reporter import UsageReporter
 
 logging.basicConfig(level=settings.LOG_LEVEL)
@@ -33,6 +31,9 @@ async def lifespan(app: FastAPI):
         logger.warning("Node not registered. Start node_agent register first.")
     else:
         metrics_collector = MetricsCollector()
+
+        from .runtime.ollama import OllamaRuntime
+        from .runtime.vllm import VLLMRuntime
 
         runtime = (
             VLLMRuntime(settings.DOCKER_SOCKET)

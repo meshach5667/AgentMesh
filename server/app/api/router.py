@@ -1,6 +1,18 @@
 from fastapi import APIRouter
 
-from app.api.v1 import agent, auth, deployments, earnings, marketplace, models, nodes, transactions, usage, wallets
+from app.api.v1 import (
+    agent,
+    auth,
+    deployments,
+    earnings,
+    marketplace,
+    models,
+    nodes,
+    transactions,
+    usage,
+    wallets,
+    workloads,
+)
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -13,3 +25,4 @@ api_router.include_router(transactions.router, prefix="/transactions", tags=["tr
 api_router.include_router(usage.router, prefix="/usage", tags=["usage"])
 api_router.include_router(earnings.router, prefix="/earnings", tags=["earnings"])
 api_router.include_router(agent.router, prefix="/agent", tags=["agent"])
+api_router.include_router(workloads.router, tags=["workloads"])

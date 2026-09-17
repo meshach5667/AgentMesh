@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
 from app.core.database import get_db
 from app.models.node import Node, NodeStatus
 from app.schemas.marketplace import MarketplaceNodeResponse
@@ -20,10 +21,10 @@ async def search_nodes(
     )
     if region:
         query = query.filter(Node.region == region)
-    
+
     result = await db.execute(query)
     nodes = result.scalars().all()
-    
+
     response = []
     for node in nodes:
         hw = node.hardware

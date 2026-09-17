@@ -9,7 +9,7 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
-class UserRole(str, enum.Enum):
+class UserRole(str, enum.Enum):  # noqa: UP042
     provider = "provider"
     customer = "customer"
     operator = "operator"

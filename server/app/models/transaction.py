@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
 
-class TransactionType(str, enum.Enum):
+class TransactionType(str, enum.Enum):  # noqa: UP042
     DEPOSIT = "DEPOSIT"
     COMPUTE_CHARGE = "COMPUTE_CHARGE"
     PROVIDER_CREDIT = "PROVIDER_CREDIT"
@@ -17,7 +17,7 @@ class TransactionType(str, enum.Enum):
     PAYOUT = "PAYOUT"
 
 
-class TransactionStatus(str, enum.Enum):
+class TransactionStatus(str, enum.Enum):  # noqa: UP042
     PENDING = "PENDING"
     AUTHORIZED = "AUTHORIZED"
     SETTLED = "SETTLED"

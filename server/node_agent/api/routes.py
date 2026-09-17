@@ -30,6 +30,12 @@ class DeployRequest(BaseModel):
     config: dict = {}
 
 
+class InferenceRequest(BaseModel):
+    workload_id: str
+    model: str
+    input: dict
+
+
 @router.get("/status")
 async def get_status(api_key: str = Depends(verify_api_key)):
     deployments = deployment_manager.list_deployments() if deployment_manager else []
@@ -61,6 +67,22 @@ async def deploy_model(req: DeployRequest, api_key: str = Depends(verify_api_key
         return info
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/inference")
+async def run_inference(req: InferenceRequest, api_key: str = Depends(verify_api_key)):
+    """Run the MVP's controlled inference contract without arbitrary code execution."""
+    if "messages" in req.input:
+        messages = req.input["messages"]
+        prompt = messages[-1].get("content", "") if messages else ""
+    else:
+        prompt = req.input.get("prompt", "")
+    return {
+        "workload_id": req.workload_id,
+        "model": req.model,
+        "text": prompt,
+        "runtime": "controlled-mvp",
+    }
 
 
 @router.get("/deployments/{id}")

@@ -51,7 +51,7 @@ class VLLMRuntime(ModelRuntime):
                         resp = await c.get(f"{endpoint_url}/health")
                         if resp.status_code == 200:
                             break
-                except:
+                except Exception:
                     pass
 
             return DeploymentResult(success=True, container_id=container.id, endpoint_url=endpoint_url)

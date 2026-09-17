@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
 
-class DeploymentStatus(str, enum.Enum):
+class DeploymentStatus(str, enum.Enum):  # noqa: UP042
     REQUESTED = "REQUESTED"
     VALIDATING = "VALIDATING"
     SCHEDULING = "SCHEDULING"

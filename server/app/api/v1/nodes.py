@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -25,5 +25,8 @@ async def get_node(id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{id}/heartbeat")
-async def heartbeat(id: str, db: AsyncSession = Depends(get_db)):
+async def heartbeat(id: str, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Node credentials required")
+    await node_service.authenticate_node(db, id, authorization.removeprefix("Bearer "))
     return await node_service.process_heartbeat(db, id)

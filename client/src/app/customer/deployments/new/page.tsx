@@ -13,7 +13,7 @@ export default function NewDeployment() {
       <Card>
         <CardHeader><CardTitle>Configure Deployment</CardTitle></CardHeader>
         <CardContent>
-          <DeploymentForm modelId={modelId} onSubmit={() => alert('Deploying...')} />
+          <DeploymentForm modelId={modelId} />
         </CardContent>
       </Card>
     </div>

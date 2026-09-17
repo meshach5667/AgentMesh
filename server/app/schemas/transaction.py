@@ -6,7 +6,7 @@ from enum import Enum
 from pydantic import BaseModel
 
 
-class TransactionTypeEnum(str, Enum):
+class TransactionTypeEnum(str, Enum):  # noqa: UP042
     DEPOSIT = "DEPOSIT"
     COMPUTE_CHARGE = "COMPUTE_CHARGE"
     PROVIDER_CREDIT = "PROVIDER_CREDIT"
@@ -15,7 +15,7 @@ class TransactionTypeEnum(str, Enum):
     PAYOUT = "PAYOUT"
 
 
-class TransactionStatusEnum(str, Enum):
+class TransactionStatusEnum(str, Enum):  # noqa: UP042
     PENDING = "PENDING"
     AUTHORIZED = "AUTHORIZED"
     SETTLED = "SETTLED"

@@ -5,12 +5,6 @@ from typing import Any
 from pydantic import BaseModel
 
 
-class NodeCreate(BaseModel):
-    name: str
-    public_key: str
-    region: str
-
-
 class NodeOut(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID
@@ -34,6 +28,13 @@ class NodeHardwareUpdate(BaseModel):
     gpu_vram_gb: int | None = None
     os_info: str
     capabilities: dict[str, Any]
+
+
+class NodeCreate(BaseModel):
+    name: str
+    public_key: str
+    region: str
+    hardware: NodeHardwareUpdate | None = None
 
 
 class NodePricingUpdate(BaseModel):
