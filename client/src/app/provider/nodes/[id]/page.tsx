@@ -2,10 +2,12 @@ import { HardwareInfo } from '../../../../components/nodes/HardwareInfo';
 import { PricingForm } from '../../../../components/nodes/PricingForm';
 import { MetricsGauge } from '../../../../components/charts/MetricsGauge';
 
-export default function NodeDetail({ params }: { params: { id: string } }) {
+export default async function NodeDetail({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Node: {params.id}</h1>
+      <h1 className="text-2xl font-bold">Node: {id}</h1>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <MetricsGauge value={45} label="CPU Usage" />
         <MetricsGauge value={80} label="RAM Usage" />

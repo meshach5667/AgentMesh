@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -26,7 +26,7 @@ class Node(Base):
     name = Column(String(255))
     public_key = Column(Text)
     api_key_hash = Column(String(255))
-    status = Column(Enum(NodeStatus), default=NodeStatus.REGISTERING)
+    status = Column(String(50), default=NodeStatus.REGISTERING)
     region = Column(String(100))
     last_heartbeat = Column(DateTime)
     reputation_score = Column(Numeric(5, 2), default=100.00)
@@ -69,7 +69,7 @@ class NodePricing(Base):
     ram_gb_hour_price = Column(Numeric(10, 6), default=0)
     storage_gb_month_price = Column(Numeric(10, 4), default=0)
     bandwidth_gb_price = Column(Numeric(10, 4), default=0)
-    pricing_mode = Column(Enum(PricingMode), default=PricingMode.PROVIDER_FIXED)
+    pricing_mode = Column(String(50), default=PricingMode.PROVIDER_FIXED)
     currency = Column(String(10), default="USD")
 
     node = relationship("Node", back_populates="pricing")

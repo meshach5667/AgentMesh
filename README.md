@@ -65,3 +65,8 @@ See `CONTRIBUTING.md` for guidelines.
 ## License
 
 MIT License.
+
+
+# TODO
+
+- Implement the node installation

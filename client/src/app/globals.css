@@ -1,4 +1,9 @@
 @import "tailwindcss";
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 

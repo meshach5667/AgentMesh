@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Numeric, String
+from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.database import Base
@@ -31,8 +31,8 @@ class Transaction(Base):
     from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True)
     to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True)
     amount = Column(Numeric(18, 8), nullable=False)
-    type = Column(Enum(TransactionType))
-    status = Column(Enum(TransactionStatus))
+    type = Column(String(50))
+    status = Column(String(50))
     deployment_id = Column(UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True)
     reference = Column(String(255))
     description = Column(String(500))
