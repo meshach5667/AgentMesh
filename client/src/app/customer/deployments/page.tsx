@@ -16,9 +16,12 @@ export default function CustomerDeploymentsPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'RUNNING': return 'bg-green-500/10 text-green-500 border-green-500/20';
-      case 'DEPLOYING': return 'bg-blue-500/10 text-blue-500 border-blue-500/20 animate-pulse';
-      case 'STOPPED': return 'bg-gray-500/10 text-gray-500 border-gray-500/20';
+      case 'READY': return 'bg-green-500/10 text-green-500 border-green-500/20';
+      case 'SCHEDULED':
+      case 'PROVISIONING':
+      case 'STARTING': return 'bg-blue-500/10 text-blue-500 border-blue-500/20 animate-pulse';
+      case 'STOPPED':
+      case 'CANCELLED': return 'bg-gray-500/10 text-gray-500 border-gray-500/20';
       case 'FAILED': return 'bg-red-500/10 text-red-500 border-red-500/20';
       default: return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
     }
@@ -89,7 +92,7 @@ export default function CustomerDeploymentsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        {deployment.status === 'RUNNING' ? (
+                        {deployment.status === 'READY' ? (
                           <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-500/10">
                             <Square className="h-4 w-4" />
                           </Button>

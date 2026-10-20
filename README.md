@@ -38,12 +38,35 @@ AgentMesh is a decentralized platform for deploying and running AI models secure
    npm install
    npm run dev
    ```
-6. Setup Node Agent (in a new terminal):
+6. Run a worker (in a new terminal). See [docs/WORKER.md](docs/WORKER.md) for both node modes:
    ```bash
-   cd server/node_agent
-   # Register and start node agent
-   uvicorn app.main:app --port 8001 --reload
+   cd server
+   python -m node_agent enroll --token <token from POST /api/v1/nodes/enrollment-tokens>
+   python -m node_agent run
    ```
+
+To call a deployed model, see [docs/INFERENCE_API.md](docs/INFERENCE_API.md).
+
+### End-to-end check
+
+```bash
+cd server
+DATABASE_URL=sqlite+aiosqlite:///./dev.db python scripts/init_dev_db.py
+DATABASE_URL=sqlite+aiosqlite:///./dev.db uvicorn app.main:app --port 8000 &
+python scripts/e2e_ollama.py --api http://127.0.0.1:8000 --model smollm2:135m
+```
+
+## Running tests
+
+```bash
+cd server
+pytest                      # in-memory SQLite by default
+TEST_DATABASE_URL=postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh_test pytest
+```
+
+## Project status
+
+What works, what is missing, and the phased plan are tracked in [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
 
 ## Makefile Commands

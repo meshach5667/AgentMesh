@@ -19,7 +19,7 @@ export default function ProviderDashboard() {
 
   const totalNodes = nodes?.length || 0;
   const onlineNodes = nodes?.filter(n => n.status === 'AVAILABLE' || n.status === 'BUSY' || n.status === 'ONLINE').length || 0;
-  const activeDeployments = deployments?.filter(d => d.status === 'RUNNING').length || 0;
+  const activeDeployments = deployments?.filter(d => d.status === 'READY').length || 0;
   const totalEarned = earnings?.total_earned || 0;
 
   return (

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ids import parse_uuid
 from app.models.model import Model
 from app.models.node import Node
 from app.models.transaction import Transaction, TransactionStatus, TransactionType
@@ -71,35 +72,35 @@ async def create_inference(db: AsyncSession, user_id: uuid.UUID, payload: Any) -
         workload.tokens_in = _estimate_tokens(payload.input)
         workload.tokens_out = _estimate_tokens(result)
         await _settle_usage(db, workload, candidates[0], workload.tokens_in + workload.tokens_out)
+    except NoInferenceEndpointError as exc:
+        workload.status = WorkloadStatus.FAILED
+        workload.error_code = "NO_INFERENCE_ENDPOINT"
+        workload.error_message = str(exc)
+        workload.completed_at = datetime.utcnow()
     except httpx.TimeoutException:
         workload.status = WorkloadStatus.TIMEOUT
         workload.error_code = "NODE_TIMEOUT"
         workload.error_message = "Node execution timed out"
         workload.completed_at = datetime.utcnow()
-    except Exception as exc:
+    except Exception:
         workload.status = WorkloadStatus.FAILED
         workload.error_code = "EXECUTION_FAILED"
-        workload.error_message = str(exc)
+        workload.error_message = "Inference execution failed"
         workload.completed_at = datetime.utcnow()
     await db.commit()
     await db.refresh(workload)
     return workload
 
 
+class NoInferenceEndpointError(Exception):
+    """Raised when no real model-serving endpoint exists for the selected node."""
+
+
 async def _dispatch_to_node(node: Node, workload: Workload, model: Model) -> dict[str, Any]:
-    endpoint = (node.public_key or "").rstrip("/")
-    if not endpoint.startswith(("http://", "https://")):
-        return {"text": workload.input_data.get("prompt", workload.input_data.get("messages", workload.input_data))}
-    headers = {"Authorization": f"Bearer {node.api_key_hash}"}
-    request = {
-        "workload_id": str(workload.id),
-        "model": model.name,
-        "input": workload.input_data,
-    }
-    async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(f"{endpoint}/api/v1/inference", json=request, headers=headers)
-        response.raise_for_status()
-        return response.json()
+    # Nodes do not yet expose a verified, gateway-routed inference endpoint (see docs/IMPLEMENTATION_PLAN.md,
+    # Phase 2). Fail explicitly instead of fabricating a response: earlier code echoed the prompt back and
+    # billed the customer for it.
+    raise NoInferenceEndpointError("No ready model deployment is available on the selected node")
 
 
 def _estimate_tokens(value: Any) -> int:
@@ -168,7 +169,9 @@ async def get_workload(db: AsyncSession, workload_id: str, user_id: uuid.UUID) -
     customer = customer_result.scalars().first()
     if not customer:
         raise HTTPException(status_code=403, detail="Customer account required")
-    result = await db.execute(select(Workload).where(Workload.id == workload_id, Workload.customer_id == customer.id))
+    result = await db.execute(
+        select(Workload).where(Workload.id == parse_uuid(workload_id, "Workload"), Workload.customer_id == customer.id)
+    )
     workload = result.scalars().first()
     if not workload:
         raise HTTPException(status_code=404, detail="Workload not found")

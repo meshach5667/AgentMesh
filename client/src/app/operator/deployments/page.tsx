@@ -12,7 +12,7 @@ interface DummyDeployment {
 
 export default function OperatorDeployments() {
   const dummyDeps: DummyDeployment[] = [
-    { id: 'd1', model_id: 'm1', customer_id: 'c1', node_id: 'n1', status: 'RUNNING' },
+    { id: 'd1', model_id: 'm1', customer_id: 'c1', node_id: 'n1', status: 'READY' },
   ];
   return (
     <div className="space-y-6">

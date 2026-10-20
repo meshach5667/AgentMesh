@@ -13,9 +13,8 @@ import { Activity, Clock, DollarSign, Server, Square, RotateCcw } from 'lucide-r
 import toast from 'react-hot-toast';
 
 const statusColors: Record<string, 'green' | 'yellow' | 'red' | 'blue' | 'orange'> = {
-  RUNNING: 'green', DEPLOYING: 'yellow', HEALTH_CHECK: 'yellow',
-  STOPPED: 'red', FAILED: 'orange', REQUESTED: 'blue',
-  SCHEDULING: 'blue', ASSIGNED: 'blue', VALIDATING: 'blue',
+  READY: 'green', PROVISIONING: 'yellow', STARTING: 'yellow', UNHEALTHY: 'orange',
+  STOPPED: 'red', CANCELLED: 'red', FAILED: 'orange', REQUESTED: 'blue', SCHEDULED: 'blue',
   STOPPING: 'red',
 };
 
@@ -45,7 +44,7 @@ export default function DeploymentDetailPage() {
           <Badge color={statusColors[deployment.status] || 'blue'}>{deployment.status}</Badge>
         </div>
         <div className="flex gap-3">
-          {deployment.status === 'RUNNING' && (
+          {deployment.status === 'READY' && (
             <>
               <Button variant="secondary" onClick={() => toast.success('Restart requested')}>
                 <RotateCcw className="w-4 h-4 mr-2" />Restart
@@ -85,7 +84,7 @@ export default function DeploymentDetailPage() {
         </Card>
       </div>
 
-      {deployment.endpoint && deployment.status === 'RUNNING' && (
+      {deployment.endpoint && deployment.status === 'READY' && (
         <Card>
           <div className="p-6">
             <h2 className="text-lg font-semibold text-white mb-3">Inference Endpoint</h2>

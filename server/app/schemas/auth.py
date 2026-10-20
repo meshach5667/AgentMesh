@@ -1,14 +1,24 @@
 import uuid
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.user import UserRole
+
+SELF_REGISTRATION_ROLES = (UserRole.customer, UserRole.provider)
 
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, max_length=256)
     role: UserRole
+
+    @field_validator("role")
+    @classmethod
+    def _self_service_roles_only(cls, role: UserRole) -> UserRole:
+        # Operator/admin accounts must be provisioned by an existing administrator, never self-registered.
+        if role not in SELF_REGISTRATION_ROLES:
+            raise ValueError("role must be 'customer' or 'provider'")
+        return role
 
 
 class UserLogin(BaseModel):
@@ -27,8 +37,7 @@ class UserOut(BaseModel):
     role: UserRole
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AuthResponse(BaseModel):

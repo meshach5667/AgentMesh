@@ -6,12 +6,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.background.deployment_monitor import deployment_monitor_loop
-from app.background.heartbeat_monitor import heartbeat_monitor_loop
-from app.background.usage_collector import usage_collector_loop
+from app.background.monitors import monitor_loop
 from app.core.config import settings
 from app.core.exceptions import AgentMeshException, agentmesh_exception_handler
 from app.core.logging import setup_logging
+from app.core.middleware import BodySizeLimitMiddleware
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -22,13 +21,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan: start background tasks on startup, clean up on shutdown."""
     logger.info("AgentMesh API starting up...")
     tasks = []
-    try:
-        tasks.append(asyncio.create_task(heartbeat_monitor_loop()))
-        tasks.append(asyncio.create_task(usage_collector_loop()))
-        tasks.append(asyncio.create_task(deployment_monitor_loop()))
-        logger.info("Background tasks started")
-    except Exception as e:
-        logger.warning(f"Could not start background tasks: {e}")
+    if settings.BACKGROUND_JOBS_ENABLED:
+        tasks.append(asyncio.create_task(monitor_loop()))
+        logger.info("Background monitors started")
     yield
     logger.info("AgentMesh API shutting down...")
     for task in tasks:
@@ -57,6 +52,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    limits={f"{settings.API_V1_PREFIX}/worker": settings.WORKER_MAX_BODY_BYTES},
+    default_limit=settings.GATEWAY_MAX_BODY_BYTES + 64 * 1024,
+)
 app.add_exception_handler(AgentMeshException, agentmesh_exception_handler)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 

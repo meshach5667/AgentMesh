@@ -12,9 +12,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from alembic import context
-from app.core.config import settings
-from app.models import Base
+from alembic import context  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.models import Base  # noqa: E402
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

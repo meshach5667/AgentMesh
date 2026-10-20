@@ -1,18 +1,20 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
+
+_NOT_IMPLEMENTED = "AI agent workloads are not implemented yet"
 
 
 @router.post("/deploy")
 async def deploy_agent():
-    return {"status": "ok"}
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
 
 @router.get("/tasks")
 async def list_tasks():
-    return []
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
 
 @router.get("/tasks/{id}")
 async def get_task(id: str):
-    return {}
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)

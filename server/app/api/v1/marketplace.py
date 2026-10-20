@@ -9,6 +9,7 @@ from app.schemas.marketplace import MarketplaceNodeResponse
 
 router = APIRouter()
 
+
 @router.get("/nodes", response_model=list[MarketplaceNodeResponse])
 async def search_nodes(
     db: AsyncSession = Depends(get_db),
@@ -16,8 +17,10 @@ async def search_nodes(
     region: str | None = Query(None),
     gpu_model: str | None = Query(None),
 ):
-    query = select(Node).options(selectinload(Node.hardware), selectinload(Node.pricing)).filter(
-        Node.status.in_([NodeStatus.AVAILABLE, NodeStatus.ONLINE])
+    query = (
+        select(Node)
+        .options(selectinload(Node.hardware), selectinload(Node.pricing))
+        .filter(Node.status.in_([NodeStatus.AVAILABLE, NodeStatus.ONLINE]))
     )
     if region:
         query = query.filter(Node.region == region)
@@ -33,25 +36,29 @@ async def search_nodes(
             continue
         if gpu_model and (not hw or not hw.gpu_model or gpu_model.lower() not in hw.gpu_model.lower()):
             continue
-        response.append(MarketplaceNodeResponse(
-            node_id=node.id,
-            name=node.name,
-            region=node.region,
-            gpu_model=hw.gpu_model if hw else None,
-            gpu_count=hw.gpu_count if hw else 0,
-            gpu_vram_gb=hw.gpu_vram_gb if hw else None,
-            cpu_model=hw.cpu_model if hw else None,
-            cpu_cores=hw.cpu_cores if hw else None,
-            ram_gb=hw.ram_gb if hw else None,
-            gpu_hour_price=pr.gpu_hour_price if pr else None,
-            reputation_score=node.reputation_score,
-            status=node.status.value,
-        ))
+        response.append(
+            MarketplaceNodeResponse(
+                node_id=node.id,
+                name=node.name,
+                region=node.region,
+                gpu_model=hw.gpu_model if hw else None,
+                gpu_count=hw.gpu_count if hw else 0,
+                gpu_vram_gb=hw.gpu_vram_gb if hw else None,
+                cpu_model=hw.cpu_model if hw else None,
+                cpu_cores=hw.cpu_cores if hw else None,
+                ram_gb=hw.ram_gb if hw else None,
+                gpu_hour_price=pr.gpu_hour_price if pr else None,
+                reputation_score=node.reputation_score,
+                status=node.status.value,
+            )
+        )
     return response
+
 
 @router.get("/pricing")
 async def get_pricing():
     from app.services.pricing_service import recommend_price
+
     recommendations = [
         {"gpu_model": "RTX 4090", "recommended_price": recommend_price("RTX 4090", 24, "us-east")},
         {"gpu_model": "A100", "recommended_price": recommend_price("A100", 80, "us-east")},

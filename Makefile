@@ -1,4 +1,4 @@
-.PHONY: help dev dev-up dev-down dev-logs dev-restart db-migrate db-revision db-downgrade db-reset server-install server-run server-lint server-format server-typecheck server-test server-test-cov agent-install agent-run agent-register client-install client-dev client-build client-lint client-test client-e2e test test-server test-client test-e2e docker-build docker-push docker-clean ci lint typecheck
+.PHONY: help dev dev-up dev-down dev-logs dev-restart db-migrate db-revision db-downgrade db-reset server-install server-run server-lint server-format server-typecheck server-test server-test-cov agent-install agent-run agent-register e2e client-install client-dev client-build client-lint client-test client-e2e test test-server test-client test-e2e docker-build docker-push docker-clean ci lint typecheck
 
 help:
 	@echo "Available commands:"
@@ -27,7 +27,8 @@ help:
 	@echo "Node Agent:"
 	@echo "  make agent-install    - Install node agent deps"
 	@echo "  make agent-run        - Run node agent locally"
-	@echo "  make agent-register   - Register local node"
+	@echo "  make agent-register TOKEN=... - Enroll this machine as a worker"
+	@echo "  make e2e              - End-to-end deployment check against a running control plane"
 	@echo ""
 	@echo "Client:"
 	@echo "  make client-install   - npm install"
@@ -94,13 +95,16 @@ server-test-cov:
 
 # Node Agent
 agent-install:
-	cd server && pip install -r requirements.txt
+	cd server && pip install -r requirements-worker.txt
 
 agent-run:
-	cd server && uvicorn node_agent.main:app --port 8001 --reload
+	cd server && python -m node_agent run
 
 agent-register:
-	@echo "Registering node agent..."
+	cd server && python -m node_agent enroll --token $(TOKEN)
+
+e2e:
+	cd server && python scripts/e2e_ollama.py --api $${API:-http://127.0.0.1:8000} --model $${MODEL:-smollm2:135m}
 
 # Client
 client-install:

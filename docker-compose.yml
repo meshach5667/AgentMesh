@@ -1,3 +1,4 @@
+# Control plane stack. Providers run workers separately with docker-compose.worker.yml.
 services:
   postgres:
     image: postgres:16-alpine
@@ -39,30 +40,15 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://agentmesh:agentmesh@postgres:5432/agentmesh
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY to a random value of at least 32 characters}
       - ENVIRONMENT=production
+      - ALLOW_TEST_CREDITS=false
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  node-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile.node-agent
-    ports:
-      - "8001:8001"
-    depends_on:
-      api:
-        condition: service_healthy
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - CONTROL_PLANE_URL=http://api:8000
-      - NODE_AGENT_PORT=8001
-    privileged: false
 
   client:
     build:

@@ -1,61 +1,58 @@
-import os
+"""Node keypair. The public key is registered at enrollment for future signed messages and attestation;
+protocol v1 authenticates with the node credential only."""
 
-from cryptography.hazmat.backends import default_backend
+import os
+from pathlib import Path
+
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from .config import settings
+
+def _paths(data_dir: Path) -> tuple[Path, Path]:
+    return data_dir / "node_key.pem", data_dir / "node_key.pub"
 
 
-def generate_keypair():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
-    public_key = private_key.public_key()
-
-    os.makedirs(settings.DATA_DIR, exist_ok=True)
-    priv_path = os.path.join(settings.DATA_DIR, "node_key.pem")
-    pub_path = os.path.join(settings.DATA_DIR, "node_key.pub")
-
-    with open(priv_path, "wb") as f:
+def generate_keypair(data_dir: Path):
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    priv_path, pub_path = _paths(data_dir)
+    fd = os.open(priv_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
         f.write(
             private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
             )
         )
-
-    with open(pub_path, "wb") as f:
-        f.write(
-            public_key.public_bytes(
-                encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo
-            )
+    pub_path.write_bytes(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
         )
-    return private_key, public_key
-
-
-def load_identity():
-    priv_path = os.path.join(settings.DATA_DIR, "node_key.pem")
-    if not os.path.exists(priv_path):
-        return None, None
-    with open(priv_path, "rb") as f:
-        private_key = serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
+    )
     return private_key, private_key.public_key()
 
 
-def get_or_create_identity():
-    priv, pub = load_identity()
+def load_identity(data_dir: Path):
+    priv_path, _ = _paths(data_dir)
+    if not priv_path.exists():
+        return None, None
+    private_key = serialization.load_pem_private_key(priv_path.read_bytes(), password=None)
+    return private_key, private_key.public_key()
+
+
+def get_or_create_identity(data_dir: Path):
+    priv, pub = load_identity(data_dir)
     if priv is None:
-        priv, pub = generate_keypair()
+        priv, pub = generate_keypair(data_dir)
     return priv, pub
 
 
-def get_public_key_pem(public_key):
-    return public_key.public_bytes(
-        encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo
-    ).decode("utf-8")
+def get_public_key_pem(public_key) -> str:
+    return public_key.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode(
+        "utf-8"
+    )
 
 
-def sign_message(private_key, message: bytes):
+def sign_message(private_key, message: bytes) -> bytes:
     return private_key.sign(
         message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
     )

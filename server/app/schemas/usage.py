@@ -7,16 +7,27 @@ from pydantic import BaseModel
 
 class UsageRecordResponse(BaseModel):
     id: uuid.UUID
-    deployment_id: uuid.UUID
-    node_id: uuid.UUID
-    gpu_seconds: float
-    cpu_seconds: float
-    storage_usage: float
-    bandwidth_usage: float
-    total_cost: Decimal
-    period_start: datetime
-    period_end: datetime
+    deployment_id: uuid.UUID | None = None
+    workload_id: uuid.UUID | None = None
+    node_id: uuid.UUID | None = None
+    gpu_seconds: float | None = 0
+    cpu_seconds: float | None = 0
+    storage_usage: float | None = 0
+    bandwidth_usage: float | None = 0
+    total_cost: Decimal | None = Decimal("0")
+    period_start: datetime | None = None
+    period_end: datetime | None = None
     created_at: datetime
+    kind: str | None = None
+    request_id: str | None = None
+    endpoint: str | None = None
+    status_code: int | None = None
+    outcome: str | None = None
+    duration_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    token_source: str | None = None
+    response_bytes: int | None = None
     model_config = {"from_attributes": True}
 
 

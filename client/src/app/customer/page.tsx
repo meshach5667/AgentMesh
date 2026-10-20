@@ -13,7 +13,7 @@ export default function CustomerDashboard() {
 
   if (deploymentsLoading || walletLoading) return <PageSkeleton />;
 
-  const activeDeployments = deployments?.filter(d => d.status === 'RUNNING').length || 0;
+  const activeDeployments = deployments?.filter(d => d.status === 'READY').length || 0;
   const totalDeployments = deployments?.length || 0;
   const balance = wallet?.balance || 0;
 

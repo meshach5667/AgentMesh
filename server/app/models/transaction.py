@@ -28,8 +28,8 @@ class TransactionStatus(str, enum.Enum):  # noqa: UP042
 class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True)
-    to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True)
+    from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True, index=True)
+    to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True, index=True)
     amount = Column(Numeric(18, 8), nullable=False)
     type = Column(String(50))
     status = Column(String(50))

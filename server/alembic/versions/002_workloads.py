@@ -4,6 +4,8 @@ Revision ID: 002
 Revises: 001
 """
 
+import uuid
+
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSON, UUID
 
@@ -28,7 +30,7 @@ def upgrade() -> None:
         ),
         [
             {
-                "id": "00000000-0000-0000-0000-000000000001",
+                "id": uuid.UUID("00000000-0000-0000-0000-000000000001"),
                 "name": "agentmesh-controlled-mvp",
                 "version": "1",
                 "runtime": "controlled-mvp",

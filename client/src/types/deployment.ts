@@ -1,17 +1,18 @@
 import { Model } from './model';
 import { Node } from './node';
 
+// Mirrors the control plane lifecycle (server/app/services/deployment_lifecycle.py).
 export type DeploymentStatus =
   | 'REQUESTED'
-  | 'VALIDATING'
-  | 'SCHEDULING'
-  | 'ASSIGNED'
-  | 'DEPLOYING'
-  | 'HEALTH_CHECK'
-  | 'RUNNING'
+  | 'SCHEDULED'
+  | 'PROVISIONING'
+  | 'STARTING'
+  | 'READY'
+  | 'UNHEALTHY'
   | 'STOPPING'
   | 'STOPPED'
-  | 'FAILED';
+  | 'FAILED'
+  | 'CANCELLED';
 
 export interface Deployment {
   id: string;
@@ -20,6 +21,13 @@ export interface Deployment {
   node_id: string;
   status: DeploymentStatus;
   endpoint: string | null;
+  runtime?: string | null;
+  model_tag?: string | null;
+  model_digest?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  ready_at?: string | null;
+  cleanup_status?: string | null;
   config: Record<string, unknown>;
   started_at: string | null;
   ended_at: string | null;

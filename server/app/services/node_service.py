@@ -5,9 +5,11 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.core.dependencies import is_staff
+from app.core.ids import parse_uuid
 from app.core.security import get_password_hash, verify_node_api_key
 from app.models.node import Node, NodeHardware, NodeStatus
-from app.models.user import Provider
+from app.models.user import Provider, User
 from app.schemas.node import NodeCreate
 
 
@@ -15,7 +17,7 @@ async def register_node(db: AsyncSession, node_data: NodeCreate, user_id: uuid.U
     result = await db.execute(select(Provider).filter(Provider.user_id == user_id))
     provider = result.scalars().first()
     if not provider:
-        raise HTTPException(status_code=400, detail="User is not a provider")
+        raise HTTPException(status_code=403, detail="Provider account required")
 
     api_key = f"am_node_{uuid.uuid4().hex}"
     node = Node(
@@ -26,12 +28,12 @@ async def register_node(db: AsyncSession, node_data: NodeCreate, user_id: uuid.U
         api_key_hash=get_password_hash(api_key),
     )
     db.add(node)
+    await db.flush()
+    if node_data.hardware:
+        db.add(NodeHardware(node_id=node.id, **node_data.hardware.model_dump()))
     await db.commit()
     await db.refresh(node)
-    if node_data.hardware:
-        hardware = NodeHardware(node_id=node.id, **node_data.hardware.model_dump())
-        db.add(hardware)
-        await db.commit()
+    # The plaintext key is returned exactly once; only its hash is stored.
     return {"id": node.id, "node_id": node.id, "api_key": api_key, "status": node.status}
 
 
@@ -44,24 +46,96 @@ async def list_nodes(db: AsyncSession, user_id: uuid.UUID):
     return result.scalars().all()
 
 
-async def get_node(db: AsyncSession, node_id: str):
-    result = await db.execute(select(Node).filter(Node.id == node_id))
+async def get_node(db: AsyncSession, node_id: str | uuid.UUID) -> Node:
+    result = await db.execute(select(Node).filter(Node.id == parse_uuid(node_id, "Node")))
     node = result.scalars().first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
 
 
-async def process_heartbeat(db: AsyncSession, node_id: str):
+async def get_node_for_user(db: AsyncSession, node_id: str, user: User) -> Node:
+    """Return a node only if the caller owns it or is platform staff. Other callers get 404, not 403,
+    so node IDs cannot be probed."""
     node = await get_node(db, node_id)
+    if is_staff(user):
+        return node
+    result = await db.execute(select(Provider).filter(Provider.user_id == user.id))
+    provider = result.scalars().first()
+    if not provider or node.owner_id != provider.id:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return node
+
+
+async def process_heartbeat(db: AsyncSession, node: Node):
+    if node.status == NodeStatus.SUSPENDED:
+        raise HTTPException(status_code=403, detail="Node suspended")
     node.last_heartbeat = datetime.datetime.utcnow()
     node.status = NodeStatus.ONLINE
     await db.commit()
     return {"status": "ok"}
 
 
-async def authenticate_node(db: AsyncSession, node_id: str, api_key: str):
-    node = await get_node(db, node_id)
+async def authenticate_node(db: AsyncSession, node_id: str, api_key: str) -> Node:
+    try:
+        node = await get_node(db, node_id)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid node credentials") from None
     if not verify_node_api_key(api_key, node.api_key_hash):
         raise HTTPException(status_code=401, detail="Invalid node credentials")
+    return node
+
+
+async def set_accepting_workloads(db: AsyncSession, node_id: str, user: User, accepting: bool) -> Node:
+    """Pause or resume scheduling onto a node. Existing deployments keep running (drain)."""
+    node = await get_node_for_user(db, node_id, user)
+    node.accepting_workloads = accepting
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
+async def revoke_node(db: AsyncSession, node_id: str, user: User) -> Node:
+    """Revoke a node's credential (disconnect or compromise). Its active deployments fail immediately and
+    their reservations are released; the worker can no longer authenticate."""
+    from app.models.deployment import Deployment
+    from app.services import deployment_lifecycle as lifecycle
+    from app.services.scheduler_service import release_reservation
+    from app.services.tunnel import broker
+
+    node = await get_node_for_user(db, node_id, user)
+    node.api_key_hash = None
+    node.status = NodeStatus.REVOKED
+    node.accepting_workloads = False
+    active = (
+        (
+            await db.execute(
+                select(Deployment).where(
+                    Deployment.node_id == node.id, Deployment.status.in_([s.value for s in lifecycle.ACTIVE])
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for dep in active:
+        await lifecycle.transition(
+            db,
+            dep,
+            lifecycle.S.FAILED,
+            actor="operator" if is_staff(user) else "provider",
+            message="Node credential revoked",
+            error_code="NODE_REVOKED",
+        )
+        dep.cleanup_status = "pending_node"
+        await release_reservation(db, dep.id)
+    await db.commit()
+    conn = broker._connections.get(node.id)
+    if conn is not None:
+        broker.unregister(conn)
+        try:
+            await conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    await db.refresh(node)
     return node

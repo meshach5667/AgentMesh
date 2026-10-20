@@ -23,10 +23,12 @@ class Workload(Base):
     __tablename__ = "workloads"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False, index=True)
     model_id = Column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False)
     node_id = Column(UUID(as_uuid=True), ForeignKey("nodes.id"), nullable=True)
-    status = Column(Enum(WorkloadStatus), default=WorkloadStatus.QUEUED, nullable=False)
+    status = Column(
+        Enum(WorkloadStatus, native_enum=False, length=50), default=WorkloadStatus.QUEUED, nullable=False, index=True
+    )
     input_data = Column(JSON, nullable=False)
     result_data = Column(JSON, nullable=True)
     error_code = Column(String(100), nullable=True)

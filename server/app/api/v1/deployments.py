@@ -2,16 +2,19 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
-from app.schemas.deployment import DeploymentCreate, DeploymentOut
+from app.core.dependencies import get_current_user, require_roles
+from app.models.user import UserRole
+from app.schemas.deployment import DeploymentCreate, DeploymentEventOut, DeploymentOut
 from app.services import deployment_service
 
 router = APIRouter()
 
 
-@router.post("", response_model=DeploymentOut)
+@router.post("", response_model=DeploymentOut, status_code=201)
 async def create_deployment(
-    deployment: DeploymentCreate, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)
+    deployment: DeploymentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.customer)),
 ):
     return await deployment_service.create_deployment(db, deployment, current_user.id)
 
@@ -23,9 +26,19 @@ async def list_deployments(db: AsyncSession = Depends(get_db), current_user=Depe
 
 @router.get("/{id}", response_model=DeploymentOut)
 async def get_deployment(id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    return await deployment_service.get_deployment(db, id)
+    return await deployment_service.get_deployment_for_user(db, id, current_user)
 
 
 @router.post("/{id}/stop")
 async def stop_deployment(id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    return await deployment_service.stop_deployment(db, id)
+    return await deployment_service.stop_deployment(db, id, current_user)
+
+
+@router.delete("/{id}")
+async def delete_deployment(id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+    return await deployment_service.delete_deployment(db, id, current_user)
+
+
+@router.get("/{id}/events", response_model=list[DeploymentEventOut])
+async def deployment_events(id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+    return await deployment_service.list_events(db, id, current_user)

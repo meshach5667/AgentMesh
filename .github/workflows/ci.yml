@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   server-lint-and-type-check:
@@ -74,9 +75,13 @@ jobs:
       - name: Run pytest
         env:
           DATABASE_URL: postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh
+          TEST_DATABASE_URL: postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh_test
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: test-secret-key
-        run: cd server && pytest tests/ -v --cov=app --cov-report=xml --cov-fail-under=60
+          ENVIRONMENT: test
+        run: |
+          PGPASSWORD=agentmesh psql -h localhost -U agentmesh -d agentmesh -c 'CREATE DATABASE agentmesh_test'
+          cd server && pytest tests/ -v --cov=app --cov-report=xml --cov-fail-under=60
         
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -130,8 +135,11 @@ jobs:
       - name: Build server image
         run: docker build -t agentmesh-server -f Dockerfile.server .
         
-      - name: Build node agent image
-        run: docker build -t agentmesh-node-agent -f Dockerfile.node-agent .
+      - name: Build worker image
+        run: docker build -t agentmesh-worker -f Dockerfile.node-agent .
+
+      - name: Worker image smoke test
+        run: docker run --rm --entrypoint python agentmesh-worker -m node_agent hardware
         
       - name: Build client image
         run: docker build -t agentmesh-client -f Dockerfile.client .
@@ -170,5 +178,74 @@ jobs:
         run: |
           cd server
           alembic upgrade head
+          alembic check
           alembic downgrade -1
           alembic upgrade head
+
+  e2e-stub-runtime:
+    # Full worker -> control plane -> gateway flow on PostgreSQL with real migrations. The model runtime is a
+    # labelled stub (server/tests/fixtures/fake_ollama.py), so this proves the platform path, not inference.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: agentmesh
+          POSTGRES_USER: agentmesh
+          POSTGRES_PASSWORD: agentmesh
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh
+      ENVIRONMENT: test
+      PUBLIC_BASE_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r server/requirements.txt
+      - name: Migrate
+        run: cd server && alembic upgrade head
+      - name: Start control plane
+        run: cd server && (uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../cp.log 2>&1 &) && sleep 5 && curl -sf http://127.0.0.1:8000/health
+      - name: End-to-end (stub runtime)
+        run: |
+          cd server
+          python scripts/e2e_ollama.py --api http://127.0.0.1:8000 --mode agent --model smollm2:135m \
+            --ollama-binary tests/fixtures/fake_ollama.py
+      - name: Control plane log
+        if: always()
+        run: cat cp.log
+
+  e2e-real-ollama:
+    # Real model download and inference on CPU. Manual trigger only: downloads Ollama and a ~270 MB model.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite+aiosqlite:///./e2e.db
+      ENVIRONMENT: test
+      PUBLIC_BASE_URL: http://127.0.0.1:8000
+      OLLAMA_VERSION: "0.12.3"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r server/requirements.txt
+      - name: Install pinned Ollama
+        run: curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=$OLLAMA_VERSION sh && sudo systemctl stop ollama || true
+      - name: Start control plane
+        run: |
+          cd server && python scripts/init_dev_db.py
+          (uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../cp.log 2>&1 &) && sleep 5
+      - name: End-to-end (real Ollama)
+        run: cd server && python scripts/e2e_ollama.py --api http://127.0.0.1:8000 --mode agent --model smollm2:135m
+      - name: Logs
+        if: always()
+        run: cat cp.log; cat /tmp/agentmesh-e2e-worker-*/worker.log || true

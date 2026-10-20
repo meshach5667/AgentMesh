@@ -2,20 +2,50 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NodeOut(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID
-    name: str
+    name: str | None = None
     status: str
-    region: str
-    reputation_score: float
+    region: str | None = None
+    reputation_score: float | None = None
+    last_heartbeat: datetime | None = None
     created_at: datetime
+    mode: str | None = None
+    worker_version: str | None = None
+    protocol_version: int | None = None
+    runtimes: list[dict[str, Any]] | None = None
+    accepting_workloads: bool = True
+    allocated_cpu_cores: int = 0
+    allocated_ram_mb: int = 0
+    allocated_disk_mb: int = 0
+    allocated_vram_mb: int = 0
+    reserved_cpu_cores: int = 0
+    reserved_ram_mb: int = 0
+    reserved_disk_mb: int = 0
+    reserved_vram_mb: int = 0
+    last_metrics: dict[str, float] | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EnrollmentTokenCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(None, max_length=100)
+    region: str | None = Field(None, max_length=100)
+
+
+class EnrollmentTokenOut(BaseModel):
+    token: str
+    expires_at: datetime
+
+
+class NodeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    accepting_workloads: bool
 
 
 class NodeHardwareUpdate(BaseModel):

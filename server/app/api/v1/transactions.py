@@ -10,6 +10,7 @@ from app.schemas.transaction import TransactionResponse
 
 router = APIRouter()
 
+
 @router.get("", response_model=list[TransactionResponse])
 async def list_transactions(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
     # Get user's wallet

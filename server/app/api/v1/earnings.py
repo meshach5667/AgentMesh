@@ -10,6 +10,7 @@ from app.schemas.earnings import EarningsSummary
 
 router = APIRouter()
 
+
 @router.get("", response_model=EarningsSummary)
 async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
     result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
@@ -25,8 +26,7 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
 
     # Total settled provider credits
     settled = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0))
-        .filter(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).filter(
             Transaction.to_wallet == wallet.id,
             Transaction.type == TransactionType.PROVIDER_CREDIT,
             Transaction.status == TransactionStatus.SETTLED,
@@ -36,8 +36,7 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
 
     # Pending
     pending = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0))
-        .filter(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).filter(
             Transaction.to_wallet == wallet.id,
             Transaction.type == TransactionType.PROVIDER_CREDIT,
             Transaction.status == TransactionStatus.PENDING,
@@ -50,8 +49,9 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
         pending_earnings=pending_earnings,
         available_balance=wallet.balance,
         total_deployments=0,
-        active_deployments=0
+        active_deployments=0,
     )
+
 
 @router.get("/history")
 async def get_history(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
