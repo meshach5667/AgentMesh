@@ -13,6 +13,10 @@ eggs/
 .eggs/
 lib/
 lib64/
+# This frontend config is source code, despite the Python build-output pattern above.
+!client/src/lib/
+client/src/lib/*
+!client/src/lib/config.ts
 parts/
 sdist/
 var/

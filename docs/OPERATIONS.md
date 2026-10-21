@@ -18,7 +18,7 @@ Unpaid test credits are always disabled in production.
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL (`postgresql+asyncpg://…`). Change the default `agentmesh:agentmesh` credentials. |
+| `DATABASE_URL` | PostgreSQL (`postgresql+asyncpg://…`). Change the default `agentmesh:agentmesh` credentials. Hosted databases that require TLS need `?ssl=require` on the URL (or `&ssl=require` when it already has query parameters). |
 | `PUBLIC_BASE_URL`, `FRONTEND_URL` | Public https URLs of the API and the dashboard. Paystack returns customers to `$FRONTEND_URL/customer/wallet`. |
 | `COORDINATION_BACKEND=redis`, `REDIS_URL` | Required when you run more than one API replica (shared rate limits, tunnel routing, and one leader for the background jobs). |
 | `BILLING_CURRENCY` | The single platform currency (default `NGN`). Choose it before taking real payments; it cannot be mixed. |
@@ -27,7 +27,7 @@ Unpaid test credits are always disabled in production.
 | `TOPUP_MIN_AMOUNT`, `TOPUP_MAX_AMOUNT`, `PAYOUT_MIN_AMOUNT`, `PAYOUTS_REQUIRE_APPROVAL` | Payment limits. Keep approval on until you trust your fraud controls. |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | Login and registration attempts per minute, per client address and per email (default 10). |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics`. Empty disables the endpoint. |
-| `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_BILLING_CURRENCY` | Dashboard settings. They are baked in when the dashboard is **built**, not read at runtime. |
+| `NEXT_PUBLIC_BILLING_CURRENCY` | Dashboard currency display setting, baked in when the dashboard is **built**. The dashboard API URL is configured in `client/src/lib/config.ts`. |
 
 Put the API behind a TLS-terminating reverse proxy. Run uvicorn with `--proxy-headers` (as
 `docker-compose.yml` does) so rate limits, the audit log, and the webhook IP check see real client addresses.

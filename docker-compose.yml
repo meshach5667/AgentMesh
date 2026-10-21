@@ -68,8 +68,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 
   # prometheus:
   #   image: prom/prometheus

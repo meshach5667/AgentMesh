@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
 import { Logo } from '@/components/brand/Logo';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 
@@ -24,11 +25,11 @@ export function Header() {
           </nav>
         </div>
         <div className="flex items-center gap-2">
-          <ThemeToggle />
-          <Link href="/login" className="hidden h-8 items-center rounded-lg px-3 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex">
-            Sign in
+          <ThemeToggle className="rounded-full" />
+          <Link href="/login" className="group hidden h-9 items-center gap-1.5 px-2 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex">
+            Sign in <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
           </Link>
-          <Link href="/register" className="inline-flex h-8 items-center rounded-lg bg-primary px-3.5 text-[13px] font-medium text-primary-foreground shadow-soft transition-opacity hover:opacity-90">
+          <Link href="/register" className="inline-flex h-9 items-center rounded-full bg-foreground px-4 text-[13px] font-medium text-background transition-all hover:-translate-y-0.5 hover:shadow-soft">
             Get started
           </Link>
         </div>

@@ -102,13 +102,13 @@ function NavItem({ link, active }: { link: NavLink; active: boolean }) {
       href={link.href}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'group flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors',
+        'group flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13px] transition-all',
         active
-          ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_var(--sidebar-border)]'
-          : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+          ? 'bg-brand/[0.09] font-semibold text-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--brand)_16%,transparent)]'
+          : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground',
       )}
     >
-      <Icon className={cn('size-4 shrink-0', active ? 'text-brand' : 'opacity-60 group-hover:opacity-100')} />
+      <Icon className={cn('size-[17px] shrink-0', active ? 'text-brand' : 'opacity-60 group-hover:opacity-100')} />
       <span className="truncate">{link.label}</span>
     </Link>
   );
@@ -117,17 +117,17 @@ function NavItem({ link, active }: { link: NavLink; active: boolean }) {
 export function Sidebar() {
   const { user, sections, active, logout, roleLabel } = useNavLinks();
   return (
-    <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
-      <div className="flex h-14 items-center px-4">
+    <aside className="hidden h-full w-[260px] shrink-0 flex-col border-r border-sidebar-border/80 bg-sidebar md:flex">
+      <div className="flex h-16 items-center border-b border-sidebar-border/70 px-5">
         <Logo />
       </div>
-      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
+      <nav className="flex-1 space-y-6 overflow-y-auto px-3.5 py-6">
         {sections.map((section, i) => (
           <div key={section.title ?? i}>
             {section.title && (
-              <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">{section.title}</p>
+              <p className="mb-2 px-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/65">{section.title}</p>
             )}
-            <ul className="space-y-0.5">
+            <ul className="space-y-1">
               {section.links.map((link) => (
                 <li key={link.href}>
                   <NavItem link={link} active={link.href === active?.href} />
@@ -137,24 +137,27 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-      <div className="border-t border-sidebar-border p-3">
-        <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand to-fuchsia-500 text-xs font-semibold uppercase text-white">
+      <div className="border-t border-sidebar-border/70 p-4">
+        <div className="flex items-center gap-2.5 px-1">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-indigo-400 text-xs font-semibold uppercase text-white shadow-soft">
             {user?.email?.charAt(0)}
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-medium">{user?.email}</p>
             <p className="text-[11px] text-muted-foreground">{roleLabel}</p>
           </div>
-          <ThemeToggle />
+        </div>
+        <div className="mt-3 flex items-center justify-between pl-1">
+          <ThemeToggle className="size-8 rounded-full" />
           <button
             type="button"
             onClick={() => logout()}
             aria-label="Sign out"
             title="Sign out"
-            className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-300"
           >
-            <LogOut className="size-4" />
+            <LogOut className="size-3.5" />
+            Sign out
           </button>
         </div>
       </div>
@@ -166,20 +169,21 @@ export function Sidebar() {
 export function TopBar() {
   const { links, active, logout, roleLabel } = useNavLinks();
   return (
-    <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur-xl">
-      <div className="flex h-14 items-center justify-between gap-3 px-4 sm:px-8">
+    <header className="sticky top-0 z-20 border-b border-border/70 bg-background/75 backdrop-blur-xl">
+      <div className="flex h-16 items-center justify-between gap-3 px-4 sm:px-8">
         <div className="md:hidden">
           <Logo />
         </div>
-        <p className="hidden items-center gap-2 text-[13px] text-muted-foreground md:flex">
-          <span>{roleLabel}</span>
+        <p className="hidden items-center gap-2.5 text-xs text-muted-foreground md:flex">
+          <span>{roleLabel} workspace</span>
           <span className="text-border">/</span>
-          <span className="font-medium text-foreground">{active?.label ?? 'Dashboard'}</span>
+          <span className="font-semibold text-foreground">{active?.label ?? 'Dashboard'}</span>
         </p>
         <div className="flex items-center gap-1 md:hidden">
           <ThemeToggle />
-          <button type="button" onClick={() => logout()} aria-label="Sign out" className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent">
-            <LogOut className="size-4" />
+          <button type="button" onClick={() => logout()} aria-label="Sign out" className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-300">
+            <LogOut className="size-3.5" />
+            Sign out
           </button>
         </div>
       </div>

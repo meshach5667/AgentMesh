@@ -50,17 +50,18 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Create your account</h1>
-      <p className="mt-1.5 text-sm text-muted-foreground">Free to sign up. You only pay for what you deploy.</p>
+      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand">Get started</p>
+      <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Create your account</h1>
+      <p className="mt-2 text-sm text-muted-foreground">Free to join. Pay only for what you deploy.</p>
       {error && (
-        <div role="alert" className="mt-6 rounded-lg border border-destructive/25 bg-destructive/[0.06] px-3 py-2.5 text-sm text-destructive">
+        <div role="alert" className="mt-6 border-l-2 border-destructive/70 py-1 pl-3 text-sm text-destructive">
           {error}
         </div>
       )}
-      <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-8 space-y-5">
         <fieldset>
-          <legend className="mb-1.5 text-[13px] font-medium">I want to</legend>
-          <div className="grid grid-cols-2 gap-2">
+          <legend className="mb-2 text-[13px] font-medium text-foreground/85">Choose how you&apos;ll use AgentMesh</legend>
+          <div className="grid grid-cols-2 rounded-xl bg-muted/75 p-1">
             {ROLES.map(({ value, icon: Icon, title, body }) => (
               <button
                 key={value}
@@ -68,13 +69,15 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
                 aria-pressed={role === value}
                 onClick={() => setRole(value)}
                 className={cn(
-                  'rounded-lg border p-3 text-left transition-all',
-                  role === value ? 'border-brand/60 bg-brand-soft/60 ring-4 ring-brand/10' : 'border-border hover:bg-accent',
+                  'min-h-[92px] rounded-lg px-3 py-2.5 text-left transition-all',
+                  role === value ? 'bg-card text-foreground shadow-soft' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                <Icon className={cn('size-4', role === value ? 'text-brand' : 'text-muted-foreground')} />
-                <p className="mt-2 text-[13px] font-medium">{title}</p>
-                <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{body}</p>
+                <span className="flex items-center gap-2">
+                  <Icon className={cn('size-4', role === value ? 'text-brand' : 'text-muted-foreground')} />
+                  <span className="text-[13px] font-semibold">{title}</span>
+                </span>
+                <span className="mt-2 block text-[11px] leading-snug text-muted-foreground">{body}</span>
               </button>
             ))}
           </div>
@@ -112,9 +115,9 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
           {!submitting && <ArrowRight className="size-4" />}
         </button>
       </form>
-      <p className="mt-8 text-sm text-muted-foreground">
+      <p className="mt-8 text-center text-sm text-muted-foreground">
         Already have an account?{' '}
-        <Link href="/login" className="font-medium text-foreground underline-offset-4 hover:underline">
+        <Link href="/login" className="font-semibold text-brand underline-offset-4 hover:underline">
           Sign in
         </Link>
       </p>

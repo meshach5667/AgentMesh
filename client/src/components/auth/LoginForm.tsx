@@ -34,14 +34,15 @@ export function LoginForm() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-      <p className="mt-1.5 text-sm text-muted-foreground">Sign in to your AgentMesh account.</p>
+      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand">Your workspace</p>
+      <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Welcome back</h1>
+      <p className="mt-2 text-sm text-muted-foreground">Sign in to continue to AgentMesh.</p>
       {error && (
-        <div role="alert" className="mt-6 rounded-lg border border-destructive/25 bg-destructive/[0.06] px-3 py-2.5 text-sm text-destructive">
+        <div role="alert" className="mt-6 border-l-2 border-destructive/70 py-1 pl-3 text-sm text-destructive">
           {error}
         </div>
       )}
-      <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-9 space-y-5">
         <Field label="Email">
           <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" className={inputClass} />
         </Field>
@@ -71,9 +72,9 @@ export function LoginForm() {
           {!submitting && <ArrowRight className="size-4" />}
         </button>
       </form>
-      <p className="mt-8 text-sm text-muted-foreground">
+      <p className="mt-8 text-center text-sm text-muted-foreground">
         New to AgentMesh?{' '}
-        <Link href="/register" className="font-medium text-foreground underline-offset-4 hover:underline">
+        <Link href="/register" className="font-semibold text-brand underline-offset-4 hover:underline">
           Create an account
         </Link>
       </p>
