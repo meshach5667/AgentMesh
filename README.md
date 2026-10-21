@@ -2,7 +2,7 @@
 
 AgentMesh lets developers deploy open-weight AI models on computers contributed by independent providers and
 call them through an OpenAI-compatible API. Workloads run inside resource limits on the provider's machine; the
-provider can see the data a workload handles (see the trust model in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)).
+provider can see the data a workload handles
 Billing is prepaid, with Paystack top-ups and provider payouts. These run in Paystack test mode and have not
 yet been exercised against Paystack's live API.
 
@@ -50,7 +50,7 @@ The Markdown files in [docs/](docs/) hold the same material in more depth.
    npm install
    npm run dev
    ```
-6. Run a worker (in a new terminal). See [docs/WORKER.md](docs/WORKER.md) for both node modes:
+6. Run a worker (in a new terminal). 
    ```bash
    cd server
    python -m node_agent enroll --token <token from POST /api/v1/nodes/enrollment-tokens>
@@ -58,14 +58,10 @@ The Markdown files in [docs/](docs/) hold the same material in more depth.
    ```
 
 For providers, `server/packaging/install.sh` installs the worker as a per-user background service (no root);
-see [docs/WORKER.md](docs/WORKER.md).
 
-To call a deployed model, see [docs/INFERENCE_API.md](docs/INFERENCE_API.md). For the customer, provider and
-operator workflows (dashboard and API), see [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
-
+To call a deployed model,  For the customer, provider and
+operator workflows (dashboard and API),
 Running a network in production (configuration, Paystack, monitoring, backups, recovery):
-[docs/OPERATIONS.md](docs/OPERATIONS.md). Security review and residual risks:
-[docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
 
 Operators cannot self-register. Create the first operator account on the server:
 

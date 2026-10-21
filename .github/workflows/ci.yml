@@ -187,7 +187,10 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh
         run: |
           cd server
-          PG="docker run --rm -i --network host -v /tmp/agentmesh-backups:/tmp/agentmesh-backups postgres:16-alpine"
+          # Dumps travel over stdin/stdout, so the container needs no volume; a bind mount would create the
+          # backup directory as root and the runner user could not write the dump into it.
+          mkdir -p /tmp/agentmesh-backups
+          PG="docker run --rm -i --network host postgres:16-alpine"
           LIBPQ=postgresql://agentmesh:agentmesh@localhost:5432
           $PG psql "$LIBPQ/agentmesh" -c "insert into pricing_rules (id, version, currency, cpu_core_hour, ram_gb_hour, vram_gb_hour, input_tokens_per_million, output_tokens_per_million, platform_fee_rate, effective_from, created_at) values (gen_random_uuid(), 99, 'NGN', 1, 2, 3, 4, 5, 0.1, now(), now())"
           PG_DUMP="$PG pg_dump" ops/backup_db.sh /tmp/agentmesh-backups

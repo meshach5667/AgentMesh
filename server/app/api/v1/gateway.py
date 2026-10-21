@@ -18,9 +18,9 @@ import time
 import uuid
 from typing import Any
 
+import jwt
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,7 +98,7 @@ async def _authenticate(request: Request, db: AsyncSession) -> tuple[User, ApiKe
     else:
         try:
             user_id = uuid.UUID(str(jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM]).get("sub")))
-        except (JWTError, ValueError):
+        except (jwt.PyJWTError, ValueError):
             raise GatewayError(401, "unauthorized", "Invalid credentials") from None
         user = await db.get(User, user_id)
     if user is None or not user.is_active:

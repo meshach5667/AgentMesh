@@ -1,9 +1,9 @@
 import uuid
 from collections.abc import Callable
 
+import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,7 @@ async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depe
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         user_id = uuid.UUID(str(payload.get("sub")))
-    except (JWTError, ValueError):
+    except (jwt.PyJWTError, ValueError):
         raise credentials_exception from None
 
     result = await db.execute(select(User).filter(User.id == user_id))

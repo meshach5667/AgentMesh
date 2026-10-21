@@ -4,7 +4,7 @@ import secrets
 from datetime import timedelta
 from typing import Any
 
-from jose import jwt
+import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
