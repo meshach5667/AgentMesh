@@ -34,9 +34,15 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+MIGRATION_LOCK_ID = 7_242_031
+
+
 def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
+        if connection.dialect.name == "postgresql":
+            # Several API instances may start at once; only one applies migrations at a time.
+            connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({MIGRATION_LOCK_ID})")
         context.run_migrations()
 
 

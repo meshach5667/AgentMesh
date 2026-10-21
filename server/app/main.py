@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.exceptions import AgentMeshException, agentmesh_exception_handler
 from app.core.logging import RequestIdMiddleware, setup_logging
 from app.core.middleware import BodySizeLimitMiddleware
+from app.core.migrations import migrate_database
 
 setup_logging(settings.LOG_LEVEL, settings.LOG_JSON)
 logger = logging.getLogger(__name__)
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan: start background tasks on startup, clean up on shutdown."""
     logger.info("AgentMesh API starting up...")
+    if settings.MIGRATE_ON_STARTUP:
+        await migrate_database()
     tasks = []
     coordinator = None
     redis = None

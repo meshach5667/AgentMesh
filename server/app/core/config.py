@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     MAX_SCHEDULE_ATTEMPTS: int = 3  # placements per deployment, including the first
     MONITOR_INTERVAL_SECONDS: int = 15
     BACKGROUND_JOBS_ENABLED: bool = True
+    MIGRATE_ON_STARTUP: bool = True
 
     # Multi-replica coordination: "memory" (single API process) or "redis" (shared limits and tunnel routing)
     COORDINATION_BACKEND: str = "memory"
