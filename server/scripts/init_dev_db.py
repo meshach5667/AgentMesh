@@ -11,7 +11,6 @@ import asyncio
 import importlib.util
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -20,15 +19,20 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.core.database import AsyncSessionLocal, engine  # noqa: E402
-from app.models import Base, Model  # noqa: E402
+from app.core.timeutil import utcnow  # noqa: E402
+from app.models import Base, Model, ModelArtifact  # noqa: E402
+
+
+def _migration(name: str):
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / name
+    spec = importlib.util.spec_from_file_location(name.removesuffix(".py"), path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
 
 
 def _catalog():
-    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "005_worker_protocol_and_lifecycle.py"
-    spec = importlib.util.spec_from_file_location("m005", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod.CATALOG
+    return _migration("005_worker_protocol_and_lifecycle.py").CATALOG
 
 
 async def main() -> None:
@@ -49,7 +53,7 @@ async def main() -> None:
                     runtime="ollama",
                     source="ollama-registry",
                     is_approved=True,
-                    created_at=datetime.utcnow(),
+                    created_at=utcnow(),
                     model_tag=tag,
                     publisher=publisher,
                     family=family,
@@ -67,6 +71,35 @@ async def main() -> None:
                     requirements_estimated=True,
                 )
             )
+        await db.flush()
+        m008 = _migration("008_model_artifacts.py")
+        for spec in m008.NEW_MODELS:
+            if not (await db.execute(select(Model).where(Model.id == spec["id"]))).scalar_one_or_none():
+                db.add(Model(**spec, requirements_estimated=True, is_approved=True, created_at=utcnow()))
+        await db.flush()
+        existing = {a.id for a in (await db.execute(select(ModelArtifact))).scalars().all()}
+        for model in (await db.execute(select(Model))).scalars().all():
+            aid = m008.artifact_id(model.id, "ollama")
+            if model.runtime == "ollama" and model.model_tag and aid not in existing:
+                db.add(
+                    ModelArtifact(
+                        id=aid,
+                        model_id=model.id,
+                        runtime="ollama",
+                        source_type="ollama",
+                        reference=model.model_tag,
+                        format="ollama",
+                        quantization=model.quantization,
+                        min_ram_mb=model.min_ram_mb,
+                        min_disk_mb=model.min_disk_mb,
+                        min_vram_mb=model.min_vram_mb or 0,
+                        min_cpu_cores=model.min_cpu_cores or 1,
+                        gpu_required=model.gpu_required,
+                    )
+                )
+        for row in m008.hf_rows():
+            if row["id"] not in existing:
+                db.add(ModelArtifact(**row))
         await db.commit()
     print(f"Initialised {settings.DATABASE_URL}")
 

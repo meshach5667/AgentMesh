@@ -1,22 +1,24 @@
-import { Header } from '@/components/landing/Header';
-import { Hero } from '@/components/landing/Hero';
-import { LiveStats } from '@/components/landing/LiveStats';
-import { ProblemSolution } from '@/components/landing/ProblemSolution';
-import { HowItWorks } from '@/components/landing/HowItWorks';
-import { MarketplacePreview } from '@/components/landing/MarketplacePreview';
 import { CTA } from '@/components/landing/CTA';
+import { Features } from '@/components/landing/Features';
 import { Footer } from '@/components/landing/Footer';
+import { Header } from '@/components/landing/Header';
+import { HeroSection } from '@/components/landing/HeroSection';
+import { HowItWorks } from '@/components/landing/HowItWorks';
+import { LiveStats } from '@/components/landing/LiveStats';
+import { PricingSection } from '@/components/landing/PricingSection';
+import { Status } from '@/components/landing/Status';
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-background flex flex-col selection:bg-blue-500/20 selection:text-blue-200">
+    <div className="flex min-h-screen flex-col bg-background">
       <Header />
       <main className="flex-1">
-        <Hero />
+        <HeroSection />
         <LiveStats />
-        <ProblemSolution />
+        <Features />
         <HowItWorks />
-        <MarketplacePreview />
+        <PricingSection />
+        <Status />
         <CTA />
       </main>
       <Footer />

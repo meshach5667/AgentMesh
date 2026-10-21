@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,14 +44,14 @@ async def search_nodes(
                 name=node.name,
                 region=node.region,
                 gpu_model=hw.gpu_model if hw else None,
-                gpu_count=hw.gpu_count if hw else 0,
+                gpu_count=(hw.gpu_count or 0) if hw else 0,
                 gpu_vram_gb=hw.gpu_vram_gb if hw else None,
                 cpu_model=hw.cpu_model if hw else None,
                 cpu_cores=hw.cpu_cores if hw else None,
                 ram_gb=hw.ram_gb if hw else None,
                 gpu_hour_price=pr.gpu_hour_price if pr else None,
-                reputation_score=node.reputation_score,
-                status=node.status.value,
+                reputation_score=node.reputation_score if node.reputation_score is not None else Decimal("100"),
+                status=str(node.status),
             )
         )
     return response

@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { removeToken } from './auth';
+import { API_URL } from './config';
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1',
+  baseURL: API_URL,
 });
 
 api.interceptors.request.use((config) => {

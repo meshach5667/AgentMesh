@@ -250,7 +250,8 @@ async def test_worker_tunnel_rejects_disallowed_requests():
     async def send(frame):
         sent.append(frame)
 
-    handler = TunnelHandler(lambda dep: ("http://127.0.0.1:1", "qwen2.5:0.5b") if dep == "d1" else None, 2, 5)
+    allowed = frozenset({"/api/chat", "/v1/chat/completions"})
+    handler = TunnelHandler(lambda dep: ("http://127.0.0.1:1", "qwen2.5:0.5b", allowed) if dep == "d1" else None, 2, 5)
     await handler.on_frame(
         {"type": "request", "id": "r1", "deployment_id": "d1", "method": "POST", "path": "/api/pull", "body": {}}, send
     )

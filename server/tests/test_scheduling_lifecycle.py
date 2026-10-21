@@ -2,13 +2,14 @@
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.background import monitors
 from app.core.config import settings
+from app.core.timeutil import utcnow
 from app.models import ApiKey, Deployment, Model, Node, NodeCommand, ResourceReservation
 from app.models.deployment import DeploymentStatus as S
 from app.services import deployment_lifecycle as lifecycle
@@ -176,7 +177,7 @@ async def test_gpu_requirement_and_paused_and_stale_nodes(client, db, make_user,
     )
 
     n = await _node(db, node["node_id"])
-    n.last_heartbeat = datetime.utcnow() - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS + 5)
+    n.last_heartbeat = utcnow() - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS + 5)
     await db.commit()
     assert (await _deploy(client, customer, ollama_model)).json()["detail"]["reasons"] == {"provider_unavailable": 1}
 
@@ -280,7 +281,7 @@ async def test_stale_node_monitor_marks_offline_and_unhealthy(client, db, make_u
     dep = (await _deploy(client, customer, ollama_model)).json()
     await _report(client, node, dep["id"], "READY")
 
-    future = datetime.utcnow() + timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS + 1)
+    future = utcnow() + timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS + 1)
     assert await monitors.run_stale_nodes(now=future) == 1
     assert (await _node(db, node["node_id"])).status == "OFFLINE"
     assert (await _dep(db, dep["id"])).status == "UNHEALTHY"
@@ -316,8 +317,9 @@ async def test_provisioning_stall_fails_and_cleans_up(client, db, make_user, enr
     node = await enroll_node()
     _, customer = await make_user("customer")
     dep = (await _deploy(client, customer, ollama_model)).json()
+    await client.post("/api/v1/worker/commands/poll", json={"wait_seconds": 0}, headers=node["headers"])
     await _report(client, node, dep["id"], "PROVISIONING")
-    future = datetime.utcnow() + timedelta(seconds=settings.PROVISION_STALL_TIMEOUT_SECONDS + 1)
+    future = utcnow() + timedelta(seconds=settings.PROVISION_STALL_TIMEOUT_SECONDS + 1)
     assert await monitors.run_deployment_timeouts(now=future) == 1
     got = await _dep(db, dep["id"])
     assert got.status == "FAILED" and got.error_code == "PROVISION_STALLED"
@@ -332,7 +334,7 @@ async def test_unconfirmed_stop_times_out_to_pending_node_cleanup(client, db, ma
     dep = (await _deploy(client, customer, ollama_model)).json()
     await _report(client, node, dep["id"], "READY")
     await client.post(f"/api/v1/deployments/{dep['id']}/stop", headers=customer)
-    future = datetime.utcnow() + timedelta(seconds=settings.STOP_TIMEOUT_SECONDS + 1)
+    future = utcnow() + timedelta(seconds=settings.STOP_TIMEOUT_SECONDS + 1)
     await monitors.run_deployment_timeouts(now=future)
     got = await _dep(db, dep["id"])
     assert got.status == "STOPPED" and got.cleanup_status == "pending_node"
@@ -354,7 +356,7 @@ async def test_undelivered_deploy_fails_after_max_attempts(client, db, make_user
     dep = (await _deploy(client, customer, ollama_model)).json()
     cmd = (await db.execute(select(NodeCommand))).scalars().one()
     cmd.status, cmd.attempts = "LEASED", cmd.max_attempts
-    cmd.lease_expires_at = datetime.utcnow() - timedelta(seconds=1)
+    cmd.lease_expires_at = utcnow() - timedelta(seconds=1)
     await db.commit()
     assert await monitors.run_command_leases() == 1
     got = await _dep(db, dep["id"])
@@ -369,5 +371,5 @@ async def test_revoking_node_fails_its_deployments(client, db, make_user, enroll
     await _report(client, node, dep["id"], "READY")
     await client.post(f"/api/v1/nodes/{node['node_id']}/revoke", headers=node["provider_headers"])
     got = await _dep(db, dep["id"])
-    assert got.status == "FAILED" and got.error_code == "NODE_REVOKED"
+    assert got.status == "FAILED" and got.error_code == "NODE_REVOKED"  # no other node to move to
     assert (await _node(db, node["node_id"])).reserved_ram_mb == 0

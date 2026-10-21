@@ -44,7 +44,7 @@ class Allocation(BaseModel):
 
 class RuntimeInfo(BaseModel):
     model_config = _STRICT
-    name: Literal["ollama"]
+    name: Literal["ollama", "llamacpp", "vllm"]
     version: str = Field("", max_length=50)
     backend: Literal["docker", "process"]
     available: bool
@@ -85,6 +85,9 @@ class HeartbeatRequest(BaseModel):
     runtimes: list[RuntimeInfo] | None = Field(None, max_length=8)
     metrics: dict[str, float] = Field(default_factory=dict, max_length=32)
     deployments: list[ReportedDeployment] = Field(default_factory=list, max_length=256)
+    # Local availability: False while paused, draining, or outside the provider's schedule.
+    available: bool = True
+    unavailable_reason: Literal["paused", "draining", "schedule"] | None = None
 
     @model_validator(mode="after")
     def _allocation_needs_hardware(self) -> "HeartbeatRequest":
@@ -100,6 +103,8 @@ class HeartbeatResponse(BaseModel):
     heartbeat_interval_seconds: int
     # Deployments the worker reported but must not be running (stopped, deleted, or not assigned to it).
     stop_deployments: list[uuid.UUID]
+    # Newest worker version announced by the operator, if any (see WORKER_RELEASE_MANIFEST).
+    latest_worker_version: str | None = None
 
 
 class PollRequest(BaseModel):

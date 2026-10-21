@@ -1,31 +1,34 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.timeutil import utcnow
 
 
 class AgentTask(Base):
     __tablename__ = "agent_tasks"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    type = Column(String(100))
-    status = Column(String(50))
-    input_data = Column(JSON)
-    output_data = Column(JSON, nullable=True)
-    error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    type: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str | None] = mapped_column(String(50))
+    input_data: Mapped[Any] = mapped_column(JSON, nullable=True)
+    output_data: Mapped[Any] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class AgentAction(Base):
     __tablename__ = "agent_actions"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    task_id = Column(UUID(as_uuid=True), ForeignKey("agent_tasks.id"))
-    action = Column(String(100))
-    tool_name = Column(String(100))
-    tool_input = Column(JSON)
-    tool_output = Column(JSON, nullable=True)
-    reasoning = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("agent_tasks.id"))
+    action: Mapped[str | None] = mapped_column(String(100))
+    tool_name: Mapped[str | None] = mapped_column(String(100))
+    tool_input: Mapped[Any] = mapped_column(JSON, nullable=True)
+    tool_output: Mapped[Any] = mapped_column(JSON, nullable=True)
+    reasoning: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)

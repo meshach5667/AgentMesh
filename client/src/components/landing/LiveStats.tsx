@@ -1,65 +1,43 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { Activity, Server, Cpu, Zap } from 'lucide-react';
 
+import { usePublicStats } from '@/hooks/useUsage';
+import { runtimeLabel } from '@/lib/format';
+
+/** Live counts from the AgentMesh database. Nothing here is simulated. */
 export function LiveStats() {
-  const [stats, setStats] = useState({
-    activeNodes: 142,
-    totalGpus: 324,
-    tflops: 12500,
-    activeDeployments: 89
-  });
-
-  useEffect(() => {
-    // Simulate live updates
-    const interval = setInterval(() => {
-      setStats(prev => ({
-        ...prev,
-        activeNodes: prev.activeNodes + (Math.random() > 0.8 ? 1 : 0),
-        totalGpus: prev.totalGpus + (Math.random() > 0.9 ? 2 : 0),
-        tflops: prev.tflops + Math.floor(Math.random() * 50),
-      }));
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
+  const { data, isError } = usePublicStats();
+  const items = [
+    { label: 'Nodes online', value: data?.nodes_online },
+    { label: 'GPU nodes online', value: data?.gpu_nodes_online },
+    { label: 'Deployable models', value: data?.models_deployable },
+    { label: 'Deployments serving', value: data?.deployments_ready },
+  ];
   return (
-    <section className="py-12 border-y border-border/50 bg-secondary/30">
-      <div className="container px-6 mx-auto">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8">
-          <Card className="p-6 bg-background border-border/50 shadow-none">
-            <div className="flex items-center gap-3 mb-2 text-muted-foreground">
-              <Server className="w-5 h-5" />
-              <span className="text-sm font-medium uppercase tracking-wider">Active Nodes</span>
+    <section className="border-y border-border bg-muted/30" aria-label="Network right now">
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border md:grid-cols-4">
+          {items.map(({ label, value }) => (
+            <div key={label} className="bg-background px-6 py-6">
+              <div className="text-3xl font-semibold tracking-tight tabular-nums" data-testid={`stat-${label}`}>
+                {value == null ? '—' : value.toLocaleString()}
+              </div>
+              <div className="mt-1 text-[13px] text-muted-foreground">{label}</div>
             </div>
-            <div className="text-3xl font-mono font-bold">{stats.activeNodes.toLocaleString()}</div>
-          </Card>
-
-          <Card className="p-6 bg-background border-border/50 shadow-none">
-            <div className="flex items-center gap-3 mb-2 text-muted-foreground">
-              <Cpu className="w-5 h-5" />
-              <span className="text-sm font-medium uppercase tracking-wider">Available GPUs</span>
-            </div>
-            <div className="text-3xl font-mono font-bold">{stats.totalGpus.toLocaleString()}</div>
-          </Card>
-
-          <Card className="p-6 bg-background border-border/50 shadow-none">
-            <div className="flex items-center gap-3 mb-2 text-muted-foreground">
-              <Zap className="w-5 h-5" />
-              <span className="text-sm font-medium uppercase tracking-wider">Network TFLOPS</span>
-            </div>
-            <div className="text-3xl font-mono font-bold">{stats.tflops.toLocaleString()}</div>
-          </Card>
-
-          <Card className="p-6 bg-background border-border/50 shadow-none">
-            <div className="flex items-center gap-3 mb-2 text-muted-foreground">
-              <Activity className="w-5 h-5" />
-              <span className="text-sm font-medium uppercase tracking-wider">Live Deployments</span>
-            </div>
-            <div className="text-3xl font-mono font-bold">{stats.activeDeployments.toLocaleString()}</div>
-          </Card>
+          ))}
         </div>
+        <p className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+          {!isError && data && (
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+            </span>
+          )}
+          {isError
+            ? 'Live network figures are unavailable right now.'
+            : data
+              ? `Live from this AgentMesh network${data.runtimes_online.length ? ` · runtimes online: ${data.runtimes_online.map(runtimeLabel).join(', ')}` : ''}.`
+              : 'Loading live network figures…'}
+        </p>
       </div>
     </section>
   );

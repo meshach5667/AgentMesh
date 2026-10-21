@@ -1,24 +1,45 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { Node } from '../types';
+import type { EnrollmentToken, Node } from '../types';
 
-export const useNodes = () => {
-  return useQuery({
+export const useNodes = () =>
+  useQuery({
     queryKey: ['nodes'],
-    queryFn: async () => {
-      const { data } = await api.get<Node[]>('/nodes');
-      return data;
-    },
+    queryFn: async () => (await api.get<Node[]>('/nodes')).data,
+    refetchInterval: 15000,
   });
-};
 
-export const useNode = (id: string) => {
-  return useQuery({
+export const useNode = (id: string) =>
+  useQuery({
     queryKey: ['nodes', id],
-    queryFn: async () => {
-      const { data } = await api.get<Node>(`/nodes/${id}`);
-      return data;
-    },
+    queryFn: async () => (await api.get<Node>(`/nodes/${id}`)).data,
     enabled: !!id,
+    refetchInterval: 10000,
   });
-};
+
+export const useCreateEnrollmentToken = () =>
+  useMutation({
+    mutationFn: async (payload: { name?: string; region?: string }) =>
+      (await api.post<EnrollmentToken>('/nodes/enrollment-tokens', payload)).data,
+  });
+
+function useNodeMutation<T>(fn: (arg: T) => Promise<Node>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (node) => {
+      qc.setQueryData(['nodes', node.id], node);
+      qc.invalidateQueries({ queryKey: ['nodes'] });
+      qc.invalidateQueries({ queryKey: ['admin'] });
+    },
+  });
+}
+
+/** Pause (false) or resume (true) scheduling onto a node. Running deployments are not stopped. */
+export const useSetAccepting = () =>
+  useNodeMutation(async ({ id, accepting }: { id: string; accepting: boolean }) =>
+    (await api.patch<Node>(`/nodes/${id}`, { accepting_workloads: accepting })).data,
+  );
+
+export const useRevokeNode = () =>
+  useNodeMutation(async (id: string) => (await api.post<Node>(`/nodes/${id}/revoke`)).data);

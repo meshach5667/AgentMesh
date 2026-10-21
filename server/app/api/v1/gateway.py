@@ -16,7 +16,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -27,8 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db, session_scope
-from app.core.ratelimit import concurrency_limiter, request_limiter
+from app.core.logging import current_request_id, new_request_id
+from app.core.ratelimit import limiters
 from app.core.security import ALGORITHM
+from app.core.timeutil import utcnow
 from app.models.api_key import ApiKey
 from app.models.deployment import Deployment
 from app.models.deployment import DeploymentStatus as S
@@ -40,8 +42,37 @@ from app.services.tunnel import NodeUnavailable, broker
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-PROXIED_POST_PATHS = frozenset({"api/chat", "api/generate", "v1/chat/completions", "v1/completions"})
-LOCAL_GET_PATHS = frozenset({"api/tags", "v1/models"})
+# What each runtime serves. Only Ollama has the Ollama-native /api/* routes; every runtime serves the
+# OpenAI-compatible /v1/* routes. Workers enforce the same allowlists.
+OPENAI_POST = frozenset({"v1/chat/completions", "v1/completions"})
+POST_PATHS = {
+    "ollama": OPENAI_POST | {"api/chat", "api/generate"},
+    "llamacpp": OPENAI_POST,
+    "vllm": OPENAI_POST,
+}
+GET_PATHS = {
+    "ollama": frozenset({"api/tags", "v1/models"}),
+    "llamacpp": frozenset({"v1/models"}),
+    "vllm": frozenset({"v1/models"}),
+}
+# Kept for importers of the old names.
+PROXIED_POST_PATHS = POST_PATHS["ollama"]
+LOCAL_GET_PATHS = GET_PATHS["ollama"]
+
+
+def _check_path(dep: Deployment, path: str, method: str, via_ollama_prefix: bool) -> None:
+    runtime = dep.runtime or "ollama"
+    if via_ollama_prefix and runtime != "ollama":
+        raise GatewayError(
+            404,
+            "unsupported_endpoint",
+            f"This deployment runs {runtime}; use /deployments/{dep.id}/v1/... (OpenAI-compatible)",
+        )
+    allowed = (POST_PATHS if method == "POST" else GET_PATHS).get(runtime, frozenset())
+    if path not in allowed:
+        raise GatewayError(404, "unsupported_endpoint", f"{method} /{path} is not supported by {runtime}")
+
+
 USAGE_TAIL_BYTES = 64 * 1024
 
 
@@ -129,14 +160,17 @@ def _sanitize(path: str, body: dict, dep: Deployment) -> tuple[dict, bool]:
     body.pop("keep_alive", None)  # model residency is managed by the worker, not the caller
     num_ctx = (dep.config or {}).get("num_ctx")
     if path.startswith("api/"):
-        options = body.get("options") if isinstance(body.get("options"), dict) else {}
-        options = dict(options)
+        raw_options = body.get("options")
+        options: dict[str, Any] = dict(raw_options) if isinstance(raw_options, dict) else {}
         if num_ctx:
             options["num_ctx"] = num_ctx  # memory was reserved for this context size
         body["options"] = options
         streaming = body.get("stream", True) is not False
     else:
         streaming = body.get("stream") is True
+        if streaming and "stream_options" not in body:
+            # Ask the runtime to append token usage to the stream so it can be metered.
+            body["stream_options"] = {"include_usage": True}
     return body, streaming
 
 
@@ -171,15 +205,11 @@ def _parse_usage(path: str, tail: bytes) -> tuple[int | None, int | None]:
 async def _record_usage(**fields) -> None:
     try:
         async with session_scope() as db:
-            db.add(
-                UsageRecord(
-                    kind="inference", period_start=fields.pop("started"), period_end=datetime.utcnow(), **fields
-                )
-            )
+            db.add(UsageRecord(kind="inference", period_start=fields.pop("started"), period_end=utcnow(), **fields))
             if fields.get("api_key_id"):
                 key = await db.get(ApiKey, fields["api_key_id"])
                 if key is not None:
-                    key.last_used_at = datetime.utcnow()
+                    key.last_used_at = utcnow()
             await db.commit()
     except IntegrityError:
         pass  # duplicate request_id: already recorded
@@ -189,11 +219,29 @@ async def _record_usage(**fields) -> None:
 
 @router.get("/{deployment_id}/ollama/{path:path}")
 async def gateway_get(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+    return await _gateway_get(deployment_id, path, request, db, via_ollama_prefix=True)
+
+
+@router.get("/{deployment_id}/v1/{path:path}")
+async def gateway_get_openai(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+    return await _gateway_get(deployment_id, f"v1/{path}", request, db, via_ollama_prefix=False)
+
+
+@router.post("/{deployment_id}/ollama/{path:path}")
+async def gateway_post(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+    return await _gateway_post(deployment_id, path, request, db, via_ollama_prefix=True)
+
+
+@router.post("/{deployment_id}/v1/{path:path}")
+async def gateway_post_openai(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+    return await _gateway_post(deployment_id, f"v1/{path}", request, db, via_ollama_prefix=False)
+
+
+async def _gateway_get(deployment_id: str, path: str, request: Request, db: AsyncSession, via_ollama_prefix: bool):
     try:
         user, api_key = await _authenticate(request, db)
         dep = await _resolve_deployment(db, user, api_key, deployment_id)
-        if path not in LOCAL_GET_PATHS:
-            raise GatewayError(404, "unsupported_endpoint", f"GET /{path} is not supported")
+        _check_path(dep, path, "GET", via_ollama_prefix)
         _require_ready(dep)
     except GatewayError as exc:
         return exc.response
@@ -206,16 +254,14 @@ async def gateway_get(deployment_id: str, path: str, request: Request, db: Async
     }
 
 
-@router.post("/{deployment_id}/ollama/{path:path}")
-async def gateway_post(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def _gateway_post(deployment_id: str, path: str, request: Request, db: AsyncSession, via_ollama_prefix: bool):
     try:
         user, api_key = await _authenticate(request, db)
         dep = await _resolve_deployment(db, user, api_key, deployment_id)
-        if path not in PROXIED_POST_PATHS:
-            raise GatewayError(404, "unsupported_endpoint", f"POST /{path} is not supported")
+        _check_path(dep, path, "POST", via_ollama_prefix)
         _require_ready(dep)
         principal = f"key:{api_key.id}" if api_key else f"user:{user.id}"
-        allowed, retry_after = request_limiter.allow(principal, settings.GATEWAY_RATE_LIMIT_PER_MINUTE)
+        allowed, retry_after = await limiters.requests.allow(principal, settings.GATEWAY_RATE_LIMIT_PER_MINUTE)
         if not allowed:
             raise GatewayError(
                 429, "rate_limited", "Too many requests", headers={"Retry-After": str(max(1, int(retry_after)))}
@@ -225,11 +271,11 @@ async def gateway_post(deployment_id: str, path: str, request: Request, db: Asyn
         return exc.response
 
     concurrency_key = str(dep.id)
-    if not concurrency_limiter.acquire(concurrency_key, settings.GATEWAY_MAX_CONCURRENT_PER_DEPLOYMENT):
+    if not await limiters.concurrency.acquire(concurrency_key, settings.GATEWAY_MAX_CONCURRENT_PER_DEPLOYMENT):
         return gateway_error(429, "too_many_concurrent_requests", "Deployment is at its concurrent request limit")
 
-    request_id = uuid.uuid4().hex
-    started = datetime.utcnow()
+    request_id = current_request_id() or new_request_id()
+    started = utcnow()
     t0 = time.monotonic()
     meter = {
         "request_id": request_id,
@@ -251,7 +297,7 @@ async def gateway_post(deployment_id: str, path: str, request: Request, db: Asyn
     try:
         conn, rid, queue = await broker.open_request(dep.node_id, frame)
     except NodeUnavailable:
-        concurrency_limiter.release(concurrency_key)
+        await limiters.concurrency.release(concurrency_key)
         await _record_usage(**meter, status_code=503, outcome="node_unavailable", duration_ms=0)
         return gateway_error(503, "node_unavailable", "The node serving this deployment is not connected")
 
@@ -261,7 +307,7 @@ async def gateway_post(deployment_id: str, path: str, request: Request, db: Asyn
         first = {"type": "error", "code": "timeout", "message": "Runtime did not respond in time"}
     if first.get("type") != "response_start":
         broker.close_request(conn, rid)
-        concurrency_limiter.release(concurrency_key)
+        await limiters.concurrency.release(concurrency_key)
         outcome = "timeout" if first.get("code") == "timeout" else "node_unavailable"
         if outcome == "timeout":
             await _safe_cancel(conn, rid)
@@ -310,7 +356,7 @@ async def gateway_post(deployment_id: str, path: str, request: Request, db: Asyn
             raise
         finally:
             broker.close_request(conn, rid)
-            concurrency_limiter.release(concurrency_key)
+            await limiters.concurrency.release(concurrency_key)
             prompt_tokens, completion_tokens = _parse_usage(path, bytes(tail)) if outcome == "success" else (None, None)
             await _record_usage(
                 **meter,

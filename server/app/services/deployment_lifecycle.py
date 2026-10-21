@@ -2,6 +2,8 @@
 
     REQUESTED -> SCHEDULED -> PROVISIONING -> STARTING -> READY
     READY <-> UNHEALTHY
+    PROVISIONING | STARTING | UNHEALTHY -> SCHEDULED   (moved to another node; same id and endpoint)
+    READY | UNHEALTHY -> PROVISIONING                  (restart on the same node)
     any non-terminal -> STOPPING -> STOPPED (was ever READY) | CANCELLED (never READY)
     any non-terminal -> FAILED
 
@@ -10,12 +12,11 @@ compare-and-set UPDATE (so two concurrent writers cannot both move the same depl
 DeploymentEvent row.
 """
 
-from datetime import datetime
-
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_utils import rowcount as _rowcount
+from app.core.timeutil import utcnow
 from app.models.deployment import Deployment, DeploymentEvent
 from app.models.deployment import DeploymentStatus as S
 
@@ -27,10 +28,10 @@ PROVISIONED = frozenset({S.SCHEDULED, S.PROVISIONING, S.STARTING, S.READY, S.UNH
 TRANSITIONS: dict[S, frozenset[S]] = {
     S.REQUESTED: frozenset({S.SCHEDULED, S.FAILED, S.CANCELLED}),
     S.SCHEDULED: frozenset({S.PROVISIONING, S.STARTING, S.READY, S.STOPPING, S.FAILED}),
-    S.PROVISIONING: frozenset({S.STARTING, S.READY, S.STOPPING, S.FAILED}),
-    S.STARTING: frozenset({S.READY, S.STOPPING, S.FAILED}),
-    S.READY: frozenset({S.UNHEALTHY, S.STOPPING, S.FAILED}),
-    S.UNHEALTHY: frozenset({S.READY, S.STOPPING, S.FAILED}),
+    S.PROVISIONING: frozenset({S.SCHEDULED, S.STARTING, S.READY, S.STOPPING, S.FAILED}),
+    S.STARTING: frozenset({S.SCHEDULED, S.READY, S.STOPPING, S.FAILED}),
+    S.READY: frozenset({S.UNHEALTHY, S.PROVISIONING, S.STOPPING, S.FAILED}),
+    S.UNHEALTHY: frozenset({S.READY, S.SCHEDULED, S.PROVISIONING, S.STOPPING, S.FAILED}),
     S.STOPPING: frozenset({S.STOPPED, S.CANCELLED, S.FAILED}),
     S.STOPPED: frozenset(),
     S.FAILED: frozenset(),
@@ -64,7 +65,7 @@ async def transition(
     if not can_transition(current, new):
         raise InvalidTransition(f"{current.value} -> {new.value} is not allowed")
 
-    now = datetime.utcnow()
+    now = utcnow()
     values: dict = {"status": new.value, "updated_at": now, **fields}
     if new == S.READY:
         values.setdefault("ready_at", now)
@@ -89,7 +90,12 @@ async def transition(
         setattr(deployment, key, value)
     db.add(
         DeploymentEvent(
-            deployment_id=deployment.id, from_status=current.value, to_status=new.value, actor=actor, message=message
+            deployment_id=deployment.id,
+            from_status=current.value,
+            to_status=new.value,
+            actor=actor,
+            message=message,
+            node_id=deployment.node_id,
         )
     )
     return True

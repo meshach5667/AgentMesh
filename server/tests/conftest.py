@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.core import database
-from app.core.ratelimit import concurrency_limiter, request_limiter
+from app.core.ratelimit import limiters
 from app.core.security import create_access_token, get_password_hash
 from app.main import app
-from app.models import Base, Customer, Model, Provider, User
+from app.models import Base, Customer, Model, ModelArtifact, Provider, User
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -53,8 +53,7 @@ async def _isolate_state(session_factory):
     database and reset in-process limiters between tests."""
     previous = database._session_factory
     database.set_session_factory(session_factory)
-    request_limiter.reset()
-    concurrency_limiter.reset()
+    limiters.use_memory()
     yield
     database.set_session_factory(previous)
 
@@ -174,5 +173,19 @@ async def ollama_model(db):
         is_approved=True,
     )
     db.add(model)
+    await db.flush()
+    db.add(
+        ModelArtifact(
+            model_id=model.id,
+            runtime="ollama",
+            source_type="ollama",
+            reference="qwen2.5:0.5b",
+            format="ollama",
+            min_ram_mb=1024,
+            min_disk_mb=768,
+            min_cpu_cores=1,
+        )
+    )
     await db.commit()
+    await db.refresh(model)
     return model

@@ -18,7 +18,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       {children}
       <Toaster position="bottom-right" toastOptions={{
-        className: '!bg-card !text-card-foreground !border !border-border !shadow-lg',
+        className: '!bg-popover !text-popover-foreground !border !border-border !shadow-lg !rounded-xl !text-sm',
         duration: 4000,
       }} />
     </QueryClientProvider>

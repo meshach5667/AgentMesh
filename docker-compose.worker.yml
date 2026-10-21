@@ -27,6 +27,8 @@ services:
       # Pin by digest in production, e.g. ollama/ollama@sha256:<digest>
       AGENTMESH_OLLAMA_IMAGE: ${AGENTMESH_OLLAMA_IMAGE:-ollama/ollama:0.12.3}
       AGENTMESH_WORKLOAD_NETWORK: agentmesh-workloads
+      # Workloads join this network only while downloading their model, then lose internet access.
+      AGENTMESH_EGRESS_NETWORK: agentmesh-egress
       AGENTMESH_MODELS_VOLUME: agentmesh-models
     volumes:
       - agentmesh-worker-state:/var/lib/agentmesh
@@ -50,6 +52,9 @@ services:
 networks:
   agentmesh-workloads:
     name: agentmesh-workloads
+    internal: true  # no route to the internet for serving workloads
+  agentmesh-egress:
+    name: agentmesh-egress
   egress: {}
 
 volumes:

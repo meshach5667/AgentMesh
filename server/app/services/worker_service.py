@@ -3,7 +3,8 @@ and deployment status reports."""
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select, update
@@ -13,11 +14,13 @@ from app.core.config import settings
 from app.core.db_utils import rowcount as _rowcount
 from app.core.ids import parse_uuid
 from app.core.security import generate_secret, hash_secret, verify_node_api_key
+from app.core.timeutil import utcnow
 from app.models.deployment import Deployment
 from app.models.deployment import DeploymentStatus as S
+from app.models.model import ModelArtifact
 from app.models.node import Node, NodeHardware, NodeStatus
 from app.models.user import Provider
-from app.models.worker import CommandStatus, CommandType, NodeCommand, NodeEnrollmentToken
+from app.models.worker import CommandStatus, NodeCommand, NodeEnrollmentToken
 from app.schemas.worker import (
     Allocation,
     CommandOut,
@@ -27,7 +30,9 @@ from app.schemas.worker import (
     HeartbeatRequest,
     HeartbeatResponse,
 )
+from app.services import audit_service, placement_service, release_service
 from app.services import deployment_lifecycle as lifecycle
+from app.services.commands import cancel_undelivered, enqueue_command  # noqa: F401  (re-exported)
 from app.services.scheduler_service import release_reservation
 
 ENROLL_TOKEN_PREFIX = "am_enroll_"
@@ -42,11 +47,19 @@ async def create_enrollment_token(db: AsyncSession, user_id, name: str | None, r
     if not provider:
         raise HTTPException(status_code=403, detail="Provider account required")
     token = generate_secret(ENROLL_TOKEN_PREFIX)
-    expires_at = datetime.utcnow() + timedelta(minutes=settings.ENROLLMENT_TOKEN_TTL_MINUTES)
-    db.add(
-        NodeEnrollmentToken(
-            provider_id=provider.id, token_hash=hash_secret(token), name=name, region=region, expires_at=expires_at
-        )
+    expires_at = utcnow() + timedelta(minutes=settings.ENROLLMENT_TOKEN_TTL_MINUTES)
+    row = NodeEnrollmentToken(
+        provider_id=provider.id, token_hash=hash_secret(token), name=name, region=region, expires_at=expires_at
+    )
+    db.add(row)
+    await db.flush()
+    audit_service.record(
+        db,
+        actor_id=user_id,
+        action="node.enrollment_token_created",
+        resource_type="enrollment_token",
+        resource_id=row.id,
+        details={"name": name, "region": region},
     )
     await db.commit()
     return {"token": token, "expires_at": expires_at}
@@ -79,7 +92,7 @@ async def enroll(db: AsyncSession, req: EnrollRequest) -> dict:
     if req.protocol_version not in settings.WORKER_PROTOCOL_VERSIONS:
         raise HTTPException(status_code=426, detail="Unsupported worker protocol version")
 
-    now = datetime.utcnow()
+    now = utcnow()
     token_hash = hash_secret(req.token)
     # Claim the token atomically so it can be used exactly once.
     claimed = await db.execute(
@@ -133,6 +146,14 @@ async def enroll(db: AsyncSession, req: EnrollRequest) -> dict:
         )
     )
     token.node_id = node.id
+    audit_service.record(
+        db,
+        actor_id=None,
+        action="node.enrolled",
+        resource_type="node",
+        resource_id=node.id,
+        details={"provider_id": str(token.provider_id), "mode": req.mode, "worker_version": req.worker_version},
+    )
     await db.commit()
     return {
         "node_id": node.id,
@@ -142,7 +163,9 @@ async def enroll(db: AsyncSession, req: EnrollRequest) -> dict:
     }
 
 
-async def authenticate_worker(db: AsyncSession, node_id: str | None, credential: str | None, protocol: str | None):
+async def authenticate_worker(
+    db: AsyncSession, node_id: str | None, credential: str | None, protocol: str | None
+) -> Node:
     if protocol is not None:
         try:
             version = int(protocol)
@@ -169,12 +192,14 @@ async def authenticate_worker(db: AsyncSession, node_id: str | None, credential:
 
 
 async def heartbeat(db: AsyncSession, node: Node, req: HeartbeatRequest) -> HeartbeatResponse:
-    now = datetime.utcnow()
+    now = utcnow()
     node.last_heartbeat = now
     node.status = NodeStatus.ONLINE
     node.worker_version = req.worker_version
     node.last_metrics = {k: float(v) for k, v in list(req.metrics.items())[:32]}
     _apply_capabilities(node, req.hardware, req.allocation, req.runtimes)
+    node.worker_available = req.available
+    node.worker_unavailable_reason = None if req.available else (req.unavailable_reason or "paused")
 
     stop: list[uuid.UUID] = []
     reported = {r.deployment_id: r for r in req.deployments}
@@ -222,71 +247,25 @@ async def heartbeat(db: AsyncSession, node: Node, req: HeartbeatRequest) -> Hear
         accepting_workloads=bool(node.accepting_workloads),
         heartbeat_interval_seconds=settings.WORKER_HEARTBEAT_INTERVAL_SECONDS,
         stop_deployments=stop,
+        latest_worker_version=release_service.latest_version(),
     )
 
 
 async def disconnect(db: AsyncSession, node: Node) -> None:
     """Graceful worker shutdown: stop scheduling onto the node right away instead of waiting for the
-    heartbeat timeout. Capacity stays reserved; serving deployments become UNHEALTHY until it returns."""
+    heartbeat timeout, and handle its deployments like any other node loss."""
+    from app.background.monitors import handle_node_loss
+
     node.status = NodeStatus.OFFLINE
-    deps = (
-        (await db.execute(select(Deployment).where(Deployment.node_id == node.id, Deployment.status == S.READY.value)))
-        .scalars()
-        .all()
-    )
-    for dep in deps:
-        await lifecycle.transition(db, dep, S.UNHEALTHY, actor="worker", message="Worker shut down")
+    await handle_node_loss(db, node, "Worker shut down")
     await db.commit()
 
 
 # --- Command queue -------------------------------------------------------------------------------------
 
 
-async def enqueue_command(db: AsyncSession, node_id, deployment_id, type_: CommandType, payload: dict) -> NodeCommand:
-    """Queue a command. A STOP is not duplicated while an identical one is outstanding. Does not commit."""
-    if type_ == CommandType.STOP:
-        existing = (
-            await db.execute(
-                select(NodeCommand).where(
-                    NodeCommand.deployment_id == deployment_id,
-                    NodeCommand.type == CommandType.STOP.value,
-                    NodeCommand.status.in_([CommandStatus.PENDING.value, CommandStatus.LEASED.value]),
-                )
-            )
-        ).scalar_one_or_none()
-        if existing:
-            return existing
-    cmd = NodeCommand(
-        node_id=node_id,
-        deployment_id=deployment_id,
-        type=type_.value,
-        payload=payload,
-        status=CommandStatus.PENDING.value,
-        attempts=0,
-        max_attempts=settings.COMMAND_MAX_ATTEMPTS,
-    )
-    db.add(cmd)
-    return cmd
-
-
-async def cancel_undelivered(db: AsyncSession, deployment_id, type_: CommandType) -> bool:
-    """Cancel a command that no worker has leased yet. Returns True if one was cancelled."""
-    result = await db.execute(
-        update(NodeCommand)
-        .where(
-            NodeCommand.deployment_id == deployment_id,
-            NodeCommand.type == type_.value,
-            NodeCommand.status == CommandStatus.PENDING.value,
-            NodeCommand.attempts == 0,
-        )
-        .values(status=CommandStatus.CANCELLED.value, completed_at=datetime.utcnow())
-        .execution_options(synchronize_session=False)
-    )
-    return _rowcount(result) > 0
-
-
 async def _lease_once(db: AsyncSession, node: Node, max_commands: int) -> list[CommandOut]:
-    now = datetime.utcnow()
+    now = utcnow()
     candidates = (
         (
             await db.execute(
@@ -349,24 +328,29 @@ async def ack_command(db: AsyncSession, node: Node, command_id: str, status: str
         raise HTTPException(status_code=404, detail="Command not found")
     if cmd.status in (CommandStatus.SUCCEEDED.value, CommandStatus.FAILED.value, CommandStatus.CANCELLED.value):
         return  # duplicate ack: idempotent
-    now = datetime.utcnow()
+    now = utcnow()
     cmd.status = CommandStatus.FAILED.value if status == "failed" else CommandStatus.SUCCEEDED.value
     cmd.error = error
     cmd.completed_at = now
     if status == "failed" and cmd.deployment_id:
         dep = await db.get(Deployment, cmd.deployment_id)
-        if dep and S(dep.status) not in lifecycle.TERMINAL:
-            target = S.FAILED
-            await lifecycle.transition(
+        if dep and S(dep.status) not in lifecycle.TERMINAL and dep.node_id == node.id:
+            await placement_service.fail_or_reschedule(
                 db,
                 dep,
-                target,
-                actor="worker",
+                code="WORKER_REJECTED",
                 message=error or f"{cmd.type} command failed",
-                error_code="WORKER_REJECTED",
+                actor="worker",
+                cleanup_old_node=False,
             )
-            await release_reservation(db, dep.id)
     await db.commit()
+
+
+def deployment_endpoint(dep: Deployment) -> str:
+    """Runtime-native base URL: Ollama deployments also expose Ollama's own API under /ollama; every runtime
+    exposes the OpenAI-compatible API under /v1."""
+    base = f"{settings.PUBLIC_BASE_URL}{settings.API_V1_PREFIX}/deployments/{dep.id}"
+    return f"{base}/ollama" if dep.runtime == "ollama" else f"{base}/v1"
 
 
 # --- Deployment status reports -------------------------------------------------------------------------
@@ -380,7 +364,7 @@ async def report_deployment_status(
         raise HTTPException(status_code=404, detail="Deployment not found")
 
     current = S(dep.status)
-    now = datetime.utcnow()
+    now = utcnow()
     state = report.state
 
     if state == "STOPPED":
@@ -389,17 +373,21 @@ async def report_deployment_status(
         if current == S.STOPPING:
             final = S.STOPPED if dep.was_ready else S.CANCELLED
             await lifecycle.transition(db, dep, final, actor="worker", message=report.message or "Workload stopped")
-        elif current not in lifecycle.TERMINAL:
-            await lifecycle.transition(
+            dep.cleanup_status = "done"
+            await release_reservation(db, dep.id)
+        elif current in lifecycle.TERMINAL:
+            dep.cleanup_status = "done"  # late confirmation; the reservation was already released
+        else:
+            moved = await placement_service.fail_or_reschedule(
                 db,
                 dep,
-                S.FAILED,
-                actor="worker",
+                code=report.error_code or "WORKLOAD_EXITED",
                 message=report.message or "Workload stopped unexpectedly",
-                error_code=report.error_code or "WORKLOAD_EXITED",
+                actor="worker",
+                cleanup_old_node=False,
             )
-        dep.cleanup_status = "done"
-        await release_reservation(db, dep.id)
+            if not moved:
+                dep.cleanup_status = "done"
         await db.commit()
         return {"status": dep.status}
 
@@ -409,20 +397,25 @@ async def report_deployment_status(
         return {"status": dep.status, "ignored": True}
 
     if state == "FAILED":
-        await lifecycle.transition(
+        # The worker removes its runtime before reporting FAILED, so there is nothing to clean up there.
+        moved = await placement_service.fail_or_reschedule(
             db,
             dep,
-            S.FAILED,
-            actor="worker",
+            code=report.error_code or "PROVISIONING_FAILED",
             message=report.message or "Provisioning failed",
-            error_code=report.error_code or "PROVISIONING_FAILED",
+            actor="worker",
+            cleanup_old_node=False,
         )
-        dep.cleanup_status = "pending"
-        await release_reservation(db, dep.id)
+        if not moved:
+            dep.cleanup_status = "done"
         await db.commit()
         return {"status": dep.status}
 
     target = S(state)
+    if current in (S.READY, S.UNHEALTHY) and target in (S.PROVISIONING, S.STARTING):
+        # Only a customer restart may take a serving deployment back to provisioning; a worker report
+        # like this is stale (e.g. sent while re-adopting after its own restart).
+        raise HTTPException(status_code=409, detail=f"{current.value} -> {target.value} is not allowed from a worker")
     if target == current:
         if report.message:
             await lifecycle.record_event(db, dep, actor="worker", message=report.message)
@@ -430,14 +423,19 @@ async def report_deployment_status(
         await db.commit()
         return {"status": dep.status}
 
-    extra = {}
+    extra: dict[str, Any] = {}
     if target == S.READY:
         extra = {
             "model_digest": report.model_digest,
             "last_health_at": now,
-            "endpoint": f"{settings.PUBLIC_BASE_URL}{settings.API_V1_PREFIX}/deployments/{dep.id}/ollama",
+            "endpoint": deployment_endpoint(dep),
             "started_at": dep.started_at or now,
         }
+    if target == S.READY and dep.artifact_id:
+        # Evidence that this model/runtime combination really serves, not just that it is in the catalog.
+        artifact = await db.get(ModelArtifact, dep.artifact_id)
+        if artifact is not None:
+            artifact.last_ready_at = now
     try:
         ok = await lifecycle.transition(db, dep, target, actor="worker", message=report.message, **extra)
     except lifecycle.InvalidTransition as exc:

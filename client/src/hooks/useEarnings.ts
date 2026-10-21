@@ -1,51 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
+import type { EarningsSummary, Transaction } from '../types';
 
-export interface EarningsData {
-  pending_earnings: number;
-  available_balance: number;
-  total_earned: number;
-}
-
-export interface PayoutRecord {
-  id: string;
-  date: string;
-  amount: number;
-  status: string;
-  type: string;
-}
-
-export const useEarnings = () => {
-  return useQuery({
+export const useEarnings = () =>
+  useQuery({
     queryKey: ['earnings'],
-    queryFn: async () => {
-      // Assuming a generic /earnings endpoint for overview
-      try {
-        const { data } = await api.get<EarningsData>('/earnings');
-        return data;
-      } catch (error) {
-        // Fallback for UI if endpoint doesn't exist yet
-        console.warn('API /earnings not ready, falling back');
-        return {
-          pending_earnings: 0,
-          available_balance: 0,
-          total_earned: 0,
-        };
-      }
-    },
+    queryFn: async () => (await api.get<EarningsSummary>('/earnings')).data,
   });
-};
 
-export const usePayoutHistory = () => {
-  return useQuery({
-    queryKey: ['earnings-history'],
-    queryFn: async () => {
-      try {
-        const { data } = await api.get<PayoutRecord[]>('/earnings/history');
-        return data;
-      } catch (error) {
-        return [];
-      }
-    },
+/** Provider credits (settled and pending) to the caller's wallet. */
+export const useEarningsHistory = () =>
+  useQuery({
+    queryKey: ['earnings', 'history'],
+    queryFn: async () => (await api.get<Transaction[]>('/earnings/history')).data,
   });
-};

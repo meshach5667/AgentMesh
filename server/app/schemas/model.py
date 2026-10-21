@@ -1,7 +1,30 @@
 import uuid
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class ArtifactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    runtime: str
+    source_type: str
+    reference: str
+    revision: str | None = None
+    file: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
+    format: str | None = None
+    quantization: str | None = None
+    min_ram_mb: int
+    min_disk_mb: int
+    min_vram_mb: int
+    min_cpu_cores: int
+    gpu_required: bool
+    requirements_estimated: bool
+    is_enabled: bool
+    last_ready_at: datetime | None = None
 
 
 class ModelOut(BaseModel):
@@ -27,6 +50,7 @@ class ModelOut(BaseModel):
     min_cpu_cores: int | None = None
     gpu_required: bool = False
     requirements_estimated: bool = True
+    artifacts: list[ArtifactOut] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
@@ -69,3 +93,27 @@ class ModelCreate(BaseModel):
         if v is not None and not OLLAMA_TAG_RE.fullmatch(v):
             raise ValueError("model_tag must be a plain runtime model reference such as 'qwen2.5:0.5b'")
         return v
+
+
+class ArtifactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    runtime: Literal["ollama", "llamacpp", "vllm"]
+    source_type: Literal["ollama", "huggingface"]
+    reference: str = Field(max_length=255)
+    revision: str | None = Field(None, max_length=64)
+    file: str | None = Field(None, max_length=255)
+    sha256: str | None = Field(None, max_length=64)
+    size_bytes: int | None = Field(None, ge=0)
+    format: Literal["ollama", "gguf", "safetensors"] | None = None
+    quantization: str | None = Field(None, max_length=50)
+    min_ram_mb: int = Field(ge=64)
+    min_disk_mb: int = Field(ge=1)
+    min_vram_mb: int = Field(0, ge=0)
+    min_cpu_cores: int = Field(1, ge=1)
+    gpu_required: bool = False
+    requirements_estimated: bool = True
+
+
+class ArtifactUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    is_enabled: bool

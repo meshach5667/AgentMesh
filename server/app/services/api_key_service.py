@@ -6,8 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ids import parse_uuid
 from app.core.security import generate_secret, hash_secret
+from app.core.timeutil import utcnow
 from app.models.api_key import ApiKey
 from app.models.user import User
+from app.services import audit_service
 
 API_KEY_PREFIX = "am_sk_"
 SCOPES = frozenset({"inference"})
@@ -35,6 +37,15 @@ async def create_api_key(
         expires_at=expires_at,
     )
     db.add(key)
+    await db.flush()
+    audit_service.record(
+        db,
+        actor_id=user.id,
+        action="api_key.created",
+        resource_type="api_key",
+        resource_id=key.id,
+        details={"name": name, "scopes": key.scopes, "deployment_id": str(dep_uuid) if dep_uuid else None},
+    )
     await db.commit()
     await db.refresh(key)
     return key, secret
@@ -50,7 +61,10 @@ async def revoke_api_key(db: AsyncSession, user: User, key_id: str) -> ApiKey:
     if key is None or key.user_id != user.id:
         raise HTTPException(status_code=404, detail="API key not found")
     if key.revoked_at is None:
-        key.revoked_at = datetime.utcnow()
+        key.revoked_at = utcnow()
+        audit_service.record(
+            db, actor_id=user.id, action="api_key.revoked", resource_type="api_key", resource_id=key.id
+        )
         await db.commit()
     return key
 
@@ -62,6 +76,6 @@ async def resolve_api_key(db: AsyncSession, secret: str) -> ApiKey | None:
     key = (await db.execute(select(ApiKey).where(ApiKey.key_hash == hash_secret(secret)))).scalar_one_or_none()
     if key is None or key.revoked_at is not None:
         return None
-    if key.expires_at is not None and key.expires_at <= datetime.utcnow():
+    if key.expires_at is not None and key.expires_at <= utcnow():
         return None
     return key

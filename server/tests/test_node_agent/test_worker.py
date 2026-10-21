@@ -30,6 +30,7 @@ def deploy_cmd(cmd_id="c1", dep=DEP, tag="qwen2.5:0.5b"):
 
 class FakeRuntime:
     name, backend = "ollama", "process"
+    allowed_paths = frozenset({"/api/chat", "/api/generate", "/v1/chat/completions", "/v1/completions"})
 
     def __init__(self, fail_at=None, pull_delay=0.0):
         self.fail_at = fail_at
@@ -122,7 +123,7 @@ async def test_deploy_reports_full_lifecycle(make_worker):
     states = [s for _, s, _ in w.client.reports]
     assert states == ["PROVISIONING", "PROVISIONING", "STARTING", "READY"]
     assert w.client.acks == [("c1", "accepted")]
-    assert w._resolve(DEP) == ("http://127.0.0.1:1", "qwen2.5:0.5b")
+    assert w._resolve(DEP)[:2] == ("http://127.0.0.1:1", "qwen2.5:0.5b")
 
 
 async def test_duplicate_command_is_not_executed_twice(make_worker):
@@ -256,3 +257,85 @@ def test_control_plane_url_policy(url, ok):
     else:
         with pytest.raises(ValueError):
             WorkerSettings(CONTROL_PLANE_URL=url)
+
+
+class FlakyPullRuntime(FakeRuntime):
+    def __init__(self, failures, transient=True):
+        super().__init__()
+        self.failures = failures
+        self.transient = transient
+        self.pull_calls = 0
+
+    async def prepare_model(self, handle, spec, progress):
+        self.pull_calls += 1
+        if self.pull_calls <= self.failures:
+            raise WorkloadError("MODEL_PULL_FAILED", "registry returned 503", transient=self.transient)
+
+
+@pytest.fixture
+def fast_retries(make_worker):
+    def _make(runtime):
+        w = make_worker(runtime)
+        w.settings.PULL_RETRY_BASE_SECONDS = 0.01
+        return w
+
+    return _make
+
+
+async def test_transient_pull_failures_are_retried(fast_retries):
+    rt = FlakyPullRuntime(failures=2)
+    w = fast_retries(rt)
+    await w.handle_command(deploy_cmd())
+    await _settle(w)
+    assert rt.pull_calls == 3
+    assert w.client.reports[-1][1] == "READY"
+
+
+async def test_pull_retries_are_bounded(fast_retries):
+    rt = FlakyPullRuntime(failures=10)
+    w = fast_retries(rt)
+    await w.handle_command(deploy_cmd())
+    await _settle(w)
+    assert rt.pull_calls == 3
+    assert w.client.reports[-1] == (DEP, "FAILED", "MODEL_PULL_FAILED")
+
+
+async def test_permanent_pull_failure_is_not_retried(fast_retries):
+    rt = FlakyPullRuntime(failures=10, transient=False)
+    w = fast_retries(rt)
+    await w.handle_command(deploy_cmd())
+    await _settle(w)
+    assert rt.pull_calls == 1
+
+
+def test_transient_error_classification():
+    from node_agent.runtime.ollama_api import is_transient
+
+    assert is_transient("503: ") and is_transient("read: connection reset by peer") and is_transient("i/o timeout")
+    assert not is_transient("pull model manifest: file does not exist")
+
+
+async def test_restart_command_redeploys_without_reporting_stopped(make_worker):
+    w = make_worker()
+    await w.handle_command(deploy_cmd())
+    await _settle(w)
+    w.client.reports.clear()
+    restart = {**deploy_cmd("r1"), "type": "RESTART"}
+    await w.handle_command(restart)
+    await _settle(w)
+    assert w.runtime.removed == [DEP] and w.runtime.started == [DEP, DEP]
+    states = [s for _, s, _ in w.client.reports]
+    assert "STOPPED" not in states and states[-1] == "READY"
+
+
+async def test_unexpected_runtime_bug_is_reported_not_stranded(make_worker):
+    class Buggy(FakeRuntime):
+        async def prepare_model(self, handle, spec, progress):
+            raise TypeError("bug in runtime code")
+
+    rt = Buggy()
+    w = make_worker(rt)
+    await w.handle_command(deploy_cmd())
+    await _settle(w)
+    assert w.client.reports[-1] == (DEP, "FAILED", "WORKER_ERROR")
+    assert rt.removed == [DEP] and DEP not in w.workloads

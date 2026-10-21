@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useSyncExternalStore } from 'react';
 
 type Theme = 'dark' | 'light';
 
@@ -12,49 +12,35 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('dark');
-  const [mounted, setMounted] = useState(false);
+// The <html> class (set before paint by the inline script in app/layout.tsx) is the source of truth.
+const listeners = new Set<() => void>();
+const subscribe = (cb: () => void) => {
+  listeners.add(cb);
+  return () => listeners.delete(cb);
+};
+const read = (): Theme => (document.documentElement.classList.contains('light') ? 'light' : 'dark');
 
-  useEffect(() => {
-    setMounted(true);
-    const stored = localStorage.getItem('theme') as Theme | null;
-    if (stored) {
-      setThemeState(stored);
-    } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
-      setThemeState('light');
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    const root = document.documentElement;
-    root.classList.remove('dark', 'light');
-    root.classList.add(theme);
+function apply(theme: Theme) {
+  const root = document.documentElement;
+  root.classList.remove('dark', 'light');
+  root.classList.add(theme);
+  try {
     localStorage.setItem('theme', theme);
-  }, [theme, mounted]);
+  } catch {
+    // storage may be unavailable (private mode); the class still applies for this visit
+  }
+  listeners.forEach((l) => l());
+}
 
-  const toggleTheme = () => {
-    setThemeState((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
-
-  const setTheme = (t: Theme) => setThemeState(t);
-
-  return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const theme = useSyncExternalStore(subscribe, read, () => 'dark' as Theme);
+  const setTheme = useCallback((t: Theme) => apply(t), []);
+  const toggleTheme = useCallback(() => apply(read() === 'dark' ? 'light' : 'dark'), []);
+  return <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>{children}</ThemeContext.Provider>;
 }
 
 export const useTheme = () => {
   const ctx = useContext(ThemeContext);
-  if (!ctx) {
-    return {
-      theme: 'dark' as Theme,
-      toggleTheme: () => {},
-      setTheme: () => {},
-    };
-  }
+  if (!ctx) return { theme: 'dark' as Theme, toggleTheme: () => {}, setTheme: () => {} };
   return ctx;
 };

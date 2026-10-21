@@ -43,9 +43,18 @@ services:
       - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY to a random value of at least 32 characters}
       - ENVIRONMENT=production
       - ALLOW_TEST_CREDITS=false
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      # https URL customers and workers use to reach this API (behind your TLS-terminating proxy)
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the public https URL of the API}
+      - FRONTEND_URL=${FRONTEND_URL:?Set FRONTEND_URL to the public URL of the dashboard}
+      - CORS_ORIGINS=["${FRONTEND_URL}"]
+      # Paystack test key (sk_test_...). Payments stay disabled while unset.
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
+      - BILLING_CURRENCY=${BILLING_CURRENCY:-NGN}
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+    # --proxy-headers: client addresses (rate limits, audit log, webhook IP checks) come from the TLS proxy.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 3

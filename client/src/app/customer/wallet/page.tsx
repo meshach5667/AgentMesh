@@ -1,82 +1,195 @@
 'use client';
 
-import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Wallet, CreditCard, Activity } from 'lucide-react';
-import { useWallet } from '@/hooks/useWallet';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ChargesTable } from '@/components/billing/ChargesTable';
+import { PricingCard } from '@/components/billing/PricingCard';
+import { StatCard } from '@/components/common/StatCard';
+import { Pill, StatusBadge } from '@/components/common/StatusBadge';
+import { ErrorState, Notice, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
+import { useCharges, useCreateTopup, usePaymentsConfig, useTopups, useVerifyTopup } from '@/hooks/useBilling';
+import { useAddTestCredits, useWallet } from '@/hooks/useWallet';
+import { isPaystackCheckout, returnedReference, sumAmounts } from '@/lib/billing';
+import { errorMessage } from '@/lib/errors';
+import { dateTime, money } from '@/lib/format';
 
-export default function CustomerWalletPage() {
-  const { data: wallet, isLoading } = useWallet();
+function Wallet() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const wallet = useWallet();
+  const config = usePaymentsConfig();
+  const topups = useTopups();
+  const charges = useCharges();
+  const createTopup = useCreateTopup();
+  const verify = useVerifyTopup();
+  const addCredits = useAddTestCredits();
+  const [amount, setAmount] = useState('');
+  const [testAmount, setTestAmount] = useState('1000');
+  const verifiedRef = useRef<string | null>(null);
 
-  if (isLoading) {
-    return <PageSkeleton />;
-  }
+  // Returning from Paystack checkout: ask the server to confirm with Paystack, then clean the URL.
+  const reference = returnedReference(params);
+  useEffect(() => {
+    if (!reference || verifiedRef.current === reference) return;
+    verifiedRef.current = reference;
+    verify.mutate(reference, {
+      onSuccess: (p) => {
+        if (p.status === 'SUCCEEDED') toast.success(`${money(p.amount, p.currency)} added to your wallet`);
+        else if (p.status === 'INITIALIZED') toast('Payment not confirmed yet. It will be credited when Paystack confirms it.');
+        else toast.error(`Payment ${p.status.toLowerCase()}${p.failure_reason ? `: ${p.failure_reason}` : ''}`);
+        router.replace('/customer/wallet');
+      },
+      onError: (e) => toast.error(errorMessage(e)),
+    });
+  }, [reference, verify, router]);
+
+  if (wallet.isLoading || config.isLoading) return <PageSkeleton />;
+  if (wallet.error || !wallet.data) return <ErrorState message={errorMessage(wallet.error)} retry={() => wallet.refetch()} />;
+  const cfg = config.data;
+  const currency = wallet.data.currency;
+  const spent = sumAmounts(charges.data ?? []);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Wallet</h1>
-        <p className="text-muted-foreground">Manage your compute credits for deploying AI models.</p>
+      <PageHeader title="Wallet" description="Prepaid balance for your deployments." />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard title="Balance" value={money(wallet.data.balance, currency)} hint={Number(wallet.data.balance) < 0 ? 'Top up to deploy again' : currency} />
+        <StatCard title="Charged (recent)" value={money(spent, currency)} hint="Sum of the charges listed below" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card className="border-blue-500/30 shadow-lg shadow-blue-500/5">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Available Balance</CardTitle>
-            <Wallet className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold mb-4">${wallet?.balance?.toFixed(2) || '150.00'}</div>
-            <div className="flex gap-3">
-              <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white">
-                <CreditCard className="mr-2 h-4 w-4" /> Add Funds
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
+      {cfg?.enabled ? (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Current Spend Rate</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Add funds {cfg.mode === 'test' && <Pill tone="amber">Paystack test mode: no real money</Pill>}
+            </CardTitle>
+            <CardDescription>
+              You pay on Paystack&apos;s checkout page. Your balance is credited once Paystack confirms the payment.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-400">-$0.45 / hr</div>
-            <p className="text-xs text-muted-foreground mt-1">Based on 2 active deployments</p>
-            <div className="mt-4 pt-4 border-t border-border/50 flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Estimated runway:</span>
-              <span className="font-medium">~14 days</span>
-            </div>
+            <form
+              className="flex max-w-md items-end gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                createTopup.mutate(amount, {
+                  onSuccess: (p) => {
+                    if (isPaystackCheckout(p.authorization_url)) window.location.assign(p.authorization_url);
+                    else toast.error('Paystack did not return a valid checkout link');
+                  },
+                  onError: (err) => toast.error(errorMessage(err)),
+                });
+              }}
+            >
+              <div className="flex-1 space-y-1">
+                <label htmlFor="topup" className="text-xs text-muted-foreground">
+                  Amount ({cfg.currency}, {cfg.topup_min} to {cfg.topup_max})
+                </label>
+                <Input id="topup" type="number" min={cfg.topup_min} max={cfg.topup_max} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+              </div>
+              <Button type="submit" disabled={createTopup.isPending || !amount}>
+                {createTopup.isPending ? 'Opening Paystack…' : 'Pay with Paystack'}
+              </Button>
+            </form>
           </CardContent>
         </Card>
-      </div>
+      ) : (
+        <Notice title="Card payments are not configured on this network">
+          An operator must set a Paystack secret key before customers can add funds.
+        </Notice>
+      )}
+
+      {cfg?.test_credits && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Add test credits</CardTitle>
+            <CardDescription>Development environments only. Unpaid and without value.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="flex max-w-sm items-end gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                addCredits.mutate(Number(testAmount), {
+                  onSuccess: () => toast.success('Test credits added'),
+                  onError: (err) => toast.error(errorMessage(err)),
+                });
+              }}
+            >
+              <Input aria-label="Test credit amount" type="number" min={1} value={testAmount} onChange={(e) => setTestAmount(e.target.value)} />
+              <Button type="submit" variant="outline" disabled={addCredits.isPending}>
+                Add test credits
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      )}
+
+      <PricingCard />
+
+      {(topups.data ?? []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Top-ups</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(topups.data ?? []).map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-xs">{dateTime(p.created_at)}</TableCell>
+                    <TableCell className="font-mono text-xs">{p.reference}</TableCell>
+                    <TableCell>
+                      <StatusBadge status={p.status} />
+                      {p.failure_reason && <div className="text-xs text-muted-foreground">{p.failure_reason}</div>}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs">{money(p.amount, p.currency)}</TableCell>
+                    <TableCell className="text-right">
+                      {p.status === 'INITIALIZED' && (
+                        <Button size="sm" variant="ghost" disabled={verify.isPending} onClick={() => verify.mutate(p.reference, { onError: (e) => toast.error(errorMessage(e)) })}>
+                          Check status
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Payment Methods</CardTitle>
-          <CardDescription>Configure how you fund your AI workloads.</CardDescription>
+          <CardTitle>Recent charges</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-secondary/20">
-             <div className="flex items-center gap-4">
-                <div className="w-10 h-6 bg-white rounded flex items-center justify-center">
-                  <span className="text-[10px] font-bold text-blue-800">VISA</span>
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Visa ending in 4242</p>
-                  <p className="text-xs text-muted-foreground">Expires 12/25</p>
-                </div>
-             </div>
-             <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">Default</Badge>
-          </div>
-          <Button variant="outline" className="w-full border-dashed">
-            + Add Payment Method
-          </Button>
+        <CardContent>
+          <ChargesTable charges={charges.data ?? []} empty="No charges yet." />
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function WalletPage() {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <Wallet />
+    </Suspense>
   );
 }

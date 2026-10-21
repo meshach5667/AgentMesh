@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { User, UserRole } from '../types/user';
 import api from '../lib/api';
+import { errorMessage } from '../lib/errors';
 import { setToken, removeToken, getToken } from '../lib/auth';
 
 interface AuthState {
@@ -16,7 +17,7 @@ interface AuthState {
   clearError: () => void;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: null,
   isAuthenticated: false,
@@ -34,8 +35,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         isLoading: false,
       });
-    } catch (err: any) {
-      const message = err.response?.data?.detail || 'Login failed';
+    } catch (err) {
+      const message = errorMessage(err, 'Login failed');
       set({ error: message, isLoading: false });
       throw new Error(message);
     }
@@ -52,8 +53,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         isLoading: false,
       });
-    } catch (err: any) {
-      const message = err.response?.data?.detail || 'Registration failed';
+    } catch (err) {
+      const message = errorMessage(err, 'Registration failed');
       set({ error: message, isLoading: false });
       throw new Error(message);
     }

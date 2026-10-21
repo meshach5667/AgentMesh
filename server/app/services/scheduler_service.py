@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 
 from app.core.config import settings
 from app.core.db_utils import rowcount as _rowcount
+from app.core.timeutil import utcnow
 from app.models.node import Node, NodeHardware, NodeStatus
 from app.models.reservation import ResourceReservation
 from app.services.catalog_service import ResourceRequest
@@ -20,6 +21,7 @@ REASON_RUNTIME = "unsupported_runtime"
 REASON_HARDWARE = "incompatible_hardware"  # e.g. GPU required but none allocated
 REASON_CAPACITY = "insufficient_capacity"
 REASON_REGION = "region_mismatch"
+REASON_PREVIOUSLY_FAILED = "previously_failed"  # nodes this deployment already failed on
 
 REASON_TEXT = {
     REASON_UNAVAILABLE: "nodes are offline, paused, or not reporting heartbeats",
@@ -27,6 +29,7 @@ REASON_TEXT = {
     REASON_HARDWARE: "nodes lack the required hardware (for example a GPU)",
     REASON_CAPACITY: "nodes do not have enough free CPU, memory, disk, or VRAM allocated to AgentMesh",
     REASON_REGION: "nodes are outside the requested region",
+    REASON_PREVIOUSLY_FAILED: "nodes already failed this deployment",
 }
 
 
@@ -53,23 +56,30 @@ def _free(node: Node, resource: str) -> int:
 
 
 def node_is_fresh(node: Node, now: datetime | None = None) -> bool:
-    now = now or datetime.utcnow()
-    return bool(node.last_heartbeat) and now - node.last_heartbeat <= timedelta(
-        seconds=settings.HEARTBEAT_TIMEOUT_SECONDS
-    )
+    now = now or utcnow()
+    if node.last_heartbeat is None:
+        return False
+    return now - node.last_heartbeat <= timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
 
 
 def offers_runtime(node: Node, runtime: str) -> bool:
     return any(r.get("name") == runtime and r.get("available") for r in (node.runtimes or []) if isinstance(r, dict))
 
 
-async def evaluate_nodes(db: AsyncSession, req: ResourceRequest) -> Evaluation:
+async def evaluate_nodes(db: AsyncSession, req: ResourceRequest, exclude: set | None = None) -> Evaluation:
     result = await db.execute(select(Node).where(Node.mode.is_not(None)))
     nodes = list(result.scalars().all())
     ev = Evaluation()
-    now = datetime.utcnow()
+    now = utcnow()
     for node in nodes:
-        if node.status != NodeStatus.ONLINE or not node.accepting_workloads or not node_is_fresh(node, now):
+        if exclude and node.id in exclude:
+            ev.reasons[REASON_PREVIOUSLY_FAILED] += 1
+        elif (
+            node.status != NodeStatus.ONLINE
+            or not node.accepting_workloads
+            or not node.worker_available
+            or not node_is_fresh(node, now)
+        ):
             ev.reasons[REASON_UNAVAILABLE] += 1
         elif req.region and node.region != req.region:
             ev.reasons[REASON_REGION] += 1
@@ -100,6 +110,7 @@ async def try_reserve(db: AsyncSession, node: Node, deployment_id, req: Resource
             Node.id == node.id,
             Node.status == NodeStatus.ONLINE,
             Node.accepting_workloads.is_(True),
+            Node.worker_available.is_(True),
             Node.reserved_cpu_cores + req.cpu_cores <= Node.allocated_cpu_cores,
             Node.reserved_ram_mb + req.ram_mb <= Node.allocated_ram_mb,
             Node.reserved_disk_mb + req.disk_mb <= Node.allocated_disk_mb,
@@ -128,8 +139,8 @@ async def try_reserve(db: AsyncSession, node: Node, deployment_id, req: Resource
     return True
 
 
-async def schedule(db: AsyncSession, deployment_id, req: ResourceRequest) -> Node:
-    ev = await evaluate_nodes(db, req)
+async def schedule(db: AsyncSession, deployment_id, req: ResourceRequest, exclude: set | None = None) -> Node:
+    ev = await evaluate_nodes(db, req, exclude)
     for node in ev.eligible:
         if await try_reserve(db, node, deployment_id, req):
             return node
@@ -140,14 +151,18 @@ async def schedule(db: AsyncSession, deployment_id, req: ResourceRequest) -> Nod
 async def release_reservation(db: AsyncSession, deployment_id) -> bool:
     """Release a deployment's reservation exactly once. Safe to call repeatedly. Does not commit."""
     reservation = (
-        await db.execute(select(ResourceReservation).where(ResourceReservation.deployment_id == deployment_id))
+        await db.execute(
+            select(ResourceReservation).where(
+                ResourceReservation.deployment_id == deployment_id, ResourceReservation.status == "ACTIVE"
+            )
+        )
     ).scalar_one_or_none()
     if reservation is None:
         return False
     claimed = await db.execute(
         update(ResourceReservation)
         .where(ResourceReservation.id == reservation.id, ResourceReservation.status == "ACTIVE")
-        .values(status="RELEASED", released_at=datetime.utcnow())
+        .values(status="RELEASED", released_at=utcnow())
         .execution_options(synchronize_session=False)
     )
     if _rowcount(claimed) != 1:

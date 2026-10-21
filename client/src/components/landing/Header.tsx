@@ -1,28 +1,35 @@
 import Link from 'next/link';
-import { Network } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Logo } from '@/components/brand/Logo';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+
+const NAV = [
+  { href: '#product', label: 'Product' },
+  { href: '#how-it-works', label: 'How it works' },
+  { href: '#pricing', label: 'Pricing' },
+  { href: '#trust', label: 'Trust model' },
+];
 
 export function Header() {
   return (
-    <header className="fixed top-0 w-full border-b border-border/40 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60 z-50">
-      <div className="container flex h-16 items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2">
-          <Network className="h-6 w-6 text-blue-500" />
-          <span className="font-bold text-lg tracking-tight">AgentMesh</span>
-        </Link>
-        <nav className="hidden md:flex gap-6">
-          <Link href="#how-it-works" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">How it Works</Link>
-          <Link href="#network" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Network</Link>
-          <Link href="#economics" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Economics</Link>
-        </nav>
-        <div className="flex items-center gap-3">
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/70 backdrop-blur-xl">
+      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+        <div className="flex items-center gap-10">
+          <Logo />
+          <nav className="hidden gap-7 md:flex">
+            {NAV.map((n) => (
+              <Link key={n.href} href={n.href} className="text-[13px] text-muted-foreground transition-colors hover:text-foreground">
+                {n.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+        <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Link href="/login">
-            <Button variant="ghost" size="sm">Log in</Button>
+          <Link href="/login" className="hidden h-8 items-center rounded-lg px-3 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex">
+            Sign in
           </Link>
-          <Link href="/register">
-            <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90">Start Building</Button>
+          <Link href="/register" className="inline-flex h-8 items-center rounded-lg bg-primary px-3.5 text-[13px] font-medium text-primary-foreground shadow-soft transition-opacity hover:opacity-90">
+            Get started
           </Link>
         </div>
       </div>

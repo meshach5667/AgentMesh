@@ -1,11 +1,14 @@
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.timeutil import utcnow
 
 
 class TransactionType(str, enum.Enum):  # noqa: UP042
@@ -26,14 +29,21 @@ class TransactionStatus(str, enum.Enum):  # noqa: UP042
 
 
 class Transaction(Base):
+    """Ledger entry. Debits (from_wallet) apply while PENDING or SETTLED; credits (to_wallet) apply only when
+    SETTLED. Every wallet balance therefore equals its settled credits minus its pending and settled debits,
+    which reconciliation checks. ``idempotency_key`` makes each logical posting happen at most once."""
+
     __tablename__ = "transactions"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True, index=True)
-    to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=True, index=True)
-    amount = Column(Numeric(18, 8), nullable=False)
-    type = Column(String(50))
-    status = Column(String(50))
-    deployment_id = Column(UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True)
-    reference = Column(String(255))
-    description = Column(String(500))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_transactions_idempotency_key"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_wallet: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("wallets.id"), index=True)
+    to_wallet: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("wallets.id"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    type: Mapped[str | None] = mapped_column(String(50))
+    status: Mapped[str | None] = mapped_column(String(50))
+    deployment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("deployments.id"))
+    reference: Mapped[str | None] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160))
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime)

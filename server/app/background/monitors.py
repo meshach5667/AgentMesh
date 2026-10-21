@@ -2,18 +2,23 @@
 
 import asyncio
 import logging
+import time
+import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import session_scope
+from app.core.timeutil import utcnow
 from app.models.deployment import Deployment
 from app.models.deployment import DeploymentStatus as S
 from app.models.node import Node, NodeStatus
 from app.models.worker import CommandStatus, CommandType, NodeCommand
 from app.services import deployment_lifecycle as lifecycle
-from app.services import worker_service
+from app.services import placement_service
 from app.services.scheduler_service import release_reservation
 
 logger = logging.getLogger(__name__)
@@ -22,19 +27,38 @@ PROVISIONING_STATES = (S.SCHEDULED.value, S.PROVISIONING.value, S.STARTING.value
 
 
 async def _fail(db, dep: Deployment, code: str, message: str, *, cleanup: bool) -> None:
-    if await lifecycle.transition(db, dep, S.FAILED, actor="system", message=message, error_code=code):
-        await release_reservation(db, dep.id)
-        if cleanup and dep.node_id:
-            dep.cleanup_status = "pending"
-            await worker_service.enqueue_command(
-                db, dep.node_id, dep.id, CommandType.STOP, {"deployment_id": str(dep.id)}
+    """Move the deployment to another node when the failure is the node's fault, otherwise fail it."""
+    await placement_service.fail_or_reschedule(
+        db, dep, code=code, message=message, actor="system", cleanup_old_node=cleanup
+    )
+
+
+async def handle_node_loss(db, node: Node, reason: str) -> None:
+    """A node went away. Deployments still provisioning there move immediately; serving deployments become
+    UNHEALTHY and move only if the node does not come back within UNHEALTHY_GRACE_SECONDS. Does not commit."""
+    deps = (
+        (
+            await db.execute(
+                select(Deployment).where(
+                    Deployment.node_id == node.id,
+                    Deployment.status.in_([*PROVISIONING_STATES, S.READY.value]),
+                )
             )
+        )
+        .scalars()
+        .all()
+    )
+    for dep in deps:
+        if dep.status == S.READY.value:
+            await lifecycle.transition(db, dep, S.UNHEALTHY, actor="system", message=reason)
+        else:
+            await _fail(db, dep, "NODE_OFFLINE", reason, cleanup=True)
 
 
 async def run_stale_nodes(now: datetime | None = None) -> int:
-    """Mark nodes without a recent heartbeat OFFLINE and their serving deployments UNHEALTHY. Reservations
-    are kept: a brief disconnection must not let the scheduler double-book the node."""
-    now = now or datetime.utcnow()
+    """Mark nodes without a recent heartbeat OFFLINE (see handle_node_loss). Reservations of serving
+    deployments are kept during the grace period so a brief disconnection cannot double-book the node."""
+    now = now or utcnow()
     cutoff = now - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
     async with session_scope() as db:
         nodes = (
@@ -52,25 +76,13 @@ async def run_stale_nodes(now: datetime | None = None) -> int:
         )
         for node in nodes:
             node.status = NodeStatus.OFFLINE.value
-            deps = (
-                (
-                    await db.execute(
-                        select(Deployment).where(Deployment.node_id == node.id, Deployment.status == S.READY.value)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for dep in deps:
-                await lifecycle.transition(
-                    db, dep, S.UNHEALTHY, actor="system", message="Node stopped sending heartbeats"
-                )
+            await handle_node_loss(db, node, "Node stopped sending heartbeats")
         await db.commit()
         return len(nodes)
 
 
 async def run_deployment_timeouts(now: datetime | None = None) -> int:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     changed = 0
     async with session_scope() as db:
         deps = (await db.execute(select(Deployment).where(Deployment.status.in_(PROVISIONING_STATES)))).scalars().all()
@@ -98,7 +110,7 @@ async def run_deployment_timeouts(now: datetime | None = None) -> int:
         unhealthy = (await db.execute(select(Deployment).where(Deployment.status == S.UNHEALTHY.value))).scalars().all()
         for dep in unhealthy:
             if now - (dep.updated_at or dep.created_at) > timedelta(seconds=settings.UNHEALTHY_GRACE_SECONDS):
-                await _fail(db, dep, "UNHEALTHY_TIMEOUT", "Deployment stayed unhealthy too long", cleanup=True)
+                await _fail(db, dep, "UNHEALTHY_TIMEOUT", "Deployment stayed unhealthy", cleanup=True)
                 changed += 1
         await db.commit()
     return changed
@@ -107,7 +119,7 @@ async def run_deployment_timeouts(now: datetime | None = None) -> int:
 async def run_command_leases(now: datetime | None = None) -> int:
     """Give up on commands whose final lease expired. A DEPLOY that was never acknowledged fails its
     deployment; a STOP that was never acknowledged is left to the stop timeout above."""
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     async with session_scope() as db:
         cmds = (
             (
@@ -136,10 +148,45 @@ async def run_command_leases(now: datetime | None = None) -> int:
         return len(cmds)
 
 
-async def monitor_loop() -> None:
+async def _is_leader(redis, owner: str) -> bool:
+    """With several API replicas, one runs the monitors per round (their writes are conflict-safe anyway)."""
+    if redis is None:
+        return True
+    key = "monitors:leader"
+    ttl = max(5, settings.MONITOR_INTERVAL_SECONDS * 2)
+    if await redis.set(key, owner, nx=True, ex=ttl):
+        return True
+    if await redis.get(key) == owner:
+        await redis.expire(key, ttl)
+        return True
+    return False
+
+
+RECONCILE_EVERY_SECONDS = 600
+
+
+async def monitor_loop(redis=None) -> None:
+    from app.services import billing_service, reconciliation_service
+
+    owner = uuid.uuid4().hex
+    last_billing = last_reconcile = 0.0
     while True:
         await asyncio.sleep(settings.MONITOR_INTERVAL_SECONDS)
-        for job in (run_stale_nodes, run_command_leases, run_deployment_timeouts):
+        try:
+            if not await _is_leader(redis, owner):
+                continue
+        except Exception:  # noqa: BLE001
+            logger.exception("Monitor leader election failed")
+            continue
+        jobs: list[Callable[[], Awaitable[Any]]] = [run_stale_nodes, run_command_leases, run_deployment_timeouts]
+        now = time.monotonic()
+        if now - last_billing >= settings.BILLING_INTERVAL_SECONDS:
+            jobs.append(billing_service.run_billing)
+            last_billing = now
+        if settings.payments_enabled and now - last_reconcile >= RECONCILE_EVERY_SECONDS:
+            jobs.append(reconciliation_service.run)
+            last_reconcile = now
+        for job in jobs:
             try:
                 await job()
             except Exception:  # noqa: BLE001

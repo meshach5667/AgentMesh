@@ -1,10 +1,11 @@
 """Worker protocol v1: enrollment, authentication, heartbeats, command queue, status reports."""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
+from app.core.timeutil import utcnow
 from app.models import Node, NodeCommand, NodeEnrollmentToken
 from tests.conftest import HARDWARE
 
@@ -47,7 +48,7 @@ async def test_expired_or_unknown_token_rejected(client, db, make_user):
     _, provider = await make_user("provider")
     token = await _token(client, provider)
     row = (await db.execute(select(NodeEnrollmentToken))).scalars().one()
-    row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    row.expires_at = utcnow() - timedelta(seconds=1)
     await db.commit()
     assert (await client.post("/api/v1/worker/enroll", json=_enroll_body(token))).status_code == 401
     bogus = "am_enroll_" + "x" * 40
@@ -130,7 +131,7 @@ async def test_poll_leases_once_and_redelivers_after_lease_expiry(client, db, en
     assert again == []  # leased, not redelivered while the lease is valid
 
     cmd = await db.get(NodeCommand, uuid.UUID(first[0]["id"]))
-    cmd.lease_expires_at = datetime.utcnow() - timedelta(seconds=1)
+    cmd.lease_expires_at = utcnow() - timedelta(seconds=1)
     await db.commit()
     redelivered = (await client.post("/api/v1/worker/commands/poll", json=poll, headers=node["headers"])).json()
     assert redelivered["commands"][0]["id"] == first[0]["id"]

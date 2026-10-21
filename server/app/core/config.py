@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic import model_validator
@@ -17,7 +18,6 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = INSECURE_DEFAULT_SECRET
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    PLATFORM_FEE_RATE: float = 0.10
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
     NODE_AGENT_DEFAULT_PORT: int = 8001
     CONTROL_PLANE_URL: str = "http://localhost:8000"
@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Unpaid "test credits" for local development. Never honoured outside dev/test environments.
     ALLOW_TEST_CREDITS: bool = True
     SQL_ECHO: bool = False
+    LOG_JSON: bool = True
 
     # Public base URL customers use to reach the gateway (used to build deployment endpoints).
     PUBLIC_BASE_URL: str = "http://localhost:8000"
@@ -45,22 +46,56 @@ class Settings(BaseSettings):
     COMMAND_LEASE_SECONDS: int = 60
     COMMAND_MAX_ATTEMPTS: int = 3
     WORKER_MAX_BODY_BYTES: int = 256 * 1024
+    # Directory holding manifest.json, manifest.sig and the release wheel (see scripts/sign_worker_release.py).
+    # The control plane only serves these files; workers verify the signature with their pinned key.
+    WORKER_RELEASE_DIR: str = ""
 
     # Deployment lifecycle timeouts
     PROVISION_STALL_TIMEOUT_SECONDS: int = 900  # no progress report for this long -> FAILED
     PROVISION_MAX_SECONDS: int = 3600
     STOP_TIMEOUT_SECONDS: int = 300
-    UNHEALTHY_GRACE_SECONDS: int = 900
+    UNHEALTHY_GRACE_SECONDS: int = 180  # unhealthy this long -> move to another node (or fail)
+    MAX_SCHEDULE_ATTEMPTS: int = 3  # placements per deployment, including the first
     MONITOR_INTERVAL_SECONDS: int = 15
     BACKGROUND_JOBS_ENABLED: bool = True
+
+    # Multi-replica coordination: "memory" (single API process) or "redis" (shared limits and tunnel routing)
+    COORDINATION_BACKEND: str = "memory"
 
     # Inference gateway
     GATEWAY_MAX_BODY_BYTES: int = 1024 * 1024
     GATEWAY_RATE_LIMIT_PER_MINUTE: int = 60
+    # Login and registration attempts per minute, per client address and per email address.
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 10
     GATEWAY_MAX_CONCURRENT_PER_DEPLOYMENT: int = 4
     GATEWAY_FIRST_BYTE_TIMEOUT_SECONDS: int = 180
     GATEWAY_IDLE_TIMEOUT_SECONDS: int = 120
     GATEWAY_MAX_RESPONSE_BYTES: int = 32 * 1024 * 1024
+
+    # Billing. One platform currency; wallets, prices, top-ups and payouts all use it.
+    BILLING_CURRENCY: str = "NGN"
+    BILLING_INTERVAL_SECONDS: int = 300  # how often READY time and tokens are rated into charges
+    # A deployment needs enough balance for this many hours of its reserved resources at current prices.
+    BILLING_MIN_PREPAID_HOURS: float = 1.0
+
+    # Paystack (https://paystack.com/docs/api). Test-mode keys (sk_test_...) unless PAYSTACK_ALLOW_LIVE.
+    PAYSTACK_SECRET_KEY: str = ""
+    PAYSTACK_BASE_URL: str = "https://api.paystack.co"
+    PAYSTACK_ALLOW_LIVE: bool = False
+    PAYSTACK_TIMEOUT_SECONDS: float = 20.0
+    # Paystack's webhook source addresses; empty disables the check (e.g. behind a proxy that rewrites IPs).
+    PAYSTACK_WEBHOOK_IPS: list[str] = []
+    # Where Paystack sends the customer after checkout (the dashboard verifies the reference on return).
+    FRONTEND_URL: str = "http://localhost:3000"
+    TOPUP_MIN_AMOUNT: Decimal = Decimal("100")
+    TOPUP_MAX_AMOUNT: Decimal = Decimal("1000000")
+    PAYOUT_MIN_AMOUNT: Decimal = Decimal("1000")
+    PAYOUTS_REQUIRE_APPROVAL: bool = True
+    # Payments/payouts still unresolved after this long are checked against Paystack by reconciliation.
+    RECONCILE_AFTER_MINUTES: int = 30
+
+    # Bearer token for GET /metrics. Empty disables the endpoint.
+    METRICS_TOKEN: str = ""
 
     @property
     def is_dev(self) -> bool:
@@ -69,6 +104,27 @@ class Settings(BaseSettings):
     @property
     def test_credits_enabled(self) -> bool:
         return self.is_dev and self.ALLOW_TEST_CREDITS
+
+    @property
+    def payments_enabled(self) -> bool:
+        return bool(self.PAYSTACK_SECRET_KEY)
+
+    @property
+    def payments_mode(self) -> str | None:
+        if not self.PAYSTACK_SECRET_KEY:
+            return None
+        return "live" if self.PAYSTACK_SECRET_KEY.startswith("sk_live_") else "test"
+
+    @model_validator(mode="after")
+    def _check_heartbeat_timing(self) -> "Settings":
+        # Workers heartbeat at the interval the control plane gives them. A timeout shorter than a few
+        # intervals marks healthy nodes offline and moves their deployments away.
+        if self.HEARTBEAT_TIMEOUT_SECONDS < 3 * self.WORKER_HEARTBEAT_INTERVAL_SECONDS:
+            raise ValueError(
+                "HEARTBEAT_TIMEOUT_SECONDS must be at least 3x WORKER_HEARTBEAT_INTERVAL_SECONDS "
+                f"(got {self.HEARTBEAT_TIMEOUT_SECONDS}s vs {self.WORKER_HEARTBEAT_INTERVAL_SECONDS}s)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_production_safety(self) -> "Settings":
@@ -80,6 +136,19 @@ class Settings(BaseSettings):
                 raise ValueError("SECRET_KEY must be set to a random value of at least 32 characters outside dev/test")
             if "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must not contain '*' outside dev/test")
+            if not self.PUBLIC_BASE_URL.startswith("https://"):
+                raise ValueError("PUBLIC_BASE_URL must use https outside dev/test (API keys travel in headers)")
+        return self
+
+    @model_validator(mode="after")
+    def _check_payments(self) -> "Settings":
+        key = self.PAYSTACK_SECRET_KEY
+        if key and not key.startswith(("sk_test_", "sk_live_")):
+            raise ValueError("PAYSTACK_SECRET_KEY must be a Paystack secret key (sk_test_... or sk_live_...)")
+        if key.startswith("sk_live_") and not self.PAYSTACK_ALLOW_LIVE:
+            raise ValueError("A live Paystack key needs PAYSTACK_ALLOW_LIVE=true (payments default to test mode)")
+        if len(self.BILLING_CURRENCY) != 3 or not self.BILLING_CURRENCY.isupper():
+            raise ValueError("BILLING_CURRENCY must be an ISO 4217 code such as NGN")
         return self
 
 

@@ -6,15 +6,14 @@ import logging
 
 import httpx
 
-from .runtime.ollama_api import ALLOWED_PATHS
-
 logger = logging.getLogger(__name__)
 CHUNK_LIMIT = 256 * 1024
 
 
 class TunnelHandler:
     def __init__(self, resolve_workload, max_concurrent: int, request_timeout: float):
-        """``resolve_workload(deployment_id)`` returns (base_url, model_tag) for a running workload, or None."""
+        """``resolve_workload(deployment_id)`` returns (base_url, served_model_name, allowed_paths) for a running
+        workload, or None. Each runtime has its own allowlist (only Ollama serves /api/*)."""
         self.resolve = resolve_workload
         self.max_concurrent = max_concurrent
         self.timeout = request_timeout
@@ -42,7 +41,7 @@ class TunnelHandler:
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Tunnel request %s failed: %s", rid, type(exc).__name__)
+            logger.warning("request_id=%s tunnel request failed: %s", rid, type(exc).__name__)
             await _try_send(
                 send, {"type": "error", "id": rid, "code": "runtime_error", "message": "Runtime request failed"}
             )
@@ -60,8 +59,9 @@ class TunnelHandler:
                 {"type": "error", "id": rid, "code": "deployment_not_running", "message": "Workload not running"}
             )
             return
-        base_url, model_tag = target
-        if frame.get("method") != "POST" or path not in ALLOWED_PATHS or not isinstance(body, dict):
+        base_url, model_tag, allowed_paths = target
+        logger.info("request_id=%s deployment=%s path=%s", rid, dep_id, path)
+        if frame.get("method") != "POST" or path not in allowed_paths or not isinstance(body, dict):
             await send({"type": "error", "id": rid, "code": "rejected", "message": "Request not allowed"})
             return
         body = {**body, "model": model_tag}

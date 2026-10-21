@@ -3,4 +3,7 @@ export * from './node';
 export * from './model';
 export * from './deployment';
 export * from './wallet';
-export * from './api';
+export * from './usage';
+export * from './apiKey';
+export * from './admin';
+export * from './billing';

@@ -1,27 +1,21 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { Wallet } from '../types';
+import type { Wallet } from '../types';
 
-export const useWallet = () => {
-  return useQuery({
+export const useWallet = () =>
+  useQuery({
     queryKey: ['wallet'],
-    queryFn: async () => {
-      const { data } = await api.get<Wallet>('/wallets');
-      return data;
-    },
+    queryFn: async () => (await api.get<Wallet>('/wallets')).data,
   });
-};
 
-export const useDeposit = () => {
-  const queryClient = useQueryClient();
+/** Unpaid test credits. The server allows this only in dev/test environments (no payment provider yet). */
+export const useAddTestCredits = () => {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (amount: number) => {
-      const { data } = await api.post('/wallets/deposit', { amount });
-      return data;
-    },
+    mutationFn: async (amount: number) => (await api.post('/wallets/deposit', { amount })).data,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['wallet'] });
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['wallet'] });
+      qc.invalidateQueries({ queryKey: ['transactions'] });
     },
   });
 };

@@ -82,6 +82,14 @@ class ControlPlaneClient:
     async def heartbeat(self, payload: dict) -> dict:
         return await self._post("/heartbeat", payload)
 
+    async def whoami(self) -> dict:
+        resp = await self._client.get(f"{self.api}/whoami", headers=self.headers)
+        if resp.status_code == 401:
+            raise CredentialRevoked(resp.text[:200])
+        if resp.status_code >= 400:
+            raise ProtocolError(resp.status_code, resp.text[:300])
+        return resp.json()
+
     async def disconnect(self) -> None:
         await self._post("/disconnect", {})
 

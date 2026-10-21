@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -9,11 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ids import parse_uuid
+from app.core.timeutil import utcnow
 from app.models.model import Model
 from app.models.node import Node
-from app.models.transaction import Transaction, TransactionStatus, TransactionType
-from app.models.usage import UsageRecord
-from app.models.user import Customer, Provider
+from app.models.user import Customer
 from app.models.wallet import Wallet
 from app.models.workload import Workload, WorkloadStatus
 from app.services.scheduler_service import find_capable_nodes, rank_nodes
@@ -56,7 +54,7 @@ async def create_inference(db: AsyncSession, user_id: uuid.UUID, payload: Any) -
         node_id=candidates[0].id,
         status=WorkloadStatus.ASSIGNED,
         input_data=payload.input,
-        started_at=datetime.utcnow(),
+        started_at=utcnow(),
     )
     db.add(workload)
     await db.commit()
@@ -68,25 +66,25 @@ async def create_inference(db: AsyncSession, user_id: uuid.UUID, payload: Any) -
         result = await _dispatch_to_node(candidates[0], workload, model)
         workload.result_data = result
         workload.status = WorkloadStatus.COMPLETED
-        workload.completed_at = datetime.utcnow()
+        workload.completed_at = utcnow()
         workload.tokens_in = _estimate_tokens(payload.input)
         workload.tokens_out = _estimate_tokens(result)
-        await _settle_usage(db, workload, candidates[0], workload.tokens_in + workload.tokens_out)
+        # Legacy one-shot workloads are not billed; billed inference goes through deployments.
     except NoInferenceEndpointError as exc:
         workload.status = WorkloadStatus.FAILED
         workload.error_code = "NO_INFERENCE_ENDPOINT"
         workload.error_message = str(exc)
-        workload.completed_at = datetime.utcnow()
+        workload.completed_at = utcnow()
     except httpx.TimeoutException:
         workload.status = WorkloadStatus.TIMEOUT
         workload.error_code = "NODE_TIMEOUT"
         workload.error_message = "Node execution timed out"
-        workload.completed_at = datetime.utcnow()
+        workload.completed_at = utcnow()
     except Exception:
         workload.status = WorkloadStatus.FAILED
         workload.error_code = "EXECUTION_FAILED"
         workload.error_message = "Inference execution failed"
-        workload.completed_at = datetime.utcnow()
+        workload.completed_at = utcnow()
     await db.commit()
     await db.refresh(workload)
     return workload
@@ -109,59 +107,6 @@ def _estimate_tokens(value: Any) -> int:
 
 def _calculate_cost(token_count: int) -> Decimal:
     return max(Decimal("0.001"), (Decimal(token_count) / Decimal("1000")) * Decimal("0.01"))
-
-
-async def _settle_usage(db: AsyncSession, workload: Workload, node: Node, token_count: int) -> None:
-    customer_result = await db.execute(select(Customer).where(Customer.id == workload.customer_id))
-    customer = customer_result.scalars().first()
-    if not customer:
-        raise HTTPException(status_code=500, detail="Workload customer not found")
-    wallet_result = await db.execute(select(Wallet).where(Wallet.user_id == customer.user_id).with_for_update())
-    wallet = wallet_result.scalars().first()
-    if not wallet:
-        raise HTTPException(status_code=402, detail="Customer wallet not found")
-
-    provider_result = await db.execute(
-        select(Provider).join(Node, Node.owner_id == Provider.id).where(Node.id == node.id)
-    )
-    provider = provider_result.scalars().first()
-    if not provider:
-        raise HTTPException(status_code=500, detail="Node provider not found")
-
-    cost = _calculate_cost(token_count)
-    platform_fee = cost * Decimal("0.10")
-    provider_amount = cost - platform_fee
-    wallet.balance = Decimal(wallet.balance or 0) - cost
-    provider.balance = Decimal(provider.balance or 0) + provider_amount
-    usage = UsageRecord(
-        workload_id=workload.id,
-        node_id=node.id,
-        gpu_seconds=0,
-        cpu_seconds=0,
-        total_cost=cost,
-        period_start=workload.started_at,
-        period_end=workload.completed_at,
-    )
-    db.add(usage)
-    db.add(
-        Transaction(
-            from_wallet=wallet.id,
-            amount=cost,
-            type=TransactionType.COMPUTE_CHARGE,
-            status=TransactionStatus.SETTLED,
-            reference=f"workload:{workload.id}",
-            description="Inference workload charge",
-        )
-    )
-    db.add(
-        Transaction(
-            amount=provider_amount,
-            type=TransactionType.PROVIDER_CREDIT,
-            status=TransactionStatus.SETTLED,
-            reference=f"workload:{workload.id}:provider",
-            description="Provider earning",
-        )
-    )
 
 
 async def get_workload(db: AsyncSession, workload_id: str, user_id: uuid.UUID) -> Workload:

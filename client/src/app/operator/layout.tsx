@@ -1,12 +1,10 @@
-import { AuthGuard } from '../../components/auth/AuthGuard';
-import { DashboardLayout } from '../../components/layout/DashboardLayout';
+import { AuthGuard } from '@/components/auth/AuthGuard';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 
 export default function OperatorLayout({ children }: { children: React.ReactNode }) {
   return (
-    <AuthGuard>
-      <DashboardLayout>
-        {children}
-      </DashboardLayout>
+    <AuthGuard roles={['operator', 'admin']}>
+      <DashboardLayout>{children}</DashboardLayout>
     </AuthGuard>
   );
 }

@@ -5,7 +5,7 @@ from typing import Any
 
 import psutil
 
-from .gpu import detect_gpus
+from .gpu import detect_all, detect_gpus
 
 
 @dataclass
@@ -40,12 +40,8 @@ def _cpu_model() -> str:
 def hardware_report(data_dir: str) -> dict[str, Any]:
     """Hardware summary sent to the control plane. Only capacity facts; no hostnames, users, or files."""
     os.makedirs(data_dir, exist_ok=True)
-    gpu = detect_gpus()
-    gpus = (
-        [{"vendor": gpu.vendor, "model": gpu.model[:200], "vram_mb": gpu.vram_gb * 1024}] * gpu.count
-        if gpu.count
-        else []
-    )
+    # The protocol carries vendor/model/vram only; the "shared" (unified memory) hint stays local.
+    gpus = [{"vendor": g["vendor"][:50], "model": g["model"][:200], "vram_mb": g["vram_mb"]} for g in detect_all()]
     return {
         "os": platform.system()[:100],
         "arch": platform.machine()[:50],

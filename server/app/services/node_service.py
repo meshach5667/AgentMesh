@@ -1,4 +1,3 @@
-import datetime
 import uuid
 
 from fastapi import HTTPException
@@ -8,9 +7,11 @@ from sqlalchemy.future import select
 from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
 from app.core.security import get_password_hash, verify_node_api_key
+from app.core.timeutil import utcnow
 from app.models.node import Node, NodeHardware, NodeStatus
 from app.models.user import Provider, User
 from app.schemas.node import NodeCreate
+from app.services import audit_service
 
 
 async def register_node(db: AsyncSession, node_data: NodeCreate, user_id: uuid.UUID):
@@ -70,7 +71,7 @@ async def get_node_for_user(db: AsyncSession, node_id: str, user: User) -> Node:
 async def process_heartbeat(db: AsyncSession, node: Node):
     if node.status == NodeStatus.SUSPENDED:
         raise HTTPException(status_code=403, detail="Node suspended")
-    node.last_heartbeat = datetime.datetime.utcnow()
+    node.last_heartbeat = utcnow()
     node.status = NodeStatus.ONLINE
     await db.commit()
     return {"status": "ok"}
@@ -90,6 +91,13 @@ async def set_accepting_workloads(db: AsyncSession, node_id: str, user: User, ac
     """Pause or resume scheduling onto a node. Existing deployments keep running (drain)."""
     node = await get_node_for_user(db, node_id, user)
     node.accepting_workloads = accepting
+    audit_service.record(
+        db,
+        actor_id=user.id,
+        action="node.resumed" if accepting else "node.paused",
+        resource_type="node",
+        resource_id=node.id,
+    )
     await db.commit()
     await db.refresh(node)
     return node
@@ -100,10 +108,19 @@ async def revoke_node(db: AsyncSession, node_id: str, user: User) -> Node:
     their reservations are released; the worker can no longer authenticate."""
     from app.models.deployment import Deployment
     from app.services import deployment_lifecycle as lifecycle
+    from app.services import placement_service
     from app.services.scheduler_service import release_reservation
     from app.services.tunnel import broker
 
     node = await get_node_for_user(db, node_id, user)
+    audit_service.record(
+        db,
+        actor_id=user.id,
+        action="node.revoked",
+        resource_type="node",
+        resource_id=node.id,
+        details={"by_role": user.role},
+    )
     node.api_key_hash = None
     node.status = NodeStatus.REVOKED
     node.accepting_workloads = False
@@ -118,24 +135,20 @@ async def revoke_node(db: AsyncSession, node_id: str, user: User) -> Node:
         .scalars()
         .all()
     )
+    actor = "operator" if is_staff(user) else "provider"
     for dep in active:
-        await lifecycle.transition(
-            db,
-            dep,
-            lifecycle.S.FAILED,
-            actor="operator" if is_staff(user) else "provider",
-            message="Node credential revoked",
-            error_code="NODE_REVOKED",
+        if lifecycle.S(dep.status) == lifecycle.S.STOPPING:
+            # Was already being stopped; the node can no longer confirm, so finish it here.
+            final = lifecycle.S.STOPPED if dep.was_ready else lifecycle.S.CANCELLED
+            await lifecycle.transition(db, dep, final, actor=actor, message="Node credential revoked")
+            dep.cleanup_status = "pending_node"
+            await release_reservation(db, dep.id)
+            continue
+        # A revoked worker stops all of its workloads itself, so no cleanup command is queued.
+        await placement_service.fail_or_reschedule(
+            db, dep, code="NODE_REVOKED", message="Node credential revoked", actor=actor, cleanup_old_node=False
         )
-        dep.cleanup_status = "pending_node"
-        await release_reservation(db, dep.id)
     await db.commit()
-    conn = broker._connections.get(node.id)
-    if conn is not None:
-        broker.unregister(conn)
-        try:
-            await conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+    await broker.close_node(node.id)
     await db.refresh(node)
     return node

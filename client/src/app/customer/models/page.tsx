@@ -1,76 +1,119 @@
 'use client';
 
-import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { Search } from 'lucide-react';
+import { buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Search, Box, Zap, MemoryStick } from 'lucide-react';
-import { useModels } from '@/hooks/useModels';
+import { Pill } from '@/components/common/StatusBadge';
+import { EmptyState, ErrorState, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
+import { useModels } from '@/hooks/useModels';
+import { usePublicStats } from '@/hooks/useUsage';
+import { deployableArtifacts } from '@/lib/deployments';
+import { errorMessage } from '@/lib/errors';
+import { ago, mb, runtimeLabel } from '@/lib/format';
 
-export default function CustomerModelsPage() {
-  const { data: models, isLoading } = useModels();
+export default function ModelCatalogPage() {
+  const { data: models, isLoading, error, refetch } = useModels();
+  const stats = usePublicStats();
+  const [query, setQuery] = useState('');
 
-  if (isLoading) {
-    return <PageSkeleton />;
-  }
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (models ?? []).filter((m) =>
+      !q
+        ? true
+        : [m.name, m.family, m.publisher, m.parameter_size, ...m.artifacts.map((a) => a.reference)]
+            .filter(Boolean)
+            .some((v) => v!.toLowerCase().includes(q)),
+    );
+  }, [models, query]);
+
+  if (isLoading) return <PageSkeleton />;
+  if (error) return <ErrorState message={errorMessage(error)} retry={() => refetch()} />;
+
+  const online = stats.data?.runtimes_online ?? null;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Model Catalog</h1>
-          <p className="text-muted-foreground">Select and deploy AI models to the decentralized mesh.</p>
-        </div>
-        <div className="relative w-full sm:w-72">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input type="search" placeholder="Search models..." className="pl-8 bg-background" />
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {models?.length ? models.map((model: import("@/types").ExtendedModel) => (
-          <Card key={model.id} className="flex flex-col border-border/50 bg-background/50 backdrop-blur-sm hover:border-blue-500/30 transition-colors">
-            <CardHeader>
-              <div className="flex justify-between items-start mb-2">
-                <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
-                  {model.runtime}
-                </Badge>
-                <span className="text-xs font-mono text-muted-foreground">{model.version}</span>
-              </div>
-              <CardTitle className="flex items-center gap-2">
-                <Box className="w-5 h-5 text-muted-foreground" />
-                {model.name}
-              </CardTitle>
-              <CardDescription className="line-clamp-2">
-                Standard inference workload for {model.name}. Automatically finds capable nodes.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1">
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between items-center py-1 border-b border-border/50">
-                  <span className="text-muted-foreground flex items-center gap-2"><MemoryStick className="w-4 h-4"/> Min VRAM</span>
-                  <span className="font-mono">{Math.round(model.minimum_vram / (1024 ** 3))} GB</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-border/50">
-                  <span className="text-muted-foreground flex items-center gap-2"><Zap className="w-4 h-4"/> Hardware</span>
-                  <span className="font-medium text-xs">{model.supported_gpu_families?.join(', ') || 'Any Compatible GPU'}</span>
-                </div>
-              </div>
-            </CardContent>
-            <CardFooter>
-              <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                Configure & Deploy
-              </Button>
-            </CardFooter>
-          </Card>
-        )) : (
-          <div className="col-span-full p-12 text-center border rounded-xl border-dashed border-border text-muted-foreground">
-            No models available in the catalog currently.
+      <PageHeader
+        title="Model catalog"
+        description="Open-weight models approved by AgentMesh operators. Each runtime serves a pinned copy of the model."
+        actions={
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-2.5 top-2 size-4 text-muted-foreground" />
+            <Input
+              type="search"
+              aria-label="Search models"
+              placeholder="Search models"
+              className="pl-8"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
-        )}
-      </div>
+        }
+      />
+      {stats.data && (
+        <p className="text-sm text-muted-foreground">
+          {stats.data.nodes_online} node{stats.data.nodes_online === 1 ? '' : 's'} accepting work now
+          {online && online.length > 0 ? `, offering ${online.map(runtimeLabel).join(', ')}` : ''}. Being listed here
+          does not guarantee a node has room for a model.
+        </p>
+      )}
+      {filtered.length === 0 ? (
+        <EmptyState>{query ? 'No models match your search.' : 'No models are approved for deployment yet.'}</EmptyState>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((m) => {
+            const artifacts = deployableArtifacts(m.artifacts);
+            const smallest = artifacts.reduce<number | null>((min, a) => (min == null || a.min_ram_mb < min ? a.min_ram_mb : min), null);
+            const lastReady = artifacts.map((a) => a.last_ready_at).filter(Boolean).sort().at(-1);
+            return (
+              <Card key={m.id} className="flex flex-col" data-testid="model-card">
+                <CardHeader>
+                  <CardTitle>{m.name}</CardTitle>
+                  <CardDescription>
+                    {[m.publisher, m.parameter_size && `${m.parameter_size} parameters`, m.license].filter(Boolean).join(' · ')}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex-1 space-y-3 text-sm">
+                  <div className="flex flex-wrap gap-1">
+                    {artifacts.map((a) => (
+                      <Pill key={a.id} tone={online?.includes(a.runtime) ? 'green' : 'gray'}>
+                        {runtimeLabel(a.runtime)}
+                        {a.quantization ? ` ${a.quantization}` : ''}
+                        {a.gpu_required ? ' · GPU' : ''}
+                      </Pill>
+                    ))}
+                  </div>
+                  <dl className="grid grid-cols-2 gap-y-1 text-muted-foreground">
+                    <dt>Smallest reservation</dt>
+                    <dd className="text-right text-foreground">{smallest ? `${mb(smallest)} RAM` : '—'}</dd>
+                    <dt>Context length</dt>
+                    <dd className="text-right text-foreground">{m.context_length?.toLocaleString() ?? '—'}</dd>
+                    <dt>Last served on AgentMesh</dt>
+                    <dd className="text-right text-foreground">{lastReady ? ago(lastReady) : 'not yet'}</dd>
+                  </dl>
+                </CardContent>
+                <CardFooter>
+                  {artifacts.length > 0 ? (
+                    <Link href={`/customer/deployments/new?model=${m.id}`} className={buttonVariants({ className: 'w-full' })}>
+                      Configure and deploy
+                    </Link>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No runtime is enabled for this model.</p>
+                  )}
+                </CardFooter>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Green runtimes are offered by at least one online node right now. Resource figures are estimates.
+      </p>
     </div>
   );
 }

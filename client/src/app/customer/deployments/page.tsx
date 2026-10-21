@@ -1,154 +1,110 @@
 'use client';
 
-import React from 'react';
-import { useDeployments } from '@/hooks/useDeployments';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
+import Link from 'next/link';
+import { RefreshCw } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
-import { RefreshCw, Play, Square, Activity, Bot, } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
-import { Deployment } from '@/types';
+import { ConfirmButton } from '@/components/common/ConfirmButton';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { EmptyState, ErrorState, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
+import { useDeleteDeployment, useDeployments, useStopDeployment } from '@/hooks/useDeployments';
+import { useModels } from '@/hooks/useModels';
+import { errorMessage } from '@/lib/errors';
+import { ago, runtimeLabel, shortId } from '@/lib/format';
+import { TERMINAL_STATUSES } from '@/types';
 
-export default function CustomerDeploymentsPage() {
-  const { data: deployments, isLoading, refetch } = useDeployments();
+export default function DeploymentsPage() {
+  const { data, isLoading, error, refetch, isFetching } = useDeployments();
+  const models = useModels();
+  const stop = useStopDeployment();
+  const remove = useDeleteDeployment();
+  const [showEnded, setShowEnded] = useState(false);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'READY': return 'bg-green-500/10 text-green-500 border-green-500/20';
-      case 'SCHEDULED':
-      case 'PROVISIONING':
-      case 'STARTING': return 'bg-blue-500/10 text-blue-500 border-blue-500/20 animate-pulse';
-      case 'STOPPED':
-      case 'CANCELLED': return 'bg-gray-500/10 text-gray-500 border-gray-500/20';
-      case 'FAILED': return 'bg-red-500/10 text-red-500 border-red-500/20';
-      default: return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
-    }
-  };
+  if (isLoading) return <PageSkeleton />;
+  if (error) return <ErrorState message={errorMessage(error)} retry={() => refetch()} />;
 
-  if (isLoading) {
-    return <PageSkeleton />;
-  }
+  const all = data ?? [];
+  const rows = showEnded ? all : all.filter((d) => !TERMINAL_STATUSES.includes(d.status));
+  const modelName = (id: string) => models.data?.find((m) => m.id === id)?.name;
+  const act = (p: Promise<unknown>, ok: string) => p.then(() => toast.success(ok)).catch((e) => toast.error(errorMessage(e)));
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Active Workloads</h1>
-          <p className="text-muted-foreground">Manage your AI model deployments on the AgentMesh network.</p>
-        </div>
-        <Button variant="outline" size="icon" onClick={() => refetch()}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
-      </div>
-
+      <PageHeader
+        title="Deployments"
+        description="Each deployment is one model running on one provider node, with its own endpoint."
+        actions={
+          <>
+            <Button variant="outline" size="icon" aria-label="Refresh" onClick={() => refetch()}>
+              <RefreshCw className={isFetching ? 'animate-spin' : ''} />
+            </Button>
+            <Link href="/customer/models" className={buttonVariants()}>
+              New deployment
+            </Link>
+          </>
+        }
+      />
+      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+        <input type="checkbox" checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} />
+        Show stopped, failed and cancelled ({all.length - all.filter((d) => !TERMINAL_STATUSES.includes(d.status)).length})
+      </label>
       <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <div>
-              <CardTitle>Deployments</CardTitle>
-              <CardDescription>All running and stopped model endpoints.</CardDescription>
-            </div>
-            <Badge variant="outline" className="bg-secondary/50">
-              {deployments?.length || 0} Total Workloads
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Deployment ID</TableHead>
-                <TableHead>Model</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Assigned Node</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {deployments?.length === 0 ? (
+        <CardContent className="pt-6">
+          {rows.length === 0 ? (
+            <EmptyState action={{ href: '/customer/models', label: 'Deploy a model' }}>No deployments to show.</EmptyState>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    No active deployments. Head to the Model Catalog to deploy a model.
-                  </TableCell>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Runtime</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Node</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ) : (
-                deployments?.map((deployment: Deployment) => (
-                  <TableRow key={deployment.id}>
-                    <TableCell className="font-mono text-xs">{deployment.id.substring(0, 12)}...</TableCell>
-                    <TableCell className="font-medium">{deployment.model_id}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={getStatusColor(deployment.status)}>
-                        {deployment.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {deployment.node_id ? deployment.node_id.substring(0,8) + '...' : 'Unassigned'}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {deployment.created_at ? formatDistanceToNow(new Date(deployment.created_at)) : 'N/A'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        {deployment.status === 'READY' ? (
-                          <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-500/10">
-                            <Square className="h-4 w-4" />
-                          </Button>
+              </TableHeader>
+              <TableBody>
+                {rows.map((d) => {
+                  const ended = TERMINAL_STATUSES.includes(d.status);
+                  return (
+                    <TableRow key={d.id} data-testid="deployment-row">
+                      <TableCell>
+                        <Link href={`/customer/deployments/${d.id}`} className="font-medium hover:underline">
+                          {modelName(d.model_id) ?? d.model_tag ?? shortId(d.id)}
+                        </Link>
+                        <div className="font-mono text-xs text-muted-foreground">{shortId(d.id)}</div>
+                      </TableCell>
+                      <TableCell>{runtimeLabel(d.runtime)}</TableCell>
+                      <TableCell>
+                        <StatusBadge status={d.status} />
+                        {d.error_code && <div className="mt-1 text-xs text-rose-500">{d.error_code}</div>}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{shortId(d.node_id)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{ago(d.created_at)}</TableCell>
+                      <TableCell className="text-right">
+                        {ended ? (
+                          <ConfirmButton size="sm" variant="ghost" confirmLabel="Delete" onConfirm={() => act(remove.mutateAsync(d.id), 'Deployment deleted')}>
+                            Delete
+                          </ConfirmButton>
                         ) : (
-                          <Button variant="ghost" size="icon" className="text-green-500 hover:text-green-600 hover:bg-green-500/10">
-                            <Play className="h-4 w-4" />
-                          </Button>
+                          d.status !== 'STOPPING' && (
+                            <ConfirmButton size="sm" variant="ghost" confirmLabel="Stop" onConfirm={() => act(stop.mutateAsync(d.id), 'Stop requested')}>
+                              Stop
+                            </ConfirmButton>
+                          )
                         )}
-                        <Button variant="ghost" size="icon">
-                          <Activity className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card className="border-blue-500/20 shadow-none">
-        <CardHeader className="bg-blue-500/5 pb-4 border-b border-blue-500/10">
-          <div className="flex items-center gap-2">
-            <Bot className="w-5 h-5 text-blue-500" />
-            <CardTitle className="text-lg">Agent Orchestrator Log</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="bg-black/50 p-4 font-mono text-xs space-y-2 h-[200px] overflow-y-auto">
-             <div className="flex gap-4">
-              <span className="text-muted-foreground shrink-0">14:32:01</span>
-              <span className="text-blue-400">INFO</span>
-              <span className="text-gray-300">Evaluating deployment constraints for dp_8f92a1...</span>
-            </div>
-            <div className="flex gap-4">
-              <span className="text-muted-foreground shrink-0">14:32:02</span>
-              <span className="text-purple-400">SCHED</span>
-              <span className="text-gray-300">Selected node_4x9b (matches requirements: 24GB VRAM, lat &lt; 50ms)</span>
-            </div>
-            <div className="flex gap-4">
-              <span className="text-muted-foreground shrink-0">14:32:05</span>
-              <span className="text-green-400">EXEC</span>
-              <span className="text-gray-300">Deployment successful. Endpoint health checks passing.</span>
-            </div>
-             <div className="flex gap-4 mt-2 pt-2 border-t border-white/5">
-              <span className="text-muted-foreground shrink-0">12:15:44</span>
-              <span className="text-yellow-400">WARN</span>
-              <span className="text-gray-300">node_1a2b missed 3 heartbeats. Marking DEGRADED.</span>
-            </div>
-            <div className="flex gap-4">
-              <span className="text-muted-foreground shrink-0">12:15:45</span>
-              <span className="text-purple-400">SCHED</span>
-              <span className="text-gray-300">Initiating autonomous migration of workload dp_2c4d5e...</span>
-            </div>
-          </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

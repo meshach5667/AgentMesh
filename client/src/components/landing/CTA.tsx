@@ -1,30 +1,24 @@
 import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { ArrowRight, Terminal } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 export function CTA() {
   return (
-    <section className="py-24 relative overflow-hidden border-t border-border/50">
-      <div className="absolute inset-0 bg-blue-500/5"></div>
-      <div className="container relative z-10 px-6 mx-auto text-center max-w-4xl">
-        <h2 className="text-4xl md:text-6xl font-bold tracking-tight mb-8">
-          Join the autonomous network.
-        </h2>
-        <p className="text-xl text-muted-foreground mb-12 max-w-2xl mx-auto">
-          Whether you have idle GPUs to monetize or models to deploy, AgentMesh provides the economic and technical protocol to make it happen.
-        </p>
-
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
-          <Link href="/register">
-            <Button size="lg" className="h-14 px-10 text-lg bg-white text-black hover:bg-gray-200">
-              Deploy a Model <ArrowRight className="ml-2 h-5 w-5" />
-            </Button>
-          </Link>
-          <Link href="/register?role=provider">
-            <Button variant="outline" size="lg" className="h-14 px-10 text-lg bg-background hover:bg-secondary">
-              <Terminal className="mr-2 h-5 w-5 text-blue-500" /> Start Earning
-            </Button>
-          </Link>
+    <section className="py-28">
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="relative overflow-hidden rounded-3xl border border-border bg-foreground px-8 py-16 text-center text-background shadow-lifted md:px-16">
+          <div className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[600px] -translate-x-1/2 rounded-full bg-brand/40 blur-[100px]" />
+          <h2 className="relative text-4xl font-semibold tracking-tight md:text-5xl">Ship your first model today.</h2>
+          <p className="relative mx-auto mt-4 max-w-xl text-lg opacity-70">
+            Start with a small model like SmolLM2 or Qwen2.5 and have an OpenAI-compatible endpoint in minutes.
+          </p>
+          <div className="relative mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link href="/register" className="inline-flex h-11 items-center gap-2 rounded-xl bg-background px-5 text-sm font-medium text-foreground transition-transform hover:-translate-y-px">
+              Get started <ArrowRight className="size-4" />
+            </Link>
+            <Link href="/register?role=provider" className="inline-flex h-11 items-center rounded-xl border border-background/20 px-5 text-sm font-medium transition-colors hover:bg-background/10">
+              Become a provider
+            </Link>
+          </div>
         </div>
       </div>
     </section>

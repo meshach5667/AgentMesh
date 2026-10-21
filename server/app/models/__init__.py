@@ -2,8 +2,9 @@ from app.core.database import Base
 from app.models.agent import AgentAction, AgentTask
 from app.models.api_key import ApiKey
 from app.models.audit import AuditLog, Event
+from app.models.billing import Charge, Payment, PaymentEvent, Payout, PayoutAccount, PricingRule
 from app.models.deployment import Deployment, DeploymentEvent
-from app.models.model import Model
+from app.models.model import Model, ModelArtifact
 from app.models.node import Node, NodeHardware, NodePricing
 from app.models.reservation import ResourceReservation
 from app.models.transaction import Transaction
@@ -19,16 +20,23 @@ __all__ = [
     "ApiKey",
     "AuditLog",
     "Base",
+    "Charge",
     "Customer",
     "Deployment",
     "DeploymentEvent",
     "Event",
     "Model",
+    "ModelArtifact",
     "Node",
     "NodeCommand",
     "NodeEnrollmentToken",
     "NodeHardware",
     "NodePricing",
+    "Payment",
+    "PaymentEvent",
+    "Payout",
+    "PayoutAccount",
+    "PricingRule",
     "Provider",
     "ResourceReservation",
     "Transaction",

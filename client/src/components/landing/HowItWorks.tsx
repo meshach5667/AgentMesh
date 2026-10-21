@@ -1,49 +1,61 @@
-import { Terminal, Box, Zap } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
+
+const TRACKS = [
+  {
+    eyebrow: 'For developers',
+    title: 'From catalog to endpoint in minutes',
+    href: '/register',
+    cta: 'Deploy a model',
+    steps: [
+      ['Pick a model', 'Browse approved open-weight models with their runtimes, memory needs and hourly price.'],
+      ['Deploy', 'AgentMesh reserves capacity on a node, downloads and verifies the model, and runs a test generation.'],
+      ['Call it', 'Create a scoped API key and use any OpenAI client. Watch requests, tokens and charges live.'],
+    ],
+  },
+  {
+    eyebrow: 'For providers',
+    title: 'Turn idle machines into income',
+    href: '/register?role=provider',
+    cta: 'Become a provider',
+    steps: [
+      ['Install the worker', 'A per-user agent or a Docker worker. Outbound connections only; no ports to open.'],
+      ['Set your limits', 'Cap CPU, memory and disk, set availability hours, and pause or drain any time.'],
+      ['Get paid', 'Earn your share of every charge for the deployments you serve, paid out to your bank via Paystack.'],
+    ],
+  },
+];
 
 export function HowItWorks() {
-  const steps = [
-    {
-      title: 'Connect Compute',
-      description: 'Run the lightweight Node Agent on your hardware. It automatically detects GPUs, benchmarks capabilities, and registers to the decentralized network.',
-      icon: Terminal,
-      step: '01'
-    },
-    {
-      title: 'Deploy Models',
-      description: 'Select from approved OSS models or specify your own container. Define your VRAM, latency, and budget requirements in a simple manifest.',
-      icon: Box,
-      step: '02'
-    },
-    {
-      title: 'Agents Operate',
-      description: 'Our AI orchestrator constantly monitors the mesh. It matches workloads to optimal nodes, handles failures, and guarantees execution.',
-      icon: Zap,
-      step: '03'
-    }
-  ];
-
   return (
-    <section className="py-24 bg-secondary/20" id="how-it-works">
-      <div className="container px-6 mx-auto">
-        <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-5xl font-bold mb-6 tracking-tight">How the Mesh Operates</h2>
+    <section id="how-it-works" className="border-y border-border bg-muted/30 py-28">
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="max-w-2xl">
+          <p className="text-sm font-medium text-brand">How it works</p>
+          <h2 className="mt-3 text-4xl font-semibold tracking-tight md:text-5xl">A two-sided compute network.</h2>
         </div>
-
-        <div className="grid md:grid-cols-3 gap-8">
-          {steps.map((s, i) => (
-            <Card key={i} className="p-8 border-border bg-background shadow-sm hover:border-blue-500/30 transition-colors relative group overflow-hidden">
-              <div className="absolute top-0 right-0 p-8 text-8xl font-black text-secondary/30 group-hover:text-secondary/50 transition-colors -z-10 -mt-8 -mr-4 select-none">
-                {s.step}
-              </div>
-              <div className="w-12 h-12 rounded-lg bg-blue-500/10 flex items-center justify-center mb-6 text-blue-500 border border-blue-500/20">
-                <s.icon className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold mb-3">{s.title}</h3>
-              <p className="text-muted-foreground leading-relaxed">
-                {s.description}
-              </p>
-            </Card>
+        <div className="mt-14 grid gap-6 lg:grid-cols-2">
+          {TRACKS.map((t) => (
+            <div key={t.eyebrow} className="flex flex-col rounded-2xl border border-border bg-card p-8 shadow-soft">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{t.eyebrow}</p>
+              <h3 className="mt-2 text-2xl font-semibold tracking-tight">{t.title}</h3>
+              <ol className="mt-8 flex-1 space-y-6">
+                {t.steps.map(([title, body], i) => (
+                  <li key={title} className="flex gap-4">
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-background font-mono text-xs text-muted-foreground">
+                      {i + 1}
+                    </span>
+                    <div>
+                      <p className="font-medium">{title}</p>
+                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{body}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <Link href={t.href} className="mt-8 inline-flex items-center gap-1.5 text-sm font-medium text-brand hover:underline">
+                {t.cta} <ArrowRight className="size-4" />
+              </Link>
+            </div>
           ))}
         </div>
       </div>

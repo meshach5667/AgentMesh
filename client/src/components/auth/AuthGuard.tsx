@@ -2,40 +2,37 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { LogoMark } from '@/components/brand/Logo';
 import { useAuth } from '../../hooks/useAuth';
-import { Network } from 'lucide-react';
+import { homeFor } from '@/lib/roles';
+import type { UserRole } from '@/types';
 
-export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, initialize } = useAuth();
+/** Sends signed-out users to /login and users of another role to their own dashboard. This is navigation only;
+ * the API authorizes every request. */
+export function AuthGuard({ children, roles }: { children: React.ReactNode; roles?: UserRole[] }) {
+  const { user, isAuthenticated, isLoading, initialize } = useAuth();
   const router = useRouter();
+  const allowed = !roles || (!!user && roles.includes(user.role));
 
   useEffect(() => {
     initialize();
   }, [initialize]);
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [isAuthenticated, isLoading, router]);
+    if (isLoading) return;
+    if (!isAuthenticated) router.replace('/login');
+    else if (!allowed) router.replace(homeFor(user?.role));
+  }, [isAuthenticated, isLoading, allowed, user, router]);
 
-  if (isLoading) {
+  if (isLoading || !isAuthenticated || !allowed) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
-          <div className="relative">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
-              <Network className="h-6 w-6 text-white" />
-            </div>
-            <div className="absolute inset-0 rounded-2xl bg-blue-500/20 animate-ping" />
-          </div>
-          <p className="text-sm text-muted-foreground animate-pulse">Loading...</p>
+          <LogoMark className="size-10 animate-pulse" />
+          <p className="animate-pulse text-sm text-muted-foreground">Loading…</p>
         </div>
       </div>
     );
   }
-
-  if (!isAuthenticated) return null;
-
   return <>{children}</>;
 }

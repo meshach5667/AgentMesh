@@ -65,6 +65,18 @@ class WorkerState:
         if self.workloads.pop(deployment_id, None) is not None:
             _atomic_write(self.workloads_path, self.workloads)
 
+    # local control (pause / drain / resume from the CLI) ------------------------------------------------
+    @property
+    def control_path(self) -> Path:
+        return self.dir / "control.json"
+
+    def control(self) -> dict:
+        data = _read(self.control_path, {})
+        return {"paused": bool(data.get("paused")), "draining": bool(data.get("draining"))}
+
+    def set_control(self, *, paused: bool, draining: bool) -> None:
+        _atomic_write(self.control_path, {"paused": paused, "draining": draining, "updated": time.time()}, mode=0o644)
+
     # liveness (used by the container health check) --------------------------------------------------
     def record_heartbeat(self) -> None:
         _atomic_write(self.dir / "health.json", {"last_heartbeat": time.time()}, mode=0o644)

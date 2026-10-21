@@ -34,6 +34,12 @@ async def stop_deployment(id: str, db: AsyncSession = Depends(get_db), current_u
     return await deployment_service.stop_deployment(db, id, current_user)
 
 
+@router.post("/{id}/restart")
+async def restart_deployment(id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+    """Restart on the same node from the cached model. The endpoint and API keys are unchanged."""
+    return await deployment_service.restart_deployment(db, id, current_user)
+
+
 @router.delete("/{id}")
 async def delete_deployment(id: str, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
     return await deployment_service.delete_deployment(db, id, current_user)

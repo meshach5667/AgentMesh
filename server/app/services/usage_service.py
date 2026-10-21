@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timeutil import utcnow
 from app.models.usage import UsageRecord
 
 
@@ -11,8 +10,8 @@ async def record_usage(db: AsyncSession, deployment_id: str, node_id: str, gpu_s
         node_id=node_id,
         gpu_seconds=gpu_seconds,
         cpu_seconds=cpu_seconds,
-        period_start=datetime.utcnow(),
-        period_end=datetime.utcnow(),
+        period_start=utcnow(),
+        period_end=utcnow(),
     )
     db.add(usage)
     await db.commit()

@@ -1,113 +1,240 @@
 'use client';
 
-import { useParams } from 'next/navigation';
-import { useDeployment, useStopDeployment } from '@/hooks/useDeployments';
-import { InferenceEndpoint } from '@/components/deployments/InferenceEndpoint';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Spinner } from '@/components/ui/Spinner';
-import { UsageChart } from '@/components/charts/UsageChart';
-import { formatCurrency, formatDate } from '@/lib/utils';
-import { Activity, Clock, DollarSign, Server, Square, RotateCcw } from 'lucide-react';
+import Link from 'next/link';
+import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-
-const statusColors: Record<string, 'green' | 'yellow' | 'red' | 'blue' | 'orange'> = {
-  READY: 'green', PROVISIONING: 'yellow', STARTING: 'yellow', UNHEALTHY: 'orange',
-  STOPPED: 'red', CANCELLED: 'red', FAILED: 'orange', REQUESTED: 'blue', SCHEDULED: 'blue',
-  STOPPING: 'red',
-};
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { ApiExamples } from '@/components/deployments/ApiExamples';
+import { DeploymentTimeline } from '@/components/deployments/DeploymentTimeline';
+import { Playground } from '@/components/deployments/Playground';
+import { InlineValue } from '@/components/common/CodeBlock';
+import { ConfirmButton } from '@/components/common/ConfirmButton';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { ErrorState, Notice, PageHeader, TrustNotice } from '@/components/common/Notices';
+import { PageSkeleton } from '@/components/ui/Skeleton';
+import {
+  useDeleteDeployment,
+  useDeployment,
+  useDeploymentEvents,
+  useDeploymentUsage,
+  useRestartDeployment,
+  useStopDeployment,
+} from '@/hooks/useDeployments';
+import { useModel } from '@/hooks/useModels';
+import { useCharges } from '@/hooks/useBilling';
+import { ChargesTable } from '@/components/billing/ChargesTable';
+import { sumAmounts } from '@/lib/billing';
+import { STATUS_HELP } from '@/lib/deployments';
+import { errorMessage } from '@/lib/errors';
+import { ago, count, dateTime, money, runtimeLabel, shortId } from '@/lib/format';
+import { IN_PROGRESS_STATUSES, TERMINAL_STATUSES } from '@/types';
 
 export default function DeploymentDetailPage() {
-  const params = useParams();
-  const id = params.id as string;
-  const { data: deployment, isLoading, error } = useDeployment(id);
-  const stopMutation = useStopDeployment();
+  const id = useParams<{ id: string }>().id;
+  const router = useRouter();
+  const { data: dep, isLoading, error, refetch } = useDeployment(id);
+  const live = !!dep && IN_PROGRESS_STATUSES.includes(dep.status);
+  const events = useDeploymentEvents(id, live);
+  const usage = useDeploymentUsage(id);
+  const model = useModel(dep?.model_id ?? null);
+  const charges = useCharges(id);
+  const stop = useStopDeployment();
+  const restart = useRestartDeployment();
+  const remove = useDeleteDeployment();
 
-  if (isLoading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
-  if (error || !deployment) return <div className="text-red-400 text-center py-20">Failed to load deployment</div>;
+  if (isLoading) return <PageSkeleton />;
+  if (error || !dep) return <ErrorState message={errorMessage(error, 'Deployment not found')} retry={() => refetch()} />;
 
-  const handleStop = async () => {
-    try {
-      await stopMutation.mutateAsync(id);
-      toast.success('Deployment stop requested');
-    } catch {
-      toast.error('Failed to stop deployment');
-    }
-  };
+  const ended = TERMINAL_STATUSES.includes(dep.status);
+  const act = (p: Promise<unknown>, ok: string) => p.then(() => toast.success(ok)).catch((e) => toast.error(errorMessage(e)));
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold text-white">Deployment Details</h1>
-          <Badge color={statusColors[deployment.status] || 'blue'}>{deployment.status}</Badge>
-        </div>
-        <div className="flex gap-3">
-          {deployment.status === 'READY' && (
-            <>
-              <Button variant="secondary" onClick={() => toast.success('Restart requested')}>
-                <RotateCcw className="w-4 h-4 mr-2" />Restart
+      <PageHeader
+        title={model.data?.name ?? dep.model_tag ?? 'Deployment'}
+        description={`Deployment ${dep.id}`}
+        actions={
+          <>
+            {(dep.status === 'READY' || dep.status === 'UNHEALTHY') && (
+              <Button variant="outline" disabled={restart.isPending} onClick={() => act(restart.mutateAsync(dep.id), 'Restart requested')}>
+                Restart
               </Button>
-              <Button variant="destructive" onClick={handleStop} disabled={stopMutation.isPending}>
-                <Square className="w-4 h-4 mr-2" />Stop
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+            )}
+            {!ended && dep.status !== 'STOPPING' && (
+              <ConfirmButton confirmLabel="Stop deployment" onConfirm={() => act(stop.mutateAsync(dep.id), 'Stop requested')}>
+                Stop
+              </ConfirmButton>
+            )}
+            <ConfirmButton
+              variant="outline"
+              confirmLabel="Delete and revoke its keys"
+              onConfirm={() =>
+                remove.mutateAsync(dep.id).then(
+                  () => {
+                    toast.success('Deployment deleted');
+                    router.push('/customer/deployments');
+                  },
+                  (e) => toast.error(errorMessage(e)),
+                )
+              }
+            >
+              Delete
+            </ConfirmButton>
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <div className="p-4">
-            <div className="flex items-center gap-2 text-gray-400 text-sm mb-1"><Activity className="w-4 h-4" />Status</div>
-            <p className="text-lg font-semibold text-white">{deployment.status}</p>
-          </div>
-        </Card>
-        <Card>
-          <div className="p-4">
-            <div className="flex items-center gap-2 text-gray-400 text-sm mb-1"><Server className="w-4 h-4" />Model</div>
-            <p className="text-lg font-semibold text-white">{deployment.model?.name || deployment.model_id}</p>
-          </div>
-        </Card>
-        <Card>
-          <div className="p-4">
-            <div className="flex items-center gap-2 text-gray-400 text-sm mb-1"><Clock className="w-4 h-4" />Started</div>
-            <p className="text-lg font-semibold text-white">{deployment.started_at ? formatDate(deployment.started_at) : 'Pending'}</p>
-          </div>
-        </Card>
-        <Card>
-          <div className="p-4">
-            <div className="flex items-center gap-2 text-gray-400 text-sm mb-1"><DollarSign className="w-4 h-4" />Cost</div>
-            <p className="text-lg font-semibold text-white">{formatCurrency(deployment.total_cost || 0)}</p>
-          </div>
-        </Card>
-      </div>
+      <Card>
+        <CardContent className="grid gap-4 pt-6 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Status">
+            <StatusBadge status={dep.status} />
+          </Field>
+          <Field label="Runtime">{runtimeLabel(dep.runtime)}</Field>
+          <Field label="Node">
+            <span className="font-mono">{shortId(dep.node_id)}</span>
+            {dep.schedule_attempts > 1 && <span className="text-muted-foreground"> · attempt {dep.schedule_attempts}</span>}
+          </Field>
+          <Field label={dep.ready_at ? 'Ready since' : 'Created'}>{dateTime(dep.ready_at ?? dep.created_at)}</Field>
+          <Field label="Model reference">
+            <span className="break-all font-mono text-xs">{dep.model_tag ?? '—'}</span>
+          </Field>
+          <Field label="Verified digest">
+            <span className="break-all font-mono text-xs">{dep.model_digest ?? 'not yet'}</span>
+          </Field>
+          <Field label="Context window">{dep.config?.num_ctx?.toLocaleString() ?? '—'} tokens</Field>
+          <Field label="Restarts">{dep.restart_count}</Field>
+          <Field label="Charged so far">
+            <span data-testid="cost-so-far">
+              {charges.data ? money(sumAmounts(charges.data), charges.data[0]?.currency) : '—'}
+            </span>
+          </Field>
+        </CardContent>
+      </Card>
 
-      {deployment.endpoint && deployment.status === 'READY' && (
-        <Card>
-          <div className="p-6">
-            <h2 className="text-lg font-semibold text-white mb-3">Inference Endpoint</h2>
-            <InferenceEndpoint url={deployment.endpoint} />
-          </div>
-        </Card>
+      <Notice tone={dep.status === 'FAILED' ? 'danger' : dep.status === 'UNHEALTHY' ? 'warning' : 'info'} title={dep.status}>
+        {STATUS_HELP[dep.status]}
+        {dep.error_message && (
+          <span className="mt-1 block">
+            <span className="font-mono text-xs">{dep.error_code}</span> {dep.error_message}
+          </span>
+        )}
+      </Notice>
+
+      {dep.status === 'READY' && dep.openai_base_url && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Call this deployment</CardTitle>
+              <CardDescription>
+                OpenAI-compatible endpoint. Authenticate with an{' '}
+                <Link href="/customer/api-keys" className="underline underline-offset-4">
+                  API key
+                </Link>
+                ; a key can be limited to this deployment.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <InlineValue value={dep.openai_base_url} />
+              {dep.runtime === 'ollama' && dep.endpoint && (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Ollama-native API (Ollama deployments only)</p>
+                  <InlineValue value={dep.endpoint} />
+                </div>
+              )}
+              <ApiExamples deployment={dep} />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Try it</CardTitle>
+              <CardDescription>Sends a real request through the gateway. It is metered like any other request.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <TrustNotice />
+              <Playground deployment={dep} />
+            </CardContent>
+          </Card>
+        </>
       )}
 
-      <Card>
-        <div className="p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Usage Over Time</h2>
-          <UsageChart data={[]} />
-        </div>
-      </Card>
+      <ChargesCard charges={charges} />
 
-      <Card>
-        <div className="p-6">
-          <h2 className="text-lg font-semibold text-white mb-3">Configuration</h2>
-          <pre className="bg-gray-900 rounded p-4 text-sm text-gray-300 overflow-auto">
-            {JSON.stringify(deployment.config || {}, null, 2)}
-          </pre>
-        </div>
-      </Card>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Progress</CardTitle>
+            <CardDescription>{live ? 'Updating every 2 seconds.' : 'Lifecycle events.'}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {events.error ? <p className="text-sm text-rose-500">{errorMessage(events.error)}</p> : <DeploymentTimeline events={events.data ?? []} />}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent requests</CardTitle>
+            <CardDescription>Metadata only; prompts and responses are never stored.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {usage.error ? (
+              <p className="text-sm text-rose-500">{errorMessage(usage.error)}</p>
+            ) : (usage.data ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">No requests yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>When</TableHead>
+                    <TableHead>Endpoint</TableHead>
+                    <TableHead>Outcome</TableHead>
+                    <TableHead className="text-right">Tokens in/out</TableHead>
+                    <TableHead className="text-right">ms</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(usage.data ?? []).slice(0, 15).map((u) => (
+                    <TableRow key={u.id}>
+                      <TableCell className="text-xs">{ago(u.created_at)}</TableCell>
+                      <TableCell className="font-mono text-xs">{u.endpoint}</TableCell>
+                      <TableCell className="text-xs">
+                        {u.outcome} {u.status_code ? `(${u.status_code})` : ''}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">
+                        {count(u.input_tokens)} / {count(u.output_tokens)}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">{count(u.duration_ms)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ChargesCard({ charges }: { charges: ReturnType<typeof useCharges> }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Charges</CardTitle>
+        <CardDescription>Rated every few minutes from READY time and runtime-reported tokens.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ChargesTable charges={charges.data ?? []} empty="No charges for this deployment yet." />
+      </CardContent>
+    </Card>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <div className="text-sm">{children}</div>
     </div>
   );
 }

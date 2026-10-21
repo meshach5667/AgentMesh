@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -8,18 +7,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.core.config import settings
 from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
+from app.core.timeutil import utcnow
 from app.models.api_key import ApiKey
 from app.models.deployment import Deployment, DeploymentEvent
 from app.models.deployment import DeploymentStatus as S
 from app.models.user import Customer, User
 from app.models.worker import CommandType
 from app.schemas.deployment import DeploymentCreate
+from app.services import audit_service, billing_service, placement_service, worker_service
 from app.services import deployment_lifecycle as lifecycle
-from app.services import worker_service
-from app.services.catalog_service import DeploymentConfig, estimate_requirements, get_deployable_model
+from app.services.catalog_service import (
+    DeploymentConfig,
+    deployable_artifacts,
+    estimate_requirements,
+    get_deployable_model,
+    worker_source,
+)
+from app.services.placement_service import deploy_payload
 from app.services.scheduler_service import NoEligibleNode, release_reservation, schedule
 
 # Kept for callers that predate the lifecycle module.
@@ -40,28 +46,6 @@ async def _existing_by_idempotency_key(db: AsyncSession, customer_id, key: str |
     return result.scalars().first()
 
 
-def deploy_payload(deployment: Deployment, req) -> dict:
-    """The only information sent to a worker: validated identifiers and limits. No customer credentials and
-    no free-form runtime arguments."""
-    return {
-        "deployment_id": str(deployment.id),
-        "runtime": deployment.runtime,
-        "model_tag": deployment.model_tag,
-        "num_ctx": deployment.config["num_ctx"],
-        "resources": {
-            "cpu_cores": req.cpu_cores,
-            "ram_mb": req.ram_mb,
-            "disk_mb": req.disk_mb,
-            "vram_mb": req.vram_mb,
-            "gpu": req.gpu_required,
-        },
-        "timeouts": {
-            "stall_seconds": settings.PROVISION_STALL_TIMEOUT_SECONDS,
-            "max_seconds": settings.PROVISION_MAX_SECONDS,
-        },
-    }
-
-
 async def create_deployment(db: AsyncSession, deployment_data: DeploymentCreate, user_id: uuid.UUID):
     customer = await _get_customer(db, user_id)
     if not customer:
@@ -79,14 +63,12 @@ async def create_deployment(db: AsyncSession, deployment_data: DeploymentCreate,
             detail=[{"loc": ["body", "config", *e["loc"]], "msg": e["msg"], "type": e["type"]} for e in exc.errors()],
         ) from None
     model = await get_deployable_model(db, deployment_data.model_id)
-    req = estimate_requirements(model, config)
+    artifacts = await deployable_artifacts(db, model, deployment_data.runtime)
 
     deployment = Deployment(
         id=uuid.uuid4(),
         customer_id=customer.id,
         model_id=model.id,
-        runtime=model.runtime,
-        model_tag=model.model_tag,
         config=config.model_dump(),
         status=S.REQUESTED.value,
         idempotency_key=deployment_data.idempotency_key,
@@ -102,26 +84,66 @@ async def create_deployment(db: AsyncSession, deployment_data: DeploymentCreate,
         raise
     db.add(DeploymentEvent(deployment_id=deployment.id, to_status=S.REQUESTED.value, actor="customer"))
 
-    try:
-        node = await schedule(db, deployment.id, req)
-    except NoEligibleNode as exc:
+    # Try each compatible runtime in preference order (or only the one the customer asked for).
+    node = artifact = req = None
+    failures: dict[str, dict] = {}
+    for candidate in artifacts:
+        candidate_req = estimate_requirements(candidate, config)
+        try:
+            node = await schedule(db, deployment.id, candidate_req)
+        except NoEligibleNode as exc:
+            failures[candidate.runtime] = {
+                "message": exc.evaluation.explain(),
+                "reasons": dict(exc.evaluation.reasons),
+                "requirements": candidate_req.__dict__,
+            }
+            continue
+        artifact, req = candidate, candidate_req
+        break
+    if node is None or artifact is None or req is None:
         await db.rollback()
+        merged: dict[str, int] = {}
+        for f in failures.values():
+            for reason, count in f["reasons"].items():
+                merged[reason] = merged.get(reason, 0) + count
+        only = next(iter(failures.values())) if len(failures) == 1 else None
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "no_eligible_node",
-                "message": exc.evaluation.explain(),
-                "reasons": dict(exc.evaluation.reasons),
-                "requirements": req.__dict__,
+                "message": only["message"]
+                if only
+                else "; ".join(f"{rt}: {v['message']}" for rt, v in failures.items()),
+                "reasons": merged,
+                "by_runtime": failures,
+                "requirements": only["requirements"] if only else None,
             },
         ) from None
 
+    try:
+        await billing_service.require_prepaid(db, user_id, req.cpu_cores, req.ram_mb, req.vram_mb)
+    except HTTPException:
+        await db.rollback()  # releases the reservation made above
+        raise
+
+    deployment.runtime = artifact.runtime
+    deployment.model_tag = artifact.reference
+    deployment.artifact_id = artifact.id
     deployment.node_id = node.id
+    deployment.schedule_attempts = 1
     await lifecycle.transition(
         db, deployment, S.SCHEDULED, actor="system", message="Capacity reserved on a provider node", node_id=node.id
     )
     await worker_service.enqueue_command(
-        db, node.id, deployment.id, CommandType.DEPLOY, deploy_payload(deployment, req)
+        db, node.id, deployment.id, CommandType.DEPLOY, deploy_payload(deployment, req, worker_source(artifact))
+    )
+    audit_service.record(
+        db,
+        actor_id=user_id,
+        action="deployment.created",
+        resource_type="deployment",
+        resource_id=deployment.id,
+        details={"model_tag": deployment.model_tag, "runtime": deployment.runtime, "node_id": str(node.id)},
     )
     await db.commit()
     await db.refresh(deployment)
@@ -179,6 +201,19 @@ async def stop_deployment(db: AsyncSession, deployment_id: str, user: User):
     if S(deployment.status) in lifecycle.TERMINAL:
         raise HTTPException(status_code=409, detail=f"Deployment is already {deployment.status}")
     await _stop(db, deployment, actor="customer", message="Stop requested")
+    audit_service.record(
+        db, actor_id=user.id, action="deployment.stopped", resource_type="deployment", resource_id=deployment.id
+    )
+    await db.commit()
+    return {"status": deployment.status}
+
+
+async def restart_deployment(db: AsyncSession, deployment_id: str, user: User):
+    deployment = await get_deployment_for_user(db, deployment_id, user)
+    await placement_service.restart(db, deployment)
+    audit_service.record(
+        db, actor_id=user.id, action="deployment.restarted", resource_type="deployment", resource_id=deployment.id
+    )
     await db.commit()
     return {"status": deployment.status}
 
@@ -187,7 +222,7 @@ async def delete_deployment(db: AsyncSession, deployment_id: str, user: User):
     """Stop the workload if needed, revoke deployment-scoped API keys, and hide the deployment. Usage and
     lifecycle records are retained for billing and audit."""
     deployment = await get_deployment_for_user(db, deployment_id, user)
-    now = datetime.utcnow()
+    now = utcnow()
     if S(deployment.status) not in lifecycle.TERMINAL:
         await _stop(db, deployment, actor="customer", message="Deletion requested")
     await db.execute(
@@ -197,6 +232,9 @@ async def delete_deployment(db: AsyncSession, deployment_id: str, user: User):
         .execution_options(synchronize_session=False)
     )
     deployment.deleted_at = now
+    audit_service.record(
+        db, actor_id=user.id, action="deployment.deleted", resource_type="deployment", resource_id=deployment.id
+    )
     await db.commit()
     return {"status": deployment.status, "deleted": True}
 

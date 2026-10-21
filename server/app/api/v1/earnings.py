@@ -1,27 +1,48 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.models.deployment import Deployment
+from app.models.node import Node
 from app.models.transaction import Transaction, TransactionStatus, TransactionType
+from app.models.user import Provider
 from app.models.wallet import Wallet
 from app.schemas.earnings import EarningsSummary
+from app.schemas.transaction import TransactionResponse
+from app.services.deployment_lifecycle import ACTIVE
 
 router = APIRouter()
 
 
+async def _hosted_deployments(db: AsyncSession, user_id) -> tuple[int, int]:
+    """Deployments ever placed on, and currently active on, the caller's nodes."""
+    owned = select(Node.id).join(Provider, Node.owner_id == Provider.id).where(Provider.user_id == user_id)
+    on_nodes = Deployment.node_id.in_(owned)
+    total = (await db.execute(select(func.count(Deployment.id)).where(on_nodes))).scalar() or 0
+    active = (
+        await db.execute(
+            select(func.count(Deployment.id)).where(on_nodes, Deployment.status.in_([s.value for s in ACTIVE]))
+        )
+    ).scalar() or 0
+    return int(total), int(active)
+
+
 @router.get("", response_model=EarningsSummary)
 async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+    total_deployments, active_deployments = await _hosted_deployments(db, current_user.id)
     result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
     wallet = result.scalars().first()
     if not wallet:
         return EarningsSummary(
-            total_earnings=0,
-            pending_earnings=0,
-            available_balance=0,
-            total_deployments=0,
-            active_deployments=0,
+            total_earnings=Decimal(0),
+            pending_earnings=Decimal(0),
+            available_balance=Decimal(0),
+            total_deployments=total_deployments,
+            active_deployments=active_deployments,
         )
 
     # Total settled provider credits
@@ -45,15 +66,15 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
     pending_earnings = pending.scalar() or 0
 
     return EarningsSummary(
-        total_earnings=total_earnings,
-        pending_earnings=pending_earnings,
-        available_balance=wallet.balance,
-        total_deployments=0,
-        active_deployments=0,
+        total_earnings=Decimal(total_earnings),
+        pending_earnings=Decimal(pending_earnings),
+        available_balance=Decimal(wallet.balance or 0),
+        total_deployments=total_deployments,
+        active_deployments=active_deployments,
     )
 
 
-@router.get("/history")
+@router.get("/history", response_model=list[TransactionResponse])
 async def get_history(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
     result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
     wallet = result.scalars().first()

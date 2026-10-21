@@ -1,12 +1,14 @@
-import { RegisterForm } from '../../components/auth/RegisterForm';
+import type { Metadata } from 'next';
+import { AuthShell } from '@/components/auth/AuthShell';
+import { RegisterForm } from '@/components/auth/RegisterForm';
 
-export default function RegisterPage() {
+export const metadata: Metadata = { title: 'Create account' };
+
+export default async function RegisterPage({ searchParams }: { searchParams: Promise<{ role?: string }> }) {
+  const { role } = await searchParams;
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-purple-500/5" />
-      <div className="relative z-10 w-full">
-        <RegisterForm />
-      </div>
-    </div>
+    <AuthShell>
+      <RegisterForm initialRole={role === 'provider' ? 'provider' : 'customer'} />
+    </AuthShell>
   );
 }

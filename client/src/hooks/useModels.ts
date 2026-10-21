@@ -1,13 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
-import { Model } from '../types';
+import type { Model } from '../types';
 
-export const useModels = () => {
-  return useQuery({
+export const useModels = () =>
+  useQuery({
     queryKey: ['models'],
-    queryFn: async () => {
-      const { data } = await api.get<Model[]>('/models');
-      return data;
-    },
+    queryFn: async () => (await api.get<Model[]>('/models')).data,
   });
-};
+
+export const useModel = (id: string | null) =>
+  useQuery({
+    queryKey: ['models', id],
+    queryFn: async () => (await api.get<Model>(`/models/${id}`)).data,
+    enabled: !!id,
+  });

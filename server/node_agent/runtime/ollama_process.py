@@ -9,55 +9,32 @@ This backend is not a security sandbox: the runtime runs as the provider's user.
 """
 
 import asyncio
-import contextlib
 import os
 import shutil
-import signal
-import socket
 from pathlib import Path
-
-import psutil
 
 from . import ollama_api
 from .base import ProgressCallback, RuntimeCapabilities, WorkloadError, WorkloadHandle, WorkloadRuntime, WorkloadSpec
+from .process_utils import CgroupProbe, base_env, free_port, own_process, spawn, terminate
 
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+_free_port = free_port  # kept for callers that imported the old private name
 
 
 class OllamaProcessRuntime(WorkloadRuntime):
     name = "ollama"
     backend = "process"
+    allowed_paths = ollama_api.ALLOWED_PATHS
 
     def __init__(self, data_dir: Path, binary: str = "ollama", cgroup_limits: bool = True):
         self.data_dir = data_dir
         self.models_dir = data_dir / "models"
         self.logs_dir = data_dir / "logs"
         self.binary = shutil.which(binary) or binary
-        self.want_cgroups = cgroup_limits
-        self._cgroups: bool | None = None
+        self.cgroups = CgroupProbe(cgroup_limits)
         self._procs: dict[str, asyncio.subprocess.Process] = {}
 
     async def _cgroups_available(self) -> bool:
-        if self._cgroups is None:
-            self._cgroups = False
-            if self.want_cgroups and shutil.which("systemd-run"):
-                proc = await asyncio.create_subprocess_exec(
-                    "systemd-run",
-                    "--user",
-                    "--scope",
-                    "--quiet",
-                    "-p",
-                    "MemoryMax=64M",
-                    "true",
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                self._cgroups = (await proc.wait()) == 0
-        return self._cgroups
+        return await self.cgroups.available()
 
     async def capabilities(self) -> RuntimeCapabilities:
         version, available, detail = "", False, ""
@@ -66,8 +43,7 @@ class OllamaProcessRuntime(WorkloadRuntime):
                 self.binary, "--version", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
             out, _ = await proc.communicate()
-            text = out.decode(errors="ignore")
-            version = next((tok for tok in text.split() if tok[:1].isdigit()), "")[:50]
+            version = next((tok for tok in out.decode(errors="ignore").split() if tok[:1].isdigit()), "")[:50]
             available = True
         else:
             detail = "ollama binary not found"
@@ -83,66 +59,38 @@ class OllamaProcessRuntime(WorkloadRuntime):
         )
 
     def _env(self, port: int, spec: WorkloadSpec) -> dict[str, str]:
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "HOME": str(self.data_dir / "home"),
-            "OLLAMA_HOST": f"127.0.0.1:{port}",
-            "OLLAMA_MODELS": str(self.models_dir),
-            "OLLAMA_KEEP_ALIVE": "-1",
-            "OLLAMA_NUM_PARALLEL": "1",
-            "OLLAMA_MAX_LOADED_MODELS": "1",
-            "OLLAMA_NOHISTORY": "1",
-        }
-        # systemd-run needs these to reach the user service manager; nothing else from the provider's env leaks.
-        for key in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
-            if key in os.environ:
-                env[key] = os.environ[key]
-        if not spec.gpu:
-            env.update({"CUDA_VISIBLE_DEVICES": "-1", "HIP_VISIBLE_DEVICES": "-1", "ROCR_VISIBLE_DEVICES": "-1"})
+        env = base_env(self.data_dir / "home", spec.gpu)
+        env.update(
+            {
+                "OLLAMA_HOST": f"127.0.0.1:{port}",
+                "OLLAMA_MODELS": str(self.models_dir),
+                "OLLAMA_KEEP_ALIVE": "-1",
+                "OLLAMA_NUM_PARALLEL": "1",
+                "OLLAMA_MAX_LOADED_MODELS": "1",
+                "OLLAMA_NOHISTORY": "1",
+            }
+        )
         return env
 
     async def start(self, spec: WorkloadSpec) -> WorkloadHandle:
         for d in (self.models_dir, self.logs_dir, self.data_dir / "home"):
             d.mkdir(parents=True, exist_ok=True, mode=0o700)
-        port = _free_port()
-        argv = [self.binary, "serve"]
+        port = free_port()
         cgroup = await self._cgroups_available()
-        if cgroup:
-            argv = [
-                "systemd-run",
-                "--user",
-                "--scope",
-                "--quiet",
-                f"--unit=agentmesh-wl-{spec.deployment_id[:8]}-{port}",
-                "-p",
-                f"MemoryMax={spec.ram_mb}M",
-                "-p",
-                "MemorySwapMax=0",
-                "-p",
-                f"CPUQuota={spec.cpu_cores * 100}%",
-                "--",
-                *argv,
-            ]
-        log = open(self.logs_dir / f"{spec.deployment_id}.log", "ab")  # noqa: SIM115
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                env=self._env(port, spec),
-                stdout=log,
-                stderr=log,
-                stdin=asyncio.subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            raise WorkloadError("RUNTIME_START_FAILED", f"Could not start Ollama: {exc.strerror}") from None
-        finally:
-            log.close()
+        proc = await spawn(
+            [self.binary, "serve"],
+            env=self._env(port, spec),
+            log_path=self.logs_dir / f"{spec.deployment_id}.log",
+            scope=f"agentmesh-wl-{spec.deployment_id[:8]}-{port}" if cgroup else None,
+            ram_mb=spec.ram_mb,
+            cpu_cores=spec.cpu_cores,
+        )
         self._procs[spec.deployment_id] = proc
         handle = WorkloadHandle(
             deployment_id=spec.deployment_id,
             base_url=f"http://127.0.0.1:{port}",
             backend="process",
-            ref={"pid": proc.pid, "port": port, "cgroup": cgroup},
+            ref={"pid": proc.pid, "port": port, "cgroup": cgroup, "runtime": self.name},
         )
 
         async def alive():
@@ -164,52 +112,12 @@ class OllamaProcessRuntime(WorkloadRuntime):
     async def health(self, handle: WorkloadHandle, spec: WorkloadSpec) -> bool:
         return await self.is_alive(handle) and await ollama_api.health(handle.base_url, spec.model_tag)
 
-    def _own_process(self, handle: WorkloadHandle) -> psutil.Process | None:
-        """Return the process only if it is still the Ollama server we started (guards against PID reuse)."""
-        pid = handle.ref.get("pid")
-        if not pid:
-            return None
-        try:
-            p = psutil.Process(pid)
-            cmd = " ".join(p.cmdline())
-            env_ok = f"127.0.0.1:{handle.ref.get('port')}"
-            if "ollama" in cmd and "serve" in cmd:
-                with contextlib.suppress(psutil.Error):
-                    if p.environ().get("OLLAMA_HOST") not in (None, env_ok):
-                        return None
-                return p
-        except psutil.Error:
-            pass
-        return None
+    def _own_process(self, handle: WorkloadHandle):
+        # Ollama receives its port through OLLAMA_HOST (environment), not its command line.
+        return own_process(handle.ref.get("pid"), "ollama", handle.ref.get("port"))
 
     async def is_alive(self, handle: WorkloadHandle) -> bool:
         return self._own_process(handle) is not None
 
     async def remove(self, handle: WorkloadHandle) -> None:
-        proc = self._procs.pop(handle.deployment_id, None)
-        p = self._own_process(handle)
-        if p is None:
-            return
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(p.pid, signal.SIGTERM)
-        if await self._wait_gone(p, proc, 15):
-            return
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(p.pid, signal.SIGKILL)
-        await self._wait_gone(p, proc, 5)
-
-    @staticmethod
-    async def _wait_gone(p: psutil.Process, proc, timeout: float) -> bool:
-        # Reap through asyncio when we spawned the process in this run; otherwise poll (adopted process).
-        if proc is not None:
-            try:
-                await asyncio.wait_for(proc.wait(), timeout)
-                return True
-            except TimeoutError:
-                return False
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if not p.is_running() or p.status() == psutil.STATUS_ZOMBIE:
-                return True
-            await asyncio.sleep(0.2)
-        return False
+        await terminate(self._own_process(handle), self._procs.pop(handle.deployment_id, None))

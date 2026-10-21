@@ -19,6 +19,8 @@ class NodeOut(BaseModel):
     protocol_version: int | None = None
     runtimes: list[dict[str, Any]] | None = None
     accepting_workloads: bool = True
+    worker_available: bool = True
+    worker_unavailable_reason: str | None = None
     allocated_cpu_cores: int = 0
     allocated_ram_mb: int = 0
     allocated_disk_mb: int = 0

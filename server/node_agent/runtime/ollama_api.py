@@ -2,11 +2,21 @@
 
 import asyncio
 import json
+import re
 import time
 
 import httpx
 
 from .base import ProgressCallback, WorkloadError
+
+_TRANSIENT = re.compile(
+    r"\b5\d\d\b|timeout|timed out|connection|reset|EOF|temporar|unavailable|too many requests|429", re.IGNORECASE
+)
+
+
+def is_transient(text: str) -> bool:
+    """Registry and network hiccups are retried; "model does not exist" style errors are not."""
+    return bool(_TRANSIENT.search(text))
 
 
 def tag_names(tag: str) -> set[str]:
@@ -43,7 +53,11 @@ async def pull(base_url: str, tag: str, progress: ProgressCallback, stall_timeou
             ) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread())[:300].decode(errors="ignore")
-                    raise WorkloadError("MODEL_PULL_FAILED", f"Model download failed ({resp.status_code}): {body}")
+                    raise WorkloadError(
+                        "MODEL_PULL_FAILED",
+                        f"Model download failed ({resp.status_code}): {body}",
+                        transient=resp.status_code >= 500 or is_transient(body),
+                    )
                 async for line in resp.aiter_lines():
                     if not line.strip():
                         continue
@@ -52,7 +66,10 @@ async def pull(base_url: str, tag: str, progress: ProgressCallback, stall_timeou
                     except ValueError:
                         continue
                     if "error" in msg:
-                        raise WorkloadError("MODEL_PULL_FAILED", f"Model download failed: {str(msg['error'])[:300]}")
+                        err = str(msg["error"])[:300]
+                        raise WorkloadError(
+                            "MODEL_PULL_FAILED", f"Model download failed: {err}", transient=is_transient(err)
+                        )
                     status = str(msg.get("status", ""))
                     total, done = msg.get("total"), msg.get("completed")
                     now = time.monotonic()
@@ -64,9 +81,11 @@ async def pull(base_url: str, tag: str, progress: ProgressCallback, stall_timeou
                     if status == "success":
                         return
     except httpx.ReadTimeout:
-        raise WorkloadError("MODEL_PULL_STALLED", "Model download stalled") from None
+        raise WorkloadError("MODEL_PULL_STALLED", "Model download stalled", transient=True) from None
     except httpx.HTTPError as exc:
-        raise WorkloadError("MODEL_PULL_FAILED", f"Model download failed: {type(exc).__name__}") from None
+        raise WorkloadError(
+            "MODEL_PULL_FAILED", f"Model download failed: {type(exc).__name__}", transient=True
+        ) from None
     raise WorkloadError("MODEL_PULL_FAILED", "Model download ended without success")
 
 

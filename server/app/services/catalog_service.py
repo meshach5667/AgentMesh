@@ -1,24 +1,35 @@
-"""Model catalog validation: decides whether a catalog entry can be deployed and with what resources."""
+"""Model catalog validation: which models can be deployed, on which runtimes, and with what resources.
+
+Compatibility is explicit: a model is deployable on a runtime only through an enabled ModelArtifact for that
+runtime whose source passes validation. Appearing in the catalog is never proof of deployability; the
+artifact's ``last_ready_at`` records when serving it last actually worked.
+"""
 
 import math
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ids import parse_uuid
-from app.models.model import Model
+from app.models.model import Model, ModelArtifact
 
-# Runtimes the control plane can currently schedule. Others may exist in the catalog but are rejected
-# with an explicit message rather than silently attempted.
-SUPPORTED_RUNTIMES = frozenset({"ollama"})
+# Runtimes the control plane can schedule, in default preference order (most widely available first).
+RUNTIME_PREFERENCE = ("ollama", "llamacpp", "vllm")
+SUPPORTED_RUNTIMES = frozenset(RUNTIME_PREFERENCE)
 
 # Ollama model references: optional namespace, name, optional tag. No URLs, paths, or shell metacharacters.
 OLLAMA_TAG_RE = re.compile(
     r"^[a-z0-9][a-z0-9._-]{0,63}(/[a-z0-9][a-z0-9._-]{0,63})?(:[a-zA-Z0-9][a-zA-Z0-9._-]{0,63})?$"
 )
+HF_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+HF_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+GGUF_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.gguf$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 MAX_NUM_CTX = 8192
 DEFAULT_NUM_CTX = 2048
@@ -51,35 +62,78 @@ def validate_model_tag(tag: str | None) -> str:
     return tag
 
 
+def artifact_problem(a: ModelArtifact) -> str | None:
+    """Why an artifact cannot be deployed, or None if it is valid. Mirrors the worker's own validation."""
+    if a.runtime not in SUPPORTED_RUNTIMES:
+        return f"runtime '{a.runtime}' is not supported"
+    if a.runtime == "ollama":
+        if a.source_type != "ollama" or not OLLAMA_TAG_RE.fullmatch(a.reference or ""):
+            return "invalid Ollama tag"
+        return None
+    if a.source_type != "huggingface" or not HF_REPO_RE.fullmatch(a.reference or ""):
+        return "invalid Hugging Face repository"
+    if not HF_REVISION_RE.fullmatch(a.revision or ""):
+        return "Hugging Face revision must be pinned to a commit"
+    if a.runtime == "llamacpp":
+        if not GGUF_FILE_RE.fullmatch(a.file or "") or not SHA256_RE.fullmatch(a.sha256 or ""):
+            return "llama.cpp artifacts need a GGUF file name and its SHA-256"
+    if a.runtime == "vllm" and not a.gpu_required:
+        return "vLLM artifacts must require a GPU"
+    return None
+
+
 async def get_deployable_model(db: AsyncSession, model_id) -> Model:
     model = await db.get(Model, parse_uuid(model_id, "Model"))
     if not model or not model.is_approved:
         raise HTTPException(status_code=404, detail="Approved model not found")
-    if model.runtime not in SUPPORTED_RUNTIMES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Runtime '{model.runtime}' is not supported yet. "
-            f"Supported: {', '.join(sorted(SUPPORTED_RUNTIMES))}",
-        )
-    validate_model_tag(model.model_tag)
-    if not model.min_ram_mb or not model.min_disk_mb:
-        raise HTTPException(
-            status_code=422, detail="Model has no resource requirements recorded and cannot be scheduled"
-        )
     return model
 
 
-def estimate_requirements(model: Model, config: DeploymentConfig) -> ResourceRequest:
-    """Scheduler reservation for a model. Catalog figures assume the default context; larger contexts need
-    more KV-cache memory, approximated at 128 MB per extra 2048 tokens. These are estimates."""
+async def deployable_artifacts(db: AsyncSession, model: Model, runtime: str | None = None) -> list[ModelArtifact]:
+    """Enabled, valid artifacts for ``model`` in preference order (or only ``runtime`` if given)."""
+    if runtime is not None and runtime not in SUPPORTED_RUNTIMES:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown runtime '{runtime}'. Supported: {', '.join(RUNTIME_PREFERENCE)}"
+        )
+    rows = (
+        (await db.execute(select(ModelArtifact).where(ModelArtifact.model_id == model.id, ModelArtifact.is_enabled)))
+        .scalars()
+        .all()
+    )
+    valid = [a for a in rows if artifact_problem(a) is None]
+    offered = sorted({a.runtime for a in valid}, key=RUNTIME_PREFERENCE.index)
+    if runtime is not None:
+        valid = [a for a in valid if a.runtime == runtime]
+    if not valid:
+        if runtime is not None and offered:
+            detail = f"Model is not available on runtime '{runtime}'. Available runtimes: {', '.join(offered)}"
+        else:
+            detail = "Model has no deployable runtime artifact"
+        raise HTTPException(status_code=422, detail=detail)
+    return sorted(valid, key=lambda a: RUNTIME_PREFERENCE.index(a.runtime))
+
+
+def estimate_requirements(artifact: ModelArtifact, config: DeploymentConfig) -> ResourceRequest:
+    """Scheduler reservation for an artifact. Catalog figures assume the default context; larger contexts
+    need more KV-cache memory, approximated at 128 MB per extra 2048 tokens. These are estimates."""
     extra_ctx_mb = max(0, math.ceil((config.num_ctx - DEFAULT_NUM_CTX) / 2048)) * 128
-    gpu = bool(model.gpu_required or config.require_gpu)
+    gpu = bool(artifact.gpu_required or config.require_gpu)
     return ResourceRequest(
-        runtime=model.runtime,
-        cpu_cores=max(1, model.min_cpu_cores or 1),
-        ram_mb=model.min_ram_mb + extra_ctx_mb,
-        disk_mb=model.min_disk_mb,
-        vram_mb=(model.min_vram_mb or 0) if gpu else 0,
+        runtime=artifact.runtime,
+        cpu_cores=max(1, artifact.min_cpu_cores or 1),
+        ram_mb=artifact.min_ram_mb + extra_ctx_mb,
+        disk_mb=artifact.min_disk_mb,
+        vram_mb=(artifact.min_vram_mb or 0) + (extra_ctx_mb if gpu else 0) if gpu else 0,
         gpu_required=gpu,
         region=config.region,
     )
+
+
+def worker_source(artifact: ModelArtifact) -> dict | None:
+    """The source description sent to the worker (validated again there)."""
+    if artifact.source_type != "huggingface":
+        return None
+    source: dict[str, Any] = {"type": "huggingface", "repo": artifact.reference, "revision": artifact.revision}
+    if artifact.runtime == "llamacpp":
+        source.update(file=artifact.file, sha256=artifact.sha256, size=artifact.size_bytes or 0)
+    return source
