@@ -6,9 +6,17 @@ provider can see the data a workload handles (see the trust model in [docs/GETTI
 Billing is prepaid, with Paystack top-ups and provider payouts. These run in Paystack test mode and have not
 yet been exercised against Paystack's live API.
 
-## Architecture
+## Documentation
 
-![AgentMesh System Architecture](./systemarchitecture.png)
+The full documentation is in the dashboard at [agent-mesh-ten.vercel.app/docs](https://agent-mesh-ten.vercel.app/docs):
+
+- [Getting started](https://agent-mesh-ten.vercel.app/docs/getting-started): roles, accounts, and what works today
+- [Customer guide](https://agent-mesh-ten.vercel.app/docs/customers): deploy, call, and pay for models
+- [Provider guide](https://agent-mesh-ten.vercel.app/docs/providers): install the worker and manage machines
+- [API reference](https://agent-mesh-ten.vercel.app/docs/api): authentication, deployments, inference, errors
+- [Operators & self-hosting](https://agent-mesh-ten.vercel.app/docs/operators) and [Security & limitations](https://agent-mesh-ten.vercel.app/docs/security)
+
+The Markdown files in [docs/](docs/) hold the same material in more depth.
 
 ## Prerequisites
 
@@ -102,8 +110,11 @@ What works, what is missing, and the phased plan are tracked in [docs/IMPLEMENTA
 
 ## Deployment
 
-- Dashboard: Vercel, from `client/` (set `NEXT_PUBLIC_API_URL` to the API's `/api/v1` URL).
-- API: any container host running `Dockerfile.server`, or `docker-compose up -d` for the full stack.
+- Live dashboard: [https://agent-mesh-ten.vercel.app](https://agent-mesh-ten.vercel.app).
+- Live API: [https://agentmesh-riuz.onrender.com/api/v1](https://agentmesh-riuz.onrender.com/api/v1).
+- Documentation: [https://agent-mesh-ten.vercel.app/docs](https://agent-mesh-ten.vercel.app/docs) (customer, provider, API, operator and security guides).
+- Worker releases: [GitHub Releases](https://github.com/meshach5667/AgentMesh/releases). Pushing a tag `worker-v<version>` that matches `WORKER_VERSION` runs `.github/workflows/worker-release.yml`, which publishes the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`. Providers then install without cloning, from the dashboard's **Add a machine** page. No release has been published yet; see [docs/WORKER.md](docs/WORKER.md#publishing-a-release-maintainers).
+- To deploy your own instance, use Vercel for `client/` and any container host for `Dockerfile.server`, or `docker-compose up -d` for the full stack. Set `NEXT_PUBLIC_API_URL` to that instance's API `/api/v1` URL.
   Set the variables in [.env.example](.env.example); a plain `postgresql://` `DATABASE_URL` is accepted.
 
 Run `make help` for the development shortcuts.

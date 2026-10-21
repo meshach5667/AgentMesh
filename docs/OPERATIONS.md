@@ -19,7 +19,7 @@ Unpaid test credits are always disabled in production.
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL (`postgresql+asyncpg://…`). Change the default `agentmesh:agentmesh` credentials. Hosted databases that require TLS need `?ssl=require` on the URL (or `&ssl=require` when it already has query parameters). |
-| `PUBLIC_BASE_URL`, `FRONTEND_URL` | Public https URLs of the API and the dashboard. Paystack returns customers to `$FRONTEND_URL/customer/wallet`. |
+| `PUBLIC_BASE_URL`, `FRONTEND_URL` | Public https URLs of the API and the dashboard. For the hosted AgentMesh deployment these are `https://agentmesh-riuz.onrender.com` and `https://agent-mesh-ten.vercel.app`. Paystack returns customers to `$FRONTEND_URL/customer/wallet`. |
 | `COORDINATION_BACKEND=redis`, `REDIS_URL` | Required when you run more than one API replica (shared rate limits, tunnel routing, and one leader for the background jobs). |
 | `BILLING_CURRENCY` | The single platform currency (default `NGN`). Choose it before taking real payments; it cannot be mixed. |
 | `BILLING_INTERVAL_SECONDS`, `BILLING_MIN_PREPAID_HOURS` | How often usage is rated into charges (300 s), and how many hours of a reservation a customer must be able to afford to deploy (1). |
@@ -27,14 +27,15 @@ Unpaid test credits are always disabled in production.
 | `TOPUP_MIN_AMOUNT`, `TOPUP_MAX_AMOUNT`, `PAYOUT_MIN_AMOUNT`, `PAYOUTS_REQUIRE_APPROVAL` | Payment limits. Keep approval on until you trust your fraud controls. |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | Login and registration attempts per minute, per client address and per email (default 10). |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics`. Empty disables the endpoint. |
-| `NEXT_PUBLIC_API_URL` | Dashboard API URL (`https://<api host>/api/v1`), baked in when the dashboard is **built**. Defaults to the hosted API. |
+| `NEXT_PUBLIC_API_URL` | Dashboard API URL, baked in when the dashboard is **built**. The hosted API URL is `https://agentmesh-riuz.onrender.com/api/v1`. |
 
 Put the API behind a TLS-terminating reverse proxy. Run uvicorn with `--proxy-headers` (as
 `docker-compose.yml` does) so rate limits, the audit log, and the webhook IP check see real client addresses.
 Restrict `--forwarded-allow-ips` to the proxy's address if the API port is reachable from elsewhere.
 
-`docker-compose.yml` runs `alembic upgrade head` before starting the API. When running the API any other way,
-apply migrations first.
+With PostgreSQL, the API applies migrations (`alembic upgrade head`) when it starts, under a database lock so
+replicas cannot migrate concurrently; if a migration fails, the API does not start. Set `MIGRATE_ON_STARTUP=false`
+to run them yourself instead. `docker-compose.yml` also runs them before starting the API.
 
 ### First start
 
@@ -50,7 +51,7 @@ explicitly allow a live key.
 
 1. In the Paystack dashboard (test mode):
    - Copy the secret key into `PAYSTACK_SECRET_KEY`.
-   - Set the webhook URL to `https://<api>/api/v1/payments/paystack/webhook`.
+   - For the hosted deployment, set the webhook URL to `https://agentmesh-riuz.onrender.com/api/v1/payments/paystack/webhook`.
 2. Check the integration against Paystack's real test API. This calls Paystack directly; no AgentMesh
    server is needed:
 
@@ -178,3 +179,11 @@ To run several API replicas:
 - One replica at a time runs the background jobs (leader lock in Redis).
 - Billing and payment updates are safe to run concurrently anyway. They use compare-and-set updates and
   unique keys, and wallet updates are atomic in SQL.
+
+## 7. Worker releases
+
+Providers install the worker from GitHub Releases. To publish one, set `WORKER_VERSION` in
+`server/node_agent/config.py` and `client/src/lib/config.ts`, commit, and push a tag `worker-v<version>`. The
+`Worker release` workflow builds and checks the wheel and attaches it with `install.sh`, `uninstall.sh` and
+`SHA256SUMS`. Releases must be publicly readable. Details: [WORKER.md](WORKER.md#publishing-a-release-maintainers).
+The Ed25519 key for signed self-updates stays offline and is never added to GitHub Actions.

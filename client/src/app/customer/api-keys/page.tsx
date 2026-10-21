@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -57,7 +58,15 @@ export default function ApiKeysPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="API keys" description="Keys authenticate your applications to the inference gateway." />
+      <PageHeader
+        title="API keys"
+        description="Keys authenticate your applications to the inference gateway."
+        actions={
+          <Link href="/docs/api" className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-[13px] font-medium transition-colors hover:bg-muted">
+            API docs
+          </Link>
+        }
+      />
 
       {created && (
         <Notice tone="warning" title="Copy this key now. It will not be shown again.">

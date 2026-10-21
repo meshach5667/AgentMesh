@@ -4,6 +4,7 @@ import { Logo } from '@/components/brand/Logo';
 const COLUMNS = [
   { title: 'Product', links: [['/register', 'Deploy a model'], ['/register?role=provider', 'Become a provider'], ['#pricing', 'Pricing']] },
   { title: 'Network', links: [['#status', 'What works today'], ['#trust', 'Trust model'], ['/login', 'Sign in']] },
+  { title: 'Docs', links: [['/docs/getting-started', 'Getting started'], ['/docs/api', 'API reference'], ['/docs/providers', 'Provider guide'], ['/docs/security', 'Security']] },
 ];
 
 export function Footer() {
@@ -14,7 +15,7 @@ export function Footer() {
           <Logo />
           <p className="mt-4 text-sm text-muted-foreground">Open-weight models on community hardware, behind an API you already know.</p>
         </div>
-        <div className="flex gap-16">
+        <div className="grid grid-cols-2 gap-10 sm:flex sm:gap-16">
           {COLUMNS.map((c) => (
             <div key={c.title}>
               <h4 className="text-[13px] font-medium">{c.title}</h4>

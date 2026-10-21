@@ -33,7 +33,7 @@ In the provider dashboard (or with the API), create a one-time enrollment token.
 and can be used once.
 
 ```bash
-curl -X POST https://agentmesh.example.com/api/v1/nodes/enrollment-tokens \
+curl -X POST https://agentmesh-riuz.onrender.com/api/v1/nodes/enrollment-tokens \
   -H "Authorization: Bearer $PROVIDER_JWT" -H "Content-Type: application/json" -d '{"name": "my-box"}'
 ```
 
@@ -42,7 +42,7 @@ curl -X POST https://agentmesh.example.com/api/v1/nodes/enrollment-tokens \
 Prerequisites: Docker Engine 24+, and for GPUs the NVIDIA Container Toolkit.
 
 ```bash
-export AGENTMESH_CONTROL_PLANE_URL=https://agentmesh.example.com
+export AGENTMESH_CONTROL_PLANE_URL=https://agentmesh-riuz.onrender.com
 export AGENTMESH_ENROLLMENT_TOKEN=am_enroll_...
 export DOCKER_GID=$(getent group docker | cut -d: -f3)
 export AGENTMESH_MAX_RAM_MB=8192 AGENTMESH_MAX_CPU_CORES=4 AGENTMESH_MAX_DISK_MB=30000
@@ -70,18 +70,73 @@ across worker restarts and are re-adopted.
 
 ## 2b. Installable agent (Linux and macOS, no admin rights)
 
-Prerequisites: Python 3.11+ (with `venv`) and Ollama installed from https://ollama.com/download. The installer
-uses your Ollama binary to start AgentMesh's own isolated instances. It never installs, updates, configures, or
-connects to your Ollama service, port 11434, or your models.
+Prerequisites: Python 3.11+ (with `venv`; on Debian/Ubuntu `apt install python3-venv`), `curl`, and Ollama
+installed from https://ollama.com/download. The installer uses your Ollama binary to start AgentMesh's own
+isolated instances. It never installs, updates, configures, or connects to your Ollama service, port 11434, or
+your models. The machine needs outbound access to the control plane, GitHub, and PyPI (the wheel's
+dependencies are installed from PyPI).
+
+### Install from a GitHub release (no repository clone)
+
+Each worker release on [GitHub Releases](https://github.com/meshach5667/AgentMesh/releases) is tagged
+`worker-v<version>` and contains four assets: `agentmesh_worker-<version>-py3-none-any.whl`, `install.sh`,
+`uninstall.sh`, and `SHA256SUMS`. **No release has been published yet**; until one is, use
+[Install from source](#install-from-source). The [Add a machine](https://agent-mesh-ten.vercel.app/provider/nodes/register)
+page checks GitHub and shows this command, with your token filled in, once the release exists:
 
 ```bash
-cd server
-python scripts/build_worker_wheel.py            # or use a wheel published by your operator
-./packaging/install.sh --control-plane https://agentmesh.example.com --token am_enroll_... \
-    --max-ram-mb 8192 --max-cpu 4 --max-disk-mb 30000 \
-    --schedule "mon-fri 18:00-08:00, weekends 00:00-24:00" --outside-schedule pause \
-    --update-public-key <base64 key from your operator>
+VERSION=0.3.0
+BASE=https://github.com/meshach5667/AgentMesh/releases/download/worker-v$VERSION
+mkdir -p ~/agentmesh-worker-$VERSION && cd ~/agentmesh-worker-$VERSION
+for f in install.sh uninstall.sh agentmesh_worker-$VERSION-py3-none-any.whl SHA256SUMS; do
+  curl -fsSLO "$BASE/$f" || break
+done
+if command -v sha256sum >/dev/null; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi \
+  && chmod +x install.sh uninstall.sh \
+  && ./install.sh --wheel ./agentmesh_worker-$VERSION-py3-none-any.whl \
+       --control-plane https://agentmesh-riuz.onrender.com --token <enrollment-token> \
+       --max-ram-mb 8192 --max-cpu 4 --max-disk-mb 30000
 ```
+
+- Every file is checked against `SHA256SUMS` before `install.sh` runs; a mismatch stops the install. `sha256sum`
+  is used on Linux and `shasum -a 256` on macOS. Because `SHA256SUMS` comes from the same release, this catches
+  corrupted or partial downloads, not a compromised GitHub account; signed updates (below) cover that case.
+- The enrollment token is only passed to the installer, never put in a download URL. Omit `--token` and the
+  installer prompts for it without echoing.
+- Keep `~/agentmesh-worker-<version>`: it holds `uninstall.sh`.
+- Other options: `--schedule "mon-fri 18:00-08:00, weekends 00:00-24:00"`, `--outside-schedule pause|drain`,
+  `--update-public-key <base64 key from your operator>`, `--linger`, `--no-service`, `--name`, `--prefix`.
+
+### Install from source
+
+```bash
+git clone https://github.com/meshach5667/AgentMesh.git && cd AgentMesh/server
+python3 scripts/build_worker_wheel.py
+./packaging/install.sh --control-plane https://agentmesh-riuz.onrender.com --token <enrollment-token> \
+    --max-ram-mb 8192 --max-cpu 4 --max-disk-mb 30000
+```
+
+### Publishing a release (maintainers)
+
+1. Set `WORKER_VERSION` in `server/node_agent/config.py` and `WORKER_VERSION` in `client/src/lib/config.ts` to the
+   same value (a frontend test fails if they differ).
+2. Commit, then push a matching tag: `git tag worker-v0.3.0 && git push origin worker-v0.3.0`.
+3. The `Worker release` workflow (`.github/workflows/worker-release.yml`) checks the tag matches
+   `WORKER_VERSION`, builds the wheel reproducibly with `scripts/build_worker_wheel.py`, checks that it installs,
+   writes `SHA256SUMS`, and creates the GitHub release with the four assets.
+4. Redeploy the dashboard so **Add a machine** points at the new version.
+
+Release downloads are anonymous, so the repository's releases must be publicly readable. The signed
+self-update key is never used by this workflow: keep it offline and never add it to GitHub Actions or the
+control plane.
+
+### Verified install (2026-10-21)
+
+On Linux (Python 3.14, Ollama 0.40.6, systemd user session) the dashboard's command was run against the
+release assets built by the workflow's steps and served locally in place of GitHub, with a local control
+plane: checksums passed, the machine enrolled, the systemd user service started, the node reported `ONLINE`
+at version 0.3.0, `doctor` passed, and `uninstall.sh` removed the service, config and environment. A modified
+`install.sh` was rejected by the checksum step. **macOS has not been verified**: no Mac was available.
 
 The installer:
 
@@ -99,7 +154,16 @@ advisory: the scheduler never reserves more than you allow, but the OS does not 
 
 ### Everyday commands
 
-Run these with `AGENTMESH_CONFIG_FILE` pointing at your config file, or from the installer's environment.
+The installer does not put `agentmesh-worker` on your `PATH`; it lives in the worker's private environment:
+
+```bash
+export AGENTMESH_CONFIG_FILE=~/.config/agentmesh/agentmesh-worker.env
+~/.local/share/agentmesh/venv-agentmesh-worker/bin/agentmesh-worker status
+```
+
+Service status and logs: `systemctl --user status agentmesh-worker` and `journalctl --user -u agentmesh-worker -f`
+on Linux; `launchctl print gui/$(id -u)/io.agentmesh.agentmesh-worker` and
+`~/.local/share/agentmesh/agentmesh-worker/logs/agentmesh-worker.log` on macOS.
 
 | Command | What it does |
 | --- | --- |
@@ -199,7 +263,8 @@ vLLM has been implemented and unit-tested, but **has not yet run on real GPU har
 Installable agent:
 
 ```bash
-./packaging/uninstall.sh --purge-models
+cd ~/agentmesh-worker-0.3.0 && ./uninstall.sh --purge-models     # release install
+./packaging/uninstall.sh --purge-models                             # source install, from server/
 ```
 
 This stops the service and every managed workload, deletes the credential, config, private environment, and

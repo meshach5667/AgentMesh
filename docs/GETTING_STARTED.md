@@ -50,7 +50,7 @@ community nodes. The dashboard shows this notice before every deployment and ask
    and, for Ollama deployments, Ollama's own API:
 
    ```bash
-   curl https://<agentmesh>/api/v1/deployments/<id>/v1/chat/completions \
+   curl https://agentmesh-riuz.onrender.com/api/v1/deployments/<id>/v1/chat/completions \
      -H "Authorization: Bearer $AGENTMESH_API_KEY" -H "Content-Type: application/json" \
      -d '{"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "Hello"}]}'
    ```
@@ -70,11 +70,17 @@ community nodes. The dashboard shows this notice before every deployment and ask
 
 ## Providers
 
-1. **Sign up** at `/register?role=provider`.
+1. **Sign up** at the [live AgentMesh provider registration page](https://agent-mesh-ten.vercel.app/register?role=provider).
 2. **Add a machine.** Under **Add a Machine**, create a one-time enrollment token. It is valid for 60 minutes.
-   The page then shows the exact install command for the installable agent or the Docker worker, with your
-   token and this network's address filled in. The worker makes outbound connections only, so you do not need
-   to open any ports.
+   The page then shows the exact install command, with your token and this network's address filled in:
+   - **Installable agent** (Linux, macOS; Python 3.11+ with `venv`, and Ollama): once a worker release is
+     published on [GitHub Releases](https://github.com/meshach5667/AgentMesh/releases), the command downloads
+     the versioned wheel and installer, checks them against `SHA256SUMS`, and runs `install.sh` with your token.
+     No repository clone is needed. Until the first release is published, the page shows the build-from-source
+     command instead. See [WORKER.md](WORKER.md#2b-installable-agent-linux-and-macos-no-admin-rights).
+   - **Docker worker**: still needs the repository's Compose file.
+
+   The worker makes outbound connections only, so you do not need to open any ports.
 3. **Check the node.** It appears under **My Nodes** a few seconds after it enrolls. Its availability is one of:
    - **Accepting work**;
    - **Paused** (paused in AgentMesh);

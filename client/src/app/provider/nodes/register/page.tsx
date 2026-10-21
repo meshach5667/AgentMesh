@@ -9,7 +9,9 @@ import { Label } from '@/components/ui/label';
 import { CodeBlock, InlineValue } from '@/components/common/CodeBlock';
 import { Notice, PageHeader } from '@/components/common/Notices';
 import { useCreateEnrollmentToken } from '@/hooks/useNodes';
-import { CONTROL_PLANE_URL } from '@/lib/config';
+import { useWorkerRelease } from '@/hooks/useWorkerRelease';
+import { RELEASES_URL, WORKER_VERSION } from '@/lib/config';
+import { agentInstallCommand, dockerInstallCommand, sourceInstallCommand, statusCommand, uninstallCommand, workerReleaseUrl } from '@/lib/worker';
 import { errorMessage } from '@/lib/errors';
 import { dateTime } from '@/lib/format';
 
@@ -20,19 +22,8 @@ export default function EnrollNodePage() {
   const [mode, setMode] = useState<'agent' | 'docker'>('agent');
   const token = create.data?.token;
 
-  const agentCmd = [
-    'cd AgentMesh/server',
-    'python scripts/build_worker_wheel.py   # or use a wheel published by your operator',
-    `./packaging/install.sh --control-plane ${CONTROL_PLANE_URL} --token ${token ?? '<token>'} \\`,
-    '    --max-ram-mb 8192 --max-cpu 4 --max-disk-mb 30000',
-  ].join('\n');
-  const dockerCmd = [
-    `export AGENTMESH_CONTROL_PLANE_URL=${CONTROL_PLANE_URL}`,
-    `export AGENTMESH_ENROLLMENT_TOKEN=${token ?? '<token>'}`,
-    'export DOCKER_GID=$(getent group docker | cut -d: -f3)',
-    'export AGENTMESH_MAX_RAM_MB=8192 AGENTMESH_MAX_CPU_CORES=4 AGENTMESH_MAX_DISK_MB=30000',
-    'docker compose -f docker-compose.worker.yml up -d',
-  ].join('\n');
+  const release = useWorkerRelease();
+  const published = release.data === 'published';
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -77,8 +68,8 @@ export default function EnrollNodePage() {
         <CardHeader>
           <CardTitle>2. Install the worker</CardTitle>
           <CardDescription>
-            The limits you pass are the most AgentMesh will ever reserve on the machine. Full instructions are in
-            docs/WORKER.md.
+            The limits you pass are the most AgentMesh will ever reserve on the machine. See the{' '}
+            <Link href="/docs/providers" className="underline underline-offset-4">provider guide</Link> for every option.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -99,15 +90,48 @@ export default function EnrollNodePage() {
           {mode === 'agent' ? (
             <>
               <p className="text-sm text-muted-foreground">
-                Needs Python 3.11+ and Ollama (for the Ollama runtime). No admin rights. Runs as a per-user service and
-                starts its own isolated model servers; it never touches your own Ollama service or models.
+                Linux or macOS with Python 3.11+ (including <code className="font-mono">venv</code>) and{' '}
+                <a href="https://ollama.com/download" className="underline underline-offset-4" target="_blank" rel="noreferrer">Ollama</a>{' '}
+                installed. No admin rights: it runs as a per-user service and starts its own isolated model servers, never
+                touching your own Ollama service or models.
               </p>
-              <CodeBlock code={agentCmd} />
+              {release.isPending ? (
+                <p className="text-sm text-muted-foreground">Checking for the worker {WORKER_VERSION} release…</p>
+              ) : published ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Downloads the{' '}
+                    <a href={workerReleaseUrl()} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                      worker {WORKER_VERSION} release
+                    </a>
+                    , verifies it against <code className="font-mono">SHA256SUMS</code>, then installs. Your token is only
+                    passed to the installer, never put in a URL.
+                  </p>
+                  <CodeBlock code={agentInstallCommand({ token })} />
+                  <p className="text-xs text-muted-foreground">
+                    Keep the <code className="font-mono">~/agentmesh-worker-{WORKER_VERSION}</code> folder: it holds the
+                    uninstaller (<code className="font-mono">{uninstallCommand()}</code>).
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Notice tone="warning" title={`Worker ${WORKER_VERSION} has not been published yet`}>
+                    Prebuilt downloads will appear on the{' '}
+                    <a href={RELEASES_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                      GitHub Releases page
+                    </a>
+                    . Until then, build the worker from the source repository:
+                  </Notice>
+                  <CodeBlock code={sourceInstallCommand({ token })} />
+                </>
+              )}
             </>
           ) : (
             <>
-              <p className="text-sm text-muted-foreground">Needs Docker Engine 24+. Run from the repository root.</p>
-              <CodeBlock code={dockerCmd} />
+              <p className="text-sm text-muted-foreground">
+                Needs Docker Engine 24+ and the Compose file from the repository, so this option still uses a checkout.
+              </p>
+              <CodeBlock code={dockerInstallCommand({ token })} />
               <Notice tone="warning">
                 The worker uses the Docker socket, which is equivalent to root access on the machine. Prefer rootless
                 Docker and a machine dedicated to this purpose.
@@ -127,8 +151,12 @@ export default function EnrollNodePage() {
             <Link href="/provider/nodes" className="underline underline-offset-4">
               My nodes
             </Link>{' '}
-            within a few seconds of enrolling. If it does not, run <code className="font-mono">agentmesh-worker doctor</code>{' '}
-            on the machine.
+            within a few seconds of enrolling. If it does not, check the worker on the machine (installable agent):
+          </p>
+          <CodeBlock code={statusCommand} />
+          <p>
+            Troubleshooting and service logs are covered in the{' '}
+            <Link href="/docs/providers#troubleshooting" className="underline underline-offset-4">provider guide</Link>.
           </p>
         </CardContent>
       </Card>

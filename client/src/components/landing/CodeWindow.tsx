@@ -8,14 +8,14 @@ const TABS = {
     label: 'Python',
     code: [
       ['k', 'from'], [' ', ' openai '], ['k', 'import'], [' ', ' OpenAI\n\n'],
-      [' ', 'client = OpenAI(\n    base_url='], ['s', '"https://mesh.example.com/api/v1/deployments/<id>/v1"'], [' ', ',\n    api_key=os.environ['], ['s', '"AGENTMESH_API_KEY"'], [' ', '],\n)\n\n'],
+      [' ', 'client = OpenAI(\n    base_url='], ['s', '"https://agentmesh-riuz.onrender.com/api/v1/deployments/<id>/v1"'], [' ', ',\n    api_key=os.environ['], ['s', '"AGENTMESH_API_KEY"'], [' ', '],\n)\n\n'],
       [' ', 'reply = client.chat.completions.create(\n    model='], ['s', '"qwen2.5:0.5b"'], [' ', ',\n    messages=[{'], ['s', '"role"'], [' ', ': '], ['s', '"user"'], [' ', ', '], ['s', '"content"'], [' ', ': '], ['s', '"Summarise this ticket"'], [' ', '}],\n    stream='], ['k', 'True'], [' ', ',\n)'],
     ],
   },
   curl: {
     label: 'curl',
     code: [
-      ['k', 'curl'], [' ', ' https://mesh.example.com/api/v1/deployments/<id>/v1/chat/completions \\\n  -H '], ['s', '"Authorization: Bearer $AGENTMESH_API_KEY"'], [' ', ' \\\n  -H '], ['s', '"Content-Type: application/json"'], [' ', ' \\\n  -d '], ['s', `'{"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "Hello"}]}'`],
+      ['k', 'curl'], [' ', ' https://agentmesh-riuz.onrender.com/api/v1/deployments/<id>/v1/chat/completions \\\n  -H '], ['s', '"Authorization: Bearer $AGENTMESH_API_KEY"'], [' ', ' \\\n  -H '], ['s', '"Content-Type: application/json"'], [' ', ' \\\n  -d '], ['s', `'{"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "Hello"}]}'`],
     ],
   },
 } as const;

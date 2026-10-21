@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Activity, Banknote, BarChart3, Box, CreditCard, KeyRound, LayoutDashboard, LogOut, PlusCircle, Receipt, Scale,
+  Activity, Banknote, BarChart3, BookOpen, Box, CreditCard, KeyRound, LayoutDashboard, LogOut, PlusCircle, Receipt, Scale,
   ScrollText, Server, Settings, Tag, Wallet, type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -115,7 +115,7 @@ function NavItem({ link, active }: { link: NavLink; active: boolean }) {
 }
 
 export function Sidebar() {
-  const { user, sections, active, logout, roleLabel } = useNavLinks();
+  const { user, role, sections, active, logout, roleLabel } = useNavLinks();
   return (
     <aside className="hidden h-full w-[244px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
       <div className="flex h-14 items-center border-b border-sidebar-border px-4">
@@ -148,7 +148,12 @@ export function Sidebar() {
           </div>
         </div>
         <div className="mt-3 flex items-center justify-between pl-1">
-          <ThemeToggle className="size-8 rounded-md" />
+          <div className="flex items-center gap-1">
+            <ThemeToggle className="size-8 rounded-md" />
+            <Link href={role === 'provider' ? '/docs/providers' : role === 'customer' ? '/docs/customers' : '/docs/operators'} aria-label="Documentation" title="Documentation" className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
+              <BookOpen className="size-4" />
+            </Link>
+          </div>
           <button
             type="button"
             onClick={() => logout()}

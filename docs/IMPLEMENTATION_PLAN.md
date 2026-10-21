@@ -1,6 +1,6 @@
 # AgentMesh Implementation Plan
 
-Last updated: 2026-10-20 (after Phase 5). This file is the working record of what exists, what was changed, and what comes next.
+Last updated: 2026-10-21. This file is the working record of what exists, what was changed, and what comes next.
 It is updated at the end of every phase. Earlier design intent lives in
 `AgentMesh MVP — Engineering Specification & Implementation Blueprint.md` and `AgentMesh_System_Architecture.md`.
 
@@ -547,6 +547,16 @@ The database after the run matched the price list:
 
 ## 10. Next steps
 
+- **Prebuilt provider worker release.** Built on 2026-10-21; publishing remains.
+  - Done: `.github/workflows/worker-release.yml` (tag `worker-v<version>`, checked against `WORKER_VERSION`)
+    builds the wheel, checks it installs, and attaches the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`.
+    The dashboard's **Add a machine** page checks GitHub for the release and shows a download, checksum-verify,
+    and install command (token passed only to `install.sh`), falling back to the source build until the release
+    exists. Docker instructions stay separate. Docs updated, and an in-app documentation site added at `/docs`.
+  - Verified on Linux against locally served assets: checksums, enrollment, systemd user service, node ONLINE,
+    `doctor`, uninstall, and rejection of a tampered `install.sh`.
+  - Remaining: make the GitHub repository (or its releases) public, push the first `worker-v0.3.0` tag, then
+    repeat the install against the real release, and verify on a Mac (launchd service has never run on one).
 - **Run against Paystack test mode with real keys:** run the smoke script, a dashboard top-up with a webhook,
   and one payout.
 - **Ledger corrections and refunds:** an operator-initiated adjustment posting, with an audit trail.
