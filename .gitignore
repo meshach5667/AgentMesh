@@ -14,7 +14,7 @@ venv/
 coverage.xml
 htmlcov/
 *.db
-
+/docs
 # Node
 node_modules/
 .next/
