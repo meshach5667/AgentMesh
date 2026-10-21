@@ -93,11 +93,3 @@ def detect_gpus() -> GPUInfo:
     first = gpus[0]
     same = [g for g in gpus if g["vendor"] == first["vendor"]]
     return GPUInfo(model=first["model"], count=len(same), vram_gb=first["vram_mb"] // 1024, vendor=first["vendor"])
-
-
-# Backwards-compatible name
-def detect_nvidia_gpus() -> GPUInfo | None:
-    gpus = detect_nvidia()
-    if not gpus:
-        return None
-    return GPUInfo(model=gpus[0]["model"], count=len(gpus), vram_gb=gpus[0]["vram_mb"] // 1024, vendor="NVIDIA")

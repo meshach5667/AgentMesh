@@ -13,12 +13,10 @@ router = APIRouter()
 
 @router.get("", response_model=list[TransactionResponse])
 async def list_transactions(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    # Get user's wallet
     result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
     wallet = result.scalars().first()
     if not wallet:
         return []
-    # Get transactions involving this wallet
     result = await db.execute(
         select(Transaction)
         .filter(or_(Transaction.from_wallet == wallet.id, Transaction.to_wallet == wallet.id))

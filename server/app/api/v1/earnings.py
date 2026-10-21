@@ -45,7 +45,6 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
             active_deployments=active_deployments,
         )
 
-    # Total settled provider credits
     settled = await db.execute(
         select(func.coalesce(func.sum(Transaction.amount), 0)).filter(
             Transaction.to_wallet == wallet.id,
@@ -55,7 +54,6 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
     )
     total_earnings = settled.scalar() or 0
 
-    # Pending
     pending = await db.execute(
         select(func.coalesce(func.sum(Transaction.amount), 0)).filter(
             Transaction.to_wallet == wallet.id,

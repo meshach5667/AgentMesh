@@ -1,8 +1,10 @@
+import json
 from decimal import Decimal
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 INSECURE_DEFAULT_SECRET = "supersecretkey"
 DEV_ENVIRONMENTS = {"dev", "development", "test", "testing"}
@@ -19,18 +21,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = INSECURE_DEFAULT_SECRET
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
-    NODE_AGENT_DEFAULT_PORT: int = 8001
-    CONTROL_PLANE_URL: str = "http://localhost:8000"
-    NODE_AGENT_PORT: int = 8001
-    POSTGRES_DB: str = "agentmesh"
-    POSTGRES_USER: str = "agentmesh"
-    POSTGRES_PASSWORD: str = "agentmesh"
-    NEXT_PUBLIC_API_URL: str = "http://localhost:8000/api/v1"
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: str = "dev"
     LOG_LEVEL: str = "INFO"
     # Explicit origins only: credentials are allowed, so a wildcard would be unsafe.
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     # Unpaid "test credits" for local development. Never honoured outside dev/test environments.
     ALLOW_TEST_CREDITS: bool = True
     SQL_ECHO: bool = False
@@ -97,6 +92,35 @@ class Settings(BaseSettings):
     # Bearer token for GET /metrics. Empty disables the endpoint.
     METRICS_TOKEN: str = ""
 
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _use_async_driver(cls, url: str) -> str:
+        # Hosting providers hand out postgres:// or postgresql:// URLs; the engine needs the asyncpg driver.
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                url = "postgresql+asyncpg://" + url[len(prefix) :]
+        return url.replace("sslmode=", "ssl=")
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                origins = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError("CORS_ORIGINS must be a JSON array or comma-separated origins") from exc
+            if not isinstance(origins, list):
+                raise ValueError("CORS_ORIGINS JSON value must be an array")
+            return origins
+
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
     @property
     def is_dev(self) -> bool:
         return self.ENVIRONMENT.lower() in DEV_ENVIRONMENTS
@@ -136,6 +160,8 @@ class Settings(BaseSettings):
                 raise ValueError("SECRET_KEY must be set to a random value of at least 32 characters outside dev/test")
             if "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must not contain '*' outside dev/test")
+            if not self.CORS_ORIGINS:
+                raise ValueError("CORS_ORIGINS must include at least one frontend origin outside dev/test")
             if not self.PUBLIC_BASE_URL.startswith("https://"):
                 raise ValueError("PUBLIC_BASE_URL must use https outside dev/test (API keys travel in headers)")
         return self

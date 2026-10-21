@@ -50,7 +50,7 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
 
   return (
     <div>
-      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand">Get started</p>
+      <p className="mb-3 font-mono text-xs uppercase tracking-wider text-muted-foreground">Get started</p>
       <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Create your account</h1>
       <p className="mt-2 text-sm text-muted-foreground">Free to join. Pay only for what you deploy.</p>
       {error && (
@@ -61,7 +61,7 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
       <form onSubmit={handleSubmit} className="mt-8 space-y-5">
         <fieldset>
           <legend className="mb-2 text-[13px] font-medium text-foreground/85">Choose how you&apos;ll use AgentMesh</legend>
-          <div className="grid grid-cols-2 rounded-xl bg-muted/75 p-1">
+          <div className="grid grid-cols-2 gap-2">
             {ROLES.map(({ value, icon: Icon, title, body }) => (
               <button
                 key={value}
@@ -69,12 +69,12 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
                 aria-pressed={role === value}
                 onClick={() => setRole(value)}
                 className={cn(
-                  'min-h-[92px] rounded-lg px-3 py-2.5 text-left transition-all',
-                  role === value ? 'bg-card text-foreground shadow-soft' : 'text-muted-foreground hover:text-foreground',
+                  'min-h-[92px] rounded-lg border px-3 py-2.5 text-left transition-colors',
+                  role === value ? 'border-foreground bg-card text-foreground ring-1 ring-foreground' : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
                 )}
               >
                 <span className="flex items-center gap-2">
-                  <Icon className={cn('size-4', role === value ? 'text-brand' : 'text-muted-foreground')} />
+                  <Icon className={cn('size-4', role === value ? 'text-foreground' : 'text-muted-foreground')} />
                   <span className="text-[13px] font-semibold">{title}</span>
                 </span>
                 <span className="mt-2 block text-[11px] leading-snug text-muted-foreground">{body}</span>
@@ -117,7 +117,7 @@ export function RegisterForm({ initialRole = 'customer' }: { initialRole?: 'prov
       </form>
       <p className="mt-8 text-center text-sm text-muted-foreground">
         Already have an account?{' '}
-        <Link href="/login" className="font-semibold text-brand underline-offset-4 hover:underline">
+        <Link href="/login" className="font-medium text-foreground underline underline-offset-4 decoration-border hover:decoration-foreground">
           Sign in
         </Link>
       </p>

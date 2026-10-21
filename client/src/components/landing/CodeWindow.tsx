@@ -24,12 +24,12 @@ const TABS = {
 export function CodeWindow() {
   const [tab, setTab] = useState<keyof typeof TABS>('python');
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-lifted">
+    <div className="h-full bg-background">
       <div className="flex items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-1.5 py-3">
-          <span className="size-2.5 rounded-full bg-rose-400/70" />
-          <span className="size-2.5 rounded-full bg-amber-400/70" />
-          <span className="size-2.5 rounded-full bg-emerald-400/70" />
+          <span className="size-2.5 rounded-full bg-border" />
+          <span className="size-2.5 rounded-full bg-border" />
+          <span className="size-2.5 rounded-full bg-border" />
         </div>
         <div role="tablist" className="flex gap-1">
           {(Object.keys(TABS) as (keyof typeof TABS)[]).map((k) => (
@@ -46,10 +46,10 @@ export function CodeWindow() {
         </div>
         <span className="hidden text-[11px] text-muted-foreground sm:block">Example</span>
       </div>
-      <pre className="overflow-x-auto p-6 font-mono text-[13px] leading-6">
+      <pre className="overflow-x-auto p-5 font-mono text-[12.5px] leading-6">
         <code>
           {TABS[tab].code.map(([kind, text], i) => (
-            <span key={i} className={kind === 'k' ? 'text-brand' : kind === 's' ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground/90'}>
+            <span key={i} className={kind === 'k' ? 'text-brand' : kind === 's' ? 'text-muted-foreground' : 'text-foreground/90'}>
               {text}
             </span>
           ))}

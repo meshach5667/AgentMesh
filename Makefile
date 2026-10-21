@@ -1,4 +1,4 @@
-.PHONY: help dev dev-up dev-down dev-logs dev-restart db-migrate db-revision db-downgrade db-reset server-install server-run server-lint server-format server-typecheck server-test server-test-cov agent-install agent-run agent-register e2e client-install client-dev client-build client-lint client-test client-e2e test test-server test-client test-e2e docker-build docker-push docker-clean ci lint typecheck
+.PHONY: help dev dev-up dev-down dev-logs dev-restart db-migrate db-revision db-downgrade db-reset server-install server-run server-lint server-format server-typecheck server-test server-test-cov agent-install agent-run agent-register e2e client-install client-dev client-build client-lint client-test client-e2e test test-server test-client test-e2e docker-build docker-clean ci lint typecheck
 
 help:
 	@echo "Available commands:"
@@ -44,10 +44,10 @@ help:
 
 # Development
 dev:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+	docker-compose up
 
 dev-up:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	docker-compose up -d
 
 dev-down:
 	docker-compose down
@@ -137,9 +137,6 @@ test-e2e: client-e2e
 # Docker
 docker-build:
 	docker-compose build
-
-docker-push:
-	docker-compose push
 
 docker-clean:
 	docker-compose down -v --rmi all

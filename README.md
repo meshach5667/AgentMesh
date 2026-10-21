@@ -100,25 +100,14 @@ The browser end-to-end test (real control plane, real worker, real model, all th
 
 What works, what is missing, and the phased plan are tracked in [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
+## Deployment
 
-## Makefile Commands
+- Dashboard: Vercel, from `client/` (set `NEXT_PUBLIC_API_URL` to the API's `/api/v1` URL).
+- API: any container host running `Dockerfile.server`, or `docker-compose up -d` for the full stack.
+  Set the variables in [.env.example](.env.example); a plain `postgresql://` `DATABASE_URL` is accepted.
 
-A comprehensive `Makefile` is provided. Run `make help` or refer to the Makefile itself for all available commands.
-
-## Docker Deployment
-
-To deploy using Docker:
-```bash
-make docker-build
-docker-compose up -d
-```
-
-## Contributing
-
-See `CONTRIBUTING.md` for guidelines.
+Run `make help` for the development shortcuts.
 
 ## License
 
 MIT License.
-
-

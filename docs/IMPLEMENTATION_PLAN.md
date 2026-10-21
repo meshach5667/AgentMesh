@@ -208,8 +208,7 @@ Phase 2's known limitations are tracked, as updated, in the Phase 3 section belo
 - A deployment runs on one node at a time. There is no multi-replica serving or load balancing across nodes.
 - Customer-initiated restarts are refused while the node is offline. The automatic move handles that case.
 - Moving a deployment re-downloads the model on the new node, so it takes about one download time.
-- The legacy `/inference` workload route still exists and always fails honestly. Remove it with the
-  frontend work.
+- The legacy `/inference` workload route and the `/agent/*` placeholder routes have been removed.
 
 ## 6. Phase 4 — Installable node agent (done for Linux; macOS untested)
 

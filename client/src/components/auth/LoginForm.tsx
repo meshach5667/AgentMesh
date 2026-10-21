@@ -34,7 +34,7 @@ export function LoginForm() {
 
   return (
     <div>
-      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand">Your workspace</p>
+      <p className="mb-3 font-mono text-xs uppercase tracking-wider text-muted-foreground">Your workspace</p>
       <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Welcome back</h1>
       <p className="mt-2 text-sm text-muted-foreground">Sign in to continue to AgentMesh.</p>
       {error && (
@@ -74,7 +74,7 @@ export function LoginForm() {
       </form>
       <p className="mt-8 text-center text-sm text-muted-foreground">
         New to AgentMesh?{' '}
-        <Link href="/register" className="font-semibold text-brand underline-offset-4 hover:underline">
+        <Link href="/register" className="font-medium text-foreground underline underline-offset-4 decoration-border hover:decoration-foreground">
           Create an account
         </Link>
       </p>

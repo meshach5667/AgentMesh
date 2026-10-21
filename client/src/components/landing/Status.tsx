@@ -20,12 +20,12 @@ export function Status() {
     <section className="border-t border-border bg-muted/30 py-28" id="status">
       <div className="mx-auto max-w-6xl px-6">
         <div className="max-w-2xl">
-          <p className="text-sm font-medium text-brand">Status</p>
-          <h2 className="mt-3 text-4xl font-semibold tracking-tight md:text-5xl">What works today</h2>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Status</p>
+          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight md:text-[2.75rem] md:leading-[1.1]">What works today</h2>
           <p className="mt-4 text-lg text-muted-foreground">AgentMesh is early. Here is the honest state of the product.</p>
         </div>
         <div className="mt-14 grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-border bg-card p-7 shadow-soft">
+          <div className="rounded-xl border border-border bg-card p-7">
             <h3 className="text-sm font-semibold">Working</h3>
             <ul className="mt-5 space-y-3.5 text-sm">
               {WORKING.map((t) => (
@@ -38,7 +38,7 @@ export function Status() {
               ))}
             </ul>
           </div>
-          <div className="rounded-2xl border border-border bg-card p-7 shadow-soft">
+          <div className="rounded-xl border border-border bg-card p-7">
             <h3 className="text-sm font-semibold">Planned, not available yet</h3>
             <ul className="mt-5 space-y-3.5 text-sm text-muted-foreground">
               {PLANNED.map((t) => (
@@ -50,7 +50,7 @@ export function Status() {
             </ul>
           </div>
         </div>
-        <div id="trust" className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-7">
+        <div id="trust" className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-7">
           <div className="flex items-start gap-4">
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" />
             <div>

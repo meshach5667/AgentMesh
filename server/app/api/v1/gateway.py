@@ -55,9 +55,6 @@ GET_PATHS = {
     "llamacpp": frozenset({"v1/models"}),
     "vllm": frozenset({"v1/models"}),
 }
-# Kept for importers of the old names.
-PROXIED_POST_PATHS = POST_PATHS["ollama"]
-LOCAL_GET_PATHS = GET_PATHS["ollama"]
 
 
 def _check_path(dep: Deployment, path: str, method: str, via_ollama_prefix: bool) -> None:

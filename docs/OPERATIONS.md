@@ -10,7 +10,7 @@ Anything other than `ENVIRONMENT=dev|development|test|testing` counts as product
 refuses to start unless:
 
 - `SECRET_KEY` is random and at least 32 characters (`openssl rand -hex 32`);
-- `CORS_ORIGINS` lists explicit origins (no `*`);
+- `CORS_ORIGINS` lists explicit origins (JSON array or comma-separated; no `*`);
 - `PUBLIC_BASE_URL` uses `https://`;
 - `PAYSTACK_SECRET_KEY`, if set, is a test key (`sk_test_…`). A live key needs `PAYSTACK_ALLOW_LIVE=true`.
 
@@ -27,7 +27,7 @@ Unpaid test credits are always disabled in production.
 | `TOPUP_MIN_AMOUNT`, `TOPUP_MAX_AMOUNT`, `PAYOUT_MIN_AMOUNT`, `PAYOUTS_REQUIRE_APPROVAL` | Payment limits. Keep approval on until you trust your fraud controls. |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | Login and registration attempts per minute, per client address and per email (default 10). |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics`. Empty disables the endpoint. |
-| `NEXT_PUBLIC_BILLING_CURRENCY` | Dashboard currency display setting, baked in when the dashboard is **built**. The dashboard API URL is configured in `client/src/lib/config.ts`. |
+| `NEXT_PUBLIC_API_URL` | Dashboard API URL (`https://<api host>/api/v1`), baked in when the dashboard is **built**. Defaults to the hosted API. |
 
 Put the API behind a TLS-terminating reverse proxy. Run uvicorn with `--proxy-headers` (as
 `docker-compose.yml` does) so rate limits, the audit log, and the webhook IP check see real client addresses.

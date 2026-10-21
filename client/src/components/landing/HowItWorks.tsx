@@ -31,12 +31,12 @@ export function HowItWorks() {
     <section id="how-it-works" className="border-y border-border bg-muted/30 py-28">
       <div className="mx-auto max-w-6xl px-6">
         <div className="max-w-2xl">
-          <p className="text-sm font-medium text-brand">How it works</p>
-          <h2 className="mt-3 text-4xl font-semibold tracking-tight md:text-5xl">A two-sided compute network.</h2>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">How it works</p>
+          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight md:text-[2.75rem] md:leading-[1.1]">A two-sided compute network.</h2>
         </div>
         <div className="mt-14 grid gap-6 lg:grid-cols-2">
           {TRACKS.map((t) => (
-            <div key={t.eyebrow} className="flex flex-col rounded-2xl border border-border bg-card p-8 shadow-soft">
+            <div key={t.eyebrow} className="flex flex-col rounded-xl border border-border bg-card p-8">
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{t.eyebrow}</p>
               <h3 className="mt-2 text-2xl font-semibold tracking-tight">{t.title}</h3>
               <ol className="mt-8 flex-1 space-y-6">
@@ -52,7 +52,7 @@ export function HowItWorks() {
                   </li>
                 ))}
               </ol>
-              <Link href={t.href} className="mt-8 inline-flex items-center gap-1.5 text-sm font-medium text-brand hover:underline">
+              <Link href={t.href} className="mt-8 inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline">
                 {t.cta} <ArrowRight className="size-4" />
               </Link>
             </div>

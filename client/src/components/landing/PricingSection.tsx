@@ -21,8 +21,8 @@ export function PricingSection() {
     <section id="pricing" className="py-28">
       <div className="mx-auto grid max-w-6xl gap-12 px-6 lg:grid-cols-2 lg:items-center">
         <div>
-          <p className="text-sm font-medium text-brand">Pricing</p>
-          <h2 className="mt-3 text-4xl font-semibold tracking-tight md:text-5xl">Pay for what serves.</h2>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Pricing</p>
+          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight md:text-[2.75rem] md:leading-[1.1]">Pay for what serves.</h2>
           <p className="mt-4 text-lg text-muted-foreground">
             Prepaid and transparent. You&apos;re charged for the resources reserved for your deployment only while it is
             ready, plus the tokens it processes. Downloads, startup and unhealthy time are free.
@@ -31,7 +31,7 @@ export function PricingSection() {
             Providers receive {r ? `${Math.round((1 - Number(r.platform_fee_rate)) * 100)}%` : 'most'} of every charge.
           </p>
         </div>
-        <div className="rounded-2xl border border-border bg-card p-2 shadow-lifted">
+        <div className="rounded-xl border border-border bg-card p-2 shadow-soft">
           {r ? (
             <>
               <div className="divide-y divide-border">
@@ -56,7 +56,7 @@ export function PricingSection() {
             </div>
           )}
           <div className="p-3">
-            <Link href="/register" className="flex h-10 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+            <Link href="/register" className="flex h-10 items-center justify-center rounded-lg bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
               Start deploying
             </Link>
           </div>

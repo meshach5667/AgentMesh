@@ -1,81 +1,41 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-# This frontend config is source code, despite the Python build-output pattern above.
-!client/src/lib/
-client/src/lib/*
-!client/src/lib/config.ts
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
+/server/build/
+/server/dist/
 venv/
 .venv/
-env/
-.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.db
 
 # Node
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 .next/
 out/
-build/
-dist/
+*.tsbuildinfo
+next-env.d.ts
+playwright-report/
+test-results/
+.vercel
 
-# Docker
-.docker/
-docker-compose.override.yml
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
 
-# IDEs
+# Editors and OS
 .idea/
 .vscode/
 *.swp
-*.swo
-*~
-
-# OS
 .DS_Store
 Thumbs.db
-desktop.ini
-
-# Test / Coverage
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-htmlcov/
-playwright-report/
-test-results/
-
-# Alembic
-# Note: Do not ignore alembic/versions directory
-
-# Secrets
-*.pem
-*.key
-.env
-.env.local
-.env.*.local
+docker-compose.override.yml

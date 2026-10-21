@@ -28,9 +28,6 @@ from app.services.catalog_service import (
 from app.services.placement_service import deploy_payload
 from app.services.scheduler_service import NoEligibleNode, release_reservation, schedule
 
-# Kept for callers that predate the lifecycle module.
-TERMINAL_STATUSES = lifecycle.TERMINAL
-
 
 async def _get_customer(db: AsyncSession, user_id: uuid.UUID) -> Customer | None:
     result = await db.execute(select(Customer).filter(Customer.user_id == user_id))

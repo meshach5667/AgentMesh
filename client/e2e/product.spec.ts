@@ -41,7 +41,6 @@ async function signIn(browser: Browser, email: string, password: string): Promis
   return page;
 }
 
-/** Click a link in the dashboard sidebar. */
 const nav = (page: Page, label: string) => page.getByRole('complementary').getByRole('link', { name: label, exact: true }).click();
 
 let provider: Page;

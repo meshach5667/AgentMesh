@@ -15,7 +15,7 @@ export function LiveStats() {
   return (
     <section className="border-y border-border bg-muted/30" aria-label="Network right now">
       <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-4">
           {items.map(({ label, value }) => (
             <div key={label} className="bg-background px-6 py-6">
               <div className="text-3xl font-semibold tracking-tight tabular-nums" data-testid={`stat-${label}`}>

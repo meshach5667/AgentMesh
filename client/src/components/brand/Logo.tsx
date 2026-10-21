@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
-/** The AgentMesh mark: three nodes joined into a mesh. */
 export function LogoMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" aria-hidden className={cn('size-7', className)}>

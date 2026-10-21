@@ -18,7 +18,6 @@ class MetricsCollector:
         metrics["network_bytes_sent"] = net_io.bytes_sent
         metrics["network_bytes_recv"] = net_io.bytes_recv
 
-        # GPU Metrics
         try:
             result = subprocess.run(
                 [

@@ -7,6 +7,8 @@ otherwise against an in-memory SQLite database. Each test gets a freshly created
 import os
 import uuid
 
+os.environ["ENVIRONMENT"] = "test"
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
