@@ -99,7 +99,7 @@ export const DOC_PAGES: DocPageEntry[] = [
   {
     href: '/docs/ai-agent',
     title: 'AI deployment agent',
-    summary: 'Coming soon. Gemma 4 on an internal Ollama machine: setup, limits, offline behaviour and tests.',
+    summary: 'Gemma 4 on an internal Ollama machine: setup, limits, offline behaviour and tests.',
     sections: [
       { id: 'how-it-works', title: 'How it works', keywords: 'gemma ollama agent architecture outbound adapter' },
       { id: 'hardware', title: 'Check the hardware', keywords: 'cpu ram disk gpu doctor hp 15 laptop' },

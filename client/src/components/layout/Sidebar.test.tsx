@@ -26,10 +26,10 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Network Map')).toBeNull();
   });
 
-  it('marks AI Deploy as coming soon for customers', () => {
+  it('shows AI Deploy to customers without a coming-soon badge', () => {
     role = 'customer';
     pathname = '/customer';
     render(<Sidebar />);
-    expect(screen.getByRole('link', { name: /AI Deploy/ })).toHaveTextContent('Soon');
+    expect(screen.getByRole('link', { name: /AI Deploy/ })).not.toHaveTextContent('Soon');
   });
 });

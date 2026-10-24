@@ -11,7 +11,6 @@ import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
 import { Logo } from '@/components/brand/Logo';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
-import { AI_DEPLOY_ENABLED } from '@/lib/config';
 
 export interface NavLink {
   href: string;
@@ -27,7 +26,7 @@ export const customerSections: Section[] = [
       { href: '/customer', label: 'Overview', icon: LayoutDashboard },
       { href: '/customer/models', label: 'Models', icon: Box },
       { href: '/customer/deployments', label: 'Deployments', icon: Activity },
-      { href: '/customer/ai', label: 'AI Deploy', icon: Sparkles, badge: AI_DEPLOY_ENABLED ? undefined : 'Soon' },
+      { href: '/customer/ai', label: 'AI Deploy', icon: Sparkles },
       { href: '/customer/api-keys', label: 'API Keys', icon: KeyRound },
     ],
   },

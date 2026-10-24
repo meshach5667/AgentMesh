@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     )
 
     DATABASE_URL: str = "postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh"
+    # MongoDB must be a replica set (Atlas always is): ledger postings commit in multi-document transactions.
+    MONGODB_URL: str = "mongodb://127.0.0.1:27017/?replicaSet=rs0"
+    MONGODB_DB: str = "agentmesh"
     REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = INSECURE_DEFAULT_SECRET
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60

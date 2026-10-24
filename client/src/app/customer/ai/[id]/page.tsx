@@ -1,7 +1,5 @@
 'use client';
 
-import { AiComingSoon } from '@/components/ai/AiComingSoon';
-import { AI_DEPLOY_ENABLED } from '@/lib/config';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import toast from 'react-hot-toast';
@@ -20,10 +18,6 @@ import { dateTime, money, runtimeLabel, shortId } from '@/lib/format';
 import { AI_TERMINAL_STATUSES } from '@/types';
 
 export default function AiRunPage() {
-  return AI_DEPLOY_ENABLED ? <AiRunView /> : <AiComingSoon />;
-}
-
-function AiRunView() {
   const id = useParams<{ id: string }>().id;
   const { data: run, isLoading, error, refetch } = useAiRun(id);
   const live = !!run && !AI_TERMINAL_STATUSES.includes(run.status);

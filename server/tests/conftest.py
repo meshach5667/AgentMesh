@@ -23,6 +23,8 @@ from app.models import Base, Customer, Model, ModelArtifact, Provider, User
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
+pytest_plugins = ["tests.mongo_support"]
+
 
 @pytest.fixture
 async def db_engine():

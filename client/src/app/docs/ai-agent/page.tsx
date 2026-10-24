@@ -9,9 +9,9 @@ const CONTROL_PLANE = API_URL.replace(/\/api\/v1\/?$/, '');
 export default function AiAgentGuide() {
   return (
     <DocPage href="/docs/ai-agent">
-      <Callout tone="info" title="Coming soon">
-        AI-assisted deployment is not available to customers yet: the inference machine that runs the agent is not configured.
-        This guide describes how it will work and how an operator sets it up. Until then, deploy models from the catalog.
+      <Callout tone="info" title="Availability">
+        AI Deploy is available whenever the inference machine is online. <C>/customer/ai</C> shows its live status (available,
+        busy or offline); while it is offline, requests wait in the queue and running deployments are not affected.
       </Callout>
       <Section id="how-it-works" title="How it works">
         <P>

@@ -6,6 +6,3 @@ export const DASHBOARD_URL = 'https://agent-mesh-ten.vercel.app';
 export const REPO_URL = 'https://github.com/meshach5667/AgentMeshh';
 export const RELEASES_URL = `${REPO_URL}/releases`;
 export const WORKER_VERSION = '0.3.0';
-
-/** AI-assisted deployment is shown as "coming soon" until the inference machine is configured and this is set. */
-export const AI_DEPLOY_ENABLED = process.env.NEXT_PUBLIC_AI_DEPLOY_ENABLED === 'true';

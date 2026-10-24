@@ -1,7 +1,5 @@
 'use client';
 
-import { AiComingSoon } from '@/components/ai/AiComingSoon';
-import { AI_DEPLOY_ENABLED } from '@/lib/config';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -14,10 +12,6 @@ import { errorMessage } from '@/lib/errors';
 import { ago, money } from '@/lib/format';
 
 export default function AiDeploymentsPage() {
-  return AI_DEPLOY_ENABLED ? <AiDeploymentsView /> : <AiComingSoon />;
-}
-
-function AiDeploymentsView() {
   const runs = useAiRuns();
   const health = useAiHealth();
 
