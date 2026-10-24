@@ -38,10 +38,15 @@ jobs:
         with:
           fetch-depth: 0
           
+      # The CLI scans the whole history. gitleaks-action scans only the pushed range (`<first>^..<last>`), which
+      # fails outright when the push contains the root commit, as it has no parent.
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: "8.24.3"
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks git . --config .gitleaks.toml --redact --verbose --exit-code 1
 
   container-scanning:
     runs-on: ubuntu-latest
