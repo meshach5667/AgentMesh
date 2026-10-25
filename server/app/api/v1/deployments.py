@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.core.database import Session, get_db
+from app.core.database import Session, get_db, retry_transient
 from app.core.dependencies import get_current_user, require_roles
 from app.documents.user import UserRole
 from app.schemas.deployment import DeploymentCreate, DeploymentEventOut, DeploymentOut
@@ -15,7 +15,7 @@ async def create_deployment(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.customer)),
 ):
-    return await deployment_service.create_deployment(db, deployment, current_user.id)
+    return await retry_transient(db, lambda: deployment_service.create_deployment(db, deployment, current_user.id))
 
 
 @router.get("", response_model=list[DeploymentOut])

@@ -4,9 +4,8 @@ Requires a running control plane. The script creates a provider and a customer, 
 subprocess, deploys a model, runs streaming and non-streaming inference with an API key, checks metering and
 tenant isolation, deletes the deployment, and verifies that capacity is released and the runtime is gone.
 
-    # terminal 1
-    DATABASE_URL=sqlite+aiosqlite:///./dev.db python scripts/init_dev_db.py
-    DATABASE_URL=sqlite+aiosqlite:///./dev.db uvicorn app.main:app --port 8000
+    # terminal 1 (MongoDB must be a replica set; the catalog is seeded at startup)
+    MONGODB_URL=mongodb://127.0.0.1:27017/?replicaSet=rs0 uvicorn app.main:app --port 8000
     # terminal 2
     python scripts/e2e_ollama.py --api http://127.0.0.1:8000 --mode agent --model smollm2:135m
 

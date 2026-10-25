@@ -125,7 +125,7 @@ async def test_streaming_chat_relays_pins_model_and_meters(client, db, ready_dep
     assert rec.api_key_id == uuid.UUID(key["id"]) and rec.deployment_id == uuid.UUID(dep["id"])
     assert rec.request_id == resp.headers["x-agentmesh-request-id"]
     # Prompts and responses are never stored.
-    stored = " ".join(str(getattr(rec, c.name)) for c in UsageRecord.__table__.columns)
+    stored = " ".join(str(getattr(rec, name)) for name in UsageRecord.model_fields)
     assert PROMPT not in stored and "Hel" not in stored
 
     usage = (await client.get(f"/api/v1/usage/{dep['id']}", headers=ready_deployment["customer"])).json()

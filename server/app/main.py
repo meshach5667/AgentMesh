@@ -12,10 +12,12 @@ from app.api.ops import SecurityHeadersMiddleware
 from app.api.router import api_router
 from app.background.monitors import monitor_loop
 from app.core.config import settings
+from app.core.database import session_scope
 from app.core.exceptions import AgentMeshException, agentmesh_exception_handler
 from app.core.logging import RequestIdMiddleware, setup_logging
 from app.core.middleware import BodySizeLimitMiddleware
 from app.core.mongo import close_mongo, init_mongo
+from app.services.catalog_seed import seed_catalog
 
 setup_logging(settings.LOG_LEVEL, settings.LOG_JSON)
 logger = logging.getLogger(__name__)
@@ -26,6 +28,10 @@ async def lifespan(app: FastAPI):
     """Application lifespan: start background tasks on startup, clean up on shutdown."""
     logger.info("AgentMesh API starting up...")
     await init_mongo()  # creates missing collections and indexes
+    async with session_scope() as db:
+        added = await seed_catalog(db)
+    if added:
+        logger.info("Added %d built-in catalog entries", added)
     tasks = []
     coordinator = None
     redis = None
@@ -95,6 +101,7 @@ async def database_error_handler(request: Request, exc: PyMongoError):
             content={"detail": "A concurrent change conflicted with this request; nothing was saved. Retry it."},
         )
     raise exc
+
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ops.router)

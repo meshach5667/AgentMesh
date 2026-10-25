@@ -169,8 +169,9 @@ async def test_transient_conflict_is_replayed(mdb, monkeypatch):
 
 async def test_not_initialised_is_an_error():
     await mongo_core.close_mongo()
+    session = Session()  # creating one needs no connection; using it does
     with pytest.raises(RuntimeError):
-        Session()
+        await session.count(Node)
 
 
 def test_utcnow_is_millisecond_and_strictly_increasing():
@@ -198,3 +199,20 @@ async def test_queries_and_updates_autoflush_pending_changes(mdb):
     assert await mdb.update_one(Node, {"_id": node.id, "region": "us"}, {"$set": {"name": "n1"}})
     await mdb.rollback()
     assert await Session().count(Node) == 0
+
+
+async def test_catalog_seed_adds_missing_entries_once_and_keeps_operator_changes(mdb):
+    from app.documents import Model, ModelArtifact
+    from app.services.catalog_seed import CATALOG, HF_ARTIFACTS, NEW_MODELS, model_id, seed_catalog
+
+    added = await seed_catalog(mdb)
+    assert await mdb.count(Model) == len(CATALOG) + len(NEW_MODELS)
+    assert await mdb.count(ModelArtifact) == len(CATALOG) + len(HF_ARTIFACTS)
+    assert added == await mdb.count(Model) + await mdb.count(ModelArtifact)
+
+    withdrawn = await mdb.get(Model, model_id("smollm2:135m"))
+    withdrawn.is_approved = False
+    await mdb.commit()
+    assert await seed_catalog(mdb) == 0
+    mdb.expire_all()
+    assert (await mdb.get(Model, model_id("smollm2:135m"))).is_approved is False

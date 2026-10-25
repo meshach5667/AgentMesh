@@ -3,7 +3,7 @@
 Tests run against TEST_MONGODB_URL when it is set (CI points it at a MongoDB service). Otherwise a private
 single-node replica set is started from the local ``mongod`` binary, on a free port with a temporary data
 directory, and stopped after the test session; a system MongoDB service is never used. Without either, the tests
-that need MongoDB are skipped. Each test gets its own database.
+that need MongoDB are skipped. Each test starts with an empty database.
 """
 
 import os
@@ -67,13 +67,25 @@ def mongodb_url(tmp_path_factory):
         proc.wait(timeout=30)
 
 
-@pytest.fixture
-async def mongo(mongodb_url):
-    """A fresh database with every document registered and its indexes created."""
+@pytest.fixture(scope="session")
+def mongo_db_name(mongodb_url):
+    """One database per test session (creating collections and indexes for every test is slow); it is emptied
+    after each test and dropped at the end."""
     name = f"agentmesh_test_{uuid.uuid4().hex[:12]}"
-    client = await mongo_core.init_mongo(mongodb_url, name)
-    yield client[name]
-    await client.drop_database(name)
+    yield name
+    client = MongoClient(mongodb_url)
+    client.drop_database(name)
+    client.close()
+
+
+@pytest.fixture
+async def mongo(mongodb_url, mongo_db_name):
+    """An empty database with every document registered and its indexes created."""
+    client = await mongo_core.init_mongo(mongodb_url, mongo_db_name)
+    database = client[mongo_db_name]
+    yield database
+    for name in await database.list_collection_names():
+        await database[name].delete_many({})
     await mongo_core.close_mongo()
 
 

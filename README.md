@@ -23,7 +23,7 @@ The Markdown files in [docs/](docs/) hold the same material in more depth.
 - Python 3.12+
 - Node.js 20+
 - Docker & Docker Compose
-- PostgreSQL 16
+- MongoDB 8 (a replica set; MongoDB Atlas, or `docker-compose up -d mongo`)
 - Redis 7
 
 ## Quick Start (Development)
@@ -35,14 +35,13 @@ The Markdown files in [docs/](docs/) hold the same material in more depth.
    ```
 3. Start infrastructure services:
    ```bash
-   docker-compose up -d postgres redis
+   docker-compose up -d mongo redis
    ```
 4. Setup Backend (Control Plane):
    ```bash
    cd server
    pip install -r requirements.txt
-   alembic upgrade head
-   uvicorn app.main:app --reload
+   uvicorn app.main:app --reload   # creates collections and indexes and seeds the catalog on startup
    ```
 5. Setup Frontend (Dashboard):
    ```bash
@@ -74,8 +73,7 @@ python scripts/create_operator.py ops@example.com
 
 ```bash
 cd server
-DATABASE_URL=sqlite+aiosqlite:///./dev.db python scripts/init_dev_db.py
-DATABASE_URL=sqlite+aiosqlite:///./dev.db uvicorn app.main:app --port 8000 &
+MONGODB_DB=agentmesh_e2e uvicorn app.main:app --port 8000 &
 python scripts/e2e_ollama.py --api http://127.0.0.1:8000 --model smollm2:135m
 ```
 
@@ -90,8 +88,7 @@ python scripts/e2e_failover.py --api http://127.0.0.1:8000 --model smollm2:135m
 
 ```bash
 cd server
-pytest                      # in-memory SQLite by default
-TEST_DATABASE_URL=postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh_test pytest
+pytest        # starts a private mongod replica set (needs the mongod binary), or set TEST_MONGODB_URL
 
 cd client
 npx tsc --noEmit && npx jest && npm run build
@@ -111,7 +108,7 @@ What works, what is missing, and the phased plan are tracked in [docs/IMPLEMENTA
 - Documentation: [https://agent-mesh-ten.vercel.app/docs](https://agent-mesh-ten.vercel.app/docs) (customer, provider, API, operator and security guides).
 - Worker releases: [GitHub Releases](https://github.com/meshach5667/AgentMeshh/releases). Pushing a tag `worker-v<version>` that matches `WORKER_VERSION` runs `.github/workflows/worker-release.yml`, which publishes the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`. Providers then install without cloning, from the dashboard's **Add a machine** page. No release has been published yet; see [docs/WORKER.md](docs/WORKER.md#publishing-a-release-maintainers).
 - To deploy your own instance, use Vercel for `client/` and any container host for `Dockerfile.server`, or `docker-compose up -d` for the full stack. Set `NEXT_PUBLIC_API_URL` to that instance's API `/api/v1` URL.
-  Set the variables in [.env.example](.env.example); a plain `postgresql://` `DATABASE_URL` is accepted.
+  Set the variables in [.env.example](.env.example), including `MONGODB_URL` (for example a MongoDB Atlas connection string).
 
 Run `make help` for the development shortcuts.
 

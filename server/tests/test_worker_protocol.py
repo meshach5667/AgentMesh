@@ -3,7 +3,6 @@
 import uuid
 from datetime import timedelta
 
-
 from app.core.timeutil import utcnow
 from app.documents import Node, NodeCommand, NodeEnrollmentToken
 from tests.conftest import HARDWARE

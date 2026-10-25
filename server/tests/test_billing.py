@@ -53,9 +53,7 @@ async def _ready_deployment(client, db, enroll_node, make_user, model, *, credit
 async def _set_ready_at(db, dep_id: str, when):
     """Move the deployment's history so READY began at ``when`` (tests control time)."""
     did = uuid.UUID(dep_id)
-    await db.update_many(
-        DeploymentEvent, {"deployment_id": did}, {"$set": {"created_at": when - timedelta(minutes=1)}}
-    )
+    await db.update_many(DeploymentEvent, {"deployment_id": did}, {"$set": {"created_at": when - timedelta(minutes=1)}})
     await db.update_many(DeploymentEvent, {"deployment_id": did, "to_status": "READY"}, {"$set": {"created_at": when}})
     await db.update_one(Deployment, {"_id": did}, {"$set": {"created_at": when - timedelta(minutes=2)}})
     await db.commit()
@@ -73,7 +71,7 @@ def test_ready_intervals_follow_lifecycle_events():
     n1, n2 = uuid.uuid4(), uuid.uuid4()
 
     def ev(minutes, to, node):
-        return DeploymentEvent(to_status=to, created_at=t0 + timedelta(minutes=minutes), node_id=node)
+        return DeploymentEvent(to_status=to, actor="system", created_at=t0 + timedelta(minutes=minutes), node_id=node)
 
     events = [
         ev(0, "SCHEDULED", n1),

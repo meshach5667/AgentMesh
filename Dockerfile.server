@@ -4,7 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     build-essential \
-    libpq-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -12,8 +11,6 @@ COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server/app ./app
-COPY server/alembic ./alembic
-COPY server/alembic.ini .
 
 RUN useradd -m agentmesh
 USER agentmesh

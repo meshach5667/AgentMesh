@@ -87,7 +87,7 @@ export default function SecurityGuide() {
             ['Docker worker', <StatusPill key="4" status="unverified" />, 'Unit-tested with a fake Docker client; not run against a real Docker daemon. No GPU detection in the container.'],
             ['Installable worker on macOS', <StatusPill key="5" status="unverified" />, 'launchd service files are generated and unit-tested but not run on a Mac.'],
             ['Prebuilt worker releases', <StatusPill key="6" status="planned" />, 'The release workflow and install flow are built and the install was tested on Linux against locally served assets; no release is published yet.'],
-            ['Multi-replica billing with Redis', <StatusPill key="7" status="unverified" />, 'Concurrency safety rests on database compare-and-set; tested on SQLite only.'],
+            ['Multi-replica billing with Redis', <StatusPill key="7" status="unverified" />, 'Concurrency safety rests on database compare-and-set and transactions; tested against one MongoDB replica set, not across real replicas.'],
             ['Confidential computing', <StatusPill key="8" status="planned" />, 'Not implemented.'],
           ]}
         />

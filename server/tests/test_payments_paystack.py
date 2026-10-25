@@ -12,7 +12,6 @@ from decimal import Decimal
 
 import httpx
 import pytest
-from sqlalchemy import select, update
 
 from app.core.config import Settings, settings
 from app.core.timeutil import utcnow
@@ -99,8 +98,9 @@ async def webhook(client, payload: dict, secret: str = SECRET):
 
 
 async def balance(db, user_id) -> Decimal:
-    value = (await db.execute(select(Wallet.balance).where(Wallet.user_id == user_id))).scalar()
-    return Decimal(value or 0)
+    db.expire_all()
+    wallet = await db.find_one(Wallet, {"user_id": user_id})
+    return Decimal(wallet.balance or 0) if wallet else Decimal(0)
 
 
 async def topup(client, headers, amount="2500"):
@@ -208,7 +208,7 @@ async def test_amount_mismatch_is_held_for_review(client, db, make_user, fake):
         },
     )
     assert await balance(db, user.id) == 0
-    stored = (await db.execute(select(Payment).where(Payment.reference == payment["reference"]))).scalars().one()
+    stored = await db.find_one(Payment, {"reference": payment["reference"]})
     assert stored.status == "REVIEW"
     report = await reconciliation_service.report(db)
     assert [i["kind"] for i in report["issues"]] == ["payment_needs_review"]
@@ -232,7 +232,7 @@ async def test_reconciliation_resolves_abandoned_and_late_payments(client, db, m
     abandoned = await topup(client, customer, "300")
     fake.transactions[paid["reference"]]["status"] = "success"
     fake.transactions[abandoned["reference"]]["status"] = "abandoned"
-    await db.execute(update(Payment).values(created_at=utcnow() - timedelta(hours=2)))
+    await db.update_many(Payment, {}, {"$set": {"created_at": utcnow() - timedelta(hours=2)}})
     await db.commit()
     result = await reconciliation_service.run()
     assert result["payments"] == {paid["reference"]: "credited", abandoned["reference"]: "abandoned"}
@@ -342,7 +342,7 @@ async def test_uncertain_transfer_is_reconciled_not_refunded(client, db, make_us
 
     # Paystack did make the transfer; reconciliation finds it and confirms.
     fake.transfers[p["reference"]] = {"status": "success", "amount": 200000}
-    await db.execute(update(Payout).values(updated_at=utcnow() - timedelta(hours=2)))
+    await db.update_many(Payout, {}, {"$set": {"updated_at": utcnow() - timedelta(hours=2)}})
     await db.commit()
     result = await reconciliation_service.run()
     assert result["payouts"][p["reference"]] == "succeeded; reconciled"
@@ -357,7 +357,7 @@ async def test_transfer_unknown_to_paystack_is_refunded_by_reconciliation(client
     p = (await client.post("/api/v1/payments/payouts", json={"amount": "2000"}, headers=provider)).json()
     fake.transfer_reply = httpx.ReadTimeout("slow")
     await client.post(f"/api/v1/admin/payouts/{p['id']}/approve", headers=operator)
-    await db.execute(update(Payout).values(updated_at=utcnow() - timedelta(hours=2)))
+    await db.update_many(Payout, {}, {"$set": {"updated_at": utcnow() - timedelta(hours=2)}})
     await db.commit()
     await reconciliation_service.run()
     final = (await client.get("/api/v1/payments/payouts", headers=provider)).json()[0]

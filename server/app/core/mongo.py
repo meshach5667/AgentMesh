@@ -8,7 +8,9 @@ same transaction, which then stays open until ``commit()`` or ``rollback()``. Li
 changes are flushed before a query or an atomic update, so they see everything added or changed so far.
 """
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+import asyncio
+import random
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
@@ -69,13 +71,17 @@ def _encode(doc: Doc) -> dict[str, Any]:
 
 class Session:
     def __init__(self, client: AsyncMongoClient | None = None):
-        self._client = client or get_client()
+        self._given_client = client  # resolved on first use, so creating a Session never needs a connection
         self._identity: dict[tuple[type[Doc], Any], Doc] = {}
         self._new: list[Doc] = []
         self._deleted: list[Doc] = []
         self._txn: AsyncClientSession | None = None
         # Writes already sent inside the open transaction; a commit that fails after them cannot be replayed.
         self._sent = False
+
+    @property
+    def _client(self) -> AsyncMongoClient:
+        return self._given_client or get_client()
 
     # --- Tracking ----------------------------------------------------------------------------------------------
 
@@ -310,3 +316,26 @@ async def mongo_session() -> AsyncIterator[Session]:
 async def get_mongo_db() -> AsyncIterator[Session]:
     async with mongo_session() as session:
         yield session
+
+
+def is_transient(exc: BaseException) -> bool:
+    return isinstance(exc, PyMongoError) and exc.has_error_label("TransientTransactionError")
+
+
+async def retry_transient[T](db: Session, work: Callable[[], Awaitable[T]], attempts: int = 4) -> T:
+    """Run ``work`` (which uses ``db`` and commits) again after a write conflict with a concurrent transaction.
+
+    MongoDB aborts the later of two transactions writing the same document instead of making it wait as PostgreSQL
+    does, so contended writes (reserving a node's capacity, a wallet's balance) are retried here. ``work`` must have
+    no side effects outside the database before it commits, and must load the documents it changes itself: the
+    rollback before a retry forgets everything the session had loaded.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return await work()
+        except PyMongoError as exc:
+            if not is_transient(exc) or attempt == attempts:
+                raise
+            await db.rollback()
+            await asyncio.sleep(random.uniform(0, 0.02 * attempt))
+    raise AssertionError("unreachable")

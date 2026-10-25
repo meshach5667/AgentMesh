@@ -39,7 +39,7 @@ export default function OperatorGuide() {
         <Table
           head={['Variable', 'Purpose']}
           rows={[
-            [<C key="1">DATABASE_URL</C>, <>PostgreSQL. A plain <C>postgresql://</C> URL from your host is accepted and converted to the async driver; <C>sslmode=</C> becomes <C>ssl=</C>.</>],
+            [<><C>MONGODB_URL</C>, <C>MONGODB_DB</C></>, <>MongoDB connection string (for example from MongoDB Atlas) and database name (default <C>agentmesh</C>). It must be a replica set, which Atlas always is: ledger postings are saved in multi-document transactions. Required outside development.</>],
             [<C key="2">SECRET_KEY</C>, 'Signs session tokens. Changing it signs everyone out.'],
             [<><C>PUBLIC_BASE_URL</C>, <C>FRONTEND_URL</C></>, 'Public https URLs of the API and the dashboard. Paystack returns customers to $FRONTEND_URL/customer/wallet.'],
             [<C key="4">CORS_ORIGINS</C>, 'Dashboard origins allowed to call the API.'],
@@ -47,7 +47,6 @@ export default function OperatorGuide() {
             [<C key="6">BILLING_CURRENCY</C>, 'One platform currency (default NGN). Choose it before taking payments.'],
             [<><C>PAYSTACK_SECRET_KEY</C>, <C>PAYSTACK_WEBHOOK_IPS</C></>, 'Payments; empty key disables them.'],
             [<C key="8">METRICS_TOKEN</C>, 'Bearer token for GET /metrics; empty disables it.'],
-            [<C key="9">MIGRATE_ON_STARTUP</C>, 'Default true: the API applies database migrations when it starts (PostgreSQL only).'],
             [<C key="10">NEXT_PUBLIC_API_URL</C>, 'Dashboard build setting: your API’s /api/v1 URL. Baked in at build time.'],
           ]}
         />
@@ -67,25 +66,27 @@ docker compose up -d`}
         />
         <P>
           or deploy the parts separately: the API from <C>Dockerfile.server</C> (or <C>uvicorn app.main:app</C> in <C>server/</C>) on any host with
-          PostgreSQL, and the dashboard from <C>client/</C> on Vercel with <C>NEXT_PUBLIC_API_URL</C> set. Put the API behind TLS, run uvicorn with{' '}
-          <C>--proxy-headers</C>, and restrict <C>--forwarded-allow-ips</C> to your proxy. Change the default database credentials in{' '}
-          <C>docker-compose.yml</C>.
+          MongoDB access, and the dashboard from <C>client/</C> on Vercel with <C>NEXT_PUBLIC_API_URL</C> set. Put the API behind TLS, run uvicorn with{' '}
+          <C>--proxy-headers</C>, and restrict <C>--forwarded-allow-ips</C> to your proxy. The Compose stack&apos;s MongoDB is reachable only
+          from the API container.
         </P>
       </Section>
 
-      <Section id="migrations" title="Database migrations">
+      <Section id="database" title="Database">
         <P>
-          With PostgreSQL, the API runs <C>alembic upgrade head</C> on startup, holding a database lock so several replicas cannot migrate at once.
-          If a migration fails, the API does not start. To run them yourself instead, set <C>MIGRATE_ON_STARTUP=false</C> and run:
+          AgentMesh stores everything in MongoDB. When the API starts, it creates any missing collections and indexes and adds the built-in
+          model catalog entries that are missing; it never changes or removes existing data, so several replicas can start at once. There are no
+          migrations to run. For local development, run <C>mongod --replSet rs0</C> once with <C>rs.initiate()</C>, or use{' '}
+          <C>docker compose up -d mongo</C>.
         </P>
-        <Code code="cd server && alembic upgrade head" />
         <P>
-          SQLite is for local development only: create it with <C>python scripts/init_dev_db.py</C>, since some migrations cannot run on SQLite.
+          Moving an existing PostgreSQL installation: stop the API, then copy every table into MongoDB with{' '}
+          <C>python scripts/migrate_postgres_to_mongo.py</C> (see its header for options) before starting the new version.
         </P>
       </Section>
 
       <Section id="first-operator" title="First operator">
-        <P>Operators cannot self-register. On a machine with the same <C>DATABASE_URL</C> as the API (for example your host&apos;s shell):</P>
+        <P>Operators cannot self-register. On a machine with the same <C>MONGODB_URL</C> as the API (for example your host&apos;s shell):</P>
         <Code
           code={`cd server
 python scripts/create_operator.py ops@example.com              # prompts for a password (12+ characters)
@@ -154,13 +155,13 @@ python scripts/create_operator.py lead@example.com --role admin`}
       <Section id="backups" title="Backups and recovery">
         <Code
           code={`cd server
-DATABASE_URL=postgresql+asyncpg://… KEEP=14 ops/backup_db.sh /var/backups/agentmesh
-DATABASE_URL=postgresql+asyncpg://…/agentmesh_restore ops/restore_db.sh /var/backups/agentmesh/agentmesh-<ts>.dump`}
+MONGODB_URL=mongodb+srv://… KEEP=14 ops/backup_db.sh /var/backups/agentmesh
+MONGODB_URL=mongodb+srv://… MONGODB_DB=agentmesh_restore ops/restore_db.sh /var/backups/agentmesh/agentmesh-<ts>.archive.gz`}
         />
         <List
           items={[
-            'Backups are compressed pg_dump files (mode 0600). Store copies off the host, encrypted, and test a restore monthly. The restore script refuses a non-empty database.',
-            'After a restore: point DATABASE_URL at it, start the API (migrations run), then run reconciliation to re-check open top-ups and payouts with Paystack.',
+            'Backups are compressed mongodump archives (mode 0600). On Atlas, also enable its scheduled backups. Store copies off the host, encrypted, and test a restore monthly. The restore script refuses a non-empty database.',
+            'After a restore: point MONGODB_DB at it, start the API, then run reconciliation to re-check open top-ups and payouts with Paystack.',
             'API restarts lose nothing: workers reconnect and billing resumes from each deployment’s watermark without double charging.',
             'Never refund a pending payout by hand; the transfer may still complete. Ledger corrections and refunds need a code path that does not exist yet.',
             <>Full runbooks are in <A href={`${REPO_URL}/blob/main/docs/OPERATIONS.md`}>docs/OPERATIONS.md</A>.</>,

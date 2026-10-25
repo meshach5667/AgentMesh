@@ -33,7 +33,7 @@ class Deployment(Doc):
     config: Any = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
-    created_at: datetime | None = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     runtime: str | None = None
     model_tag: str | None = None
     model_digest: str | None = None  # reported by the worker after pulling

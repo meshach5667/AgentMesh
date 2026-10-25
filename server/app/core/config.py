@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 INSECURE_DEFAULT_SECRET = "supersecretkey"
 DEV_ENVIRONMENTS = {"dev", "development", "test", "testing"}
+DEFAULT_MONGODB_URL = "mongodb://127.0.0.1:27017/?replicaSet=rs0"
 
 
 class Settings(BaseSettings):
@@ -16,9 +17,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    DATABASE_URL: str = "postgresql+asyncpg://agentmesh:agentmesh@localhost:5432/agentmesh"
     # MongoDB must be a replica set (Atlas always is): ledger postings commit in multi-document transactions.
-    MONGODB_URL: str = "mongodb://127.0.0.1:27017/?replicaSet=rs0"
+    MONGODB_URL: str = DEFAULT_MONGODB_URL
     MONGODB_DB: str = "agentmesh"
     REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = INSECURE_DEFAULT_SECRET
@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     # Unpaid "test credits" for local development. Never honoured outside dev/test environments.
     ALLOW_TEST_CREDITS: bool = True
-    SQL_ECHO: bool = False
     LOG_JSON: bool = True
 
     # Public base URL customers use to reach the gateway (used to build deployment endpoints).
@@ -56,7 +55,6 @@ class Settings(BaseSettings):
     MAX_SCHEDULE_ATTEMPTS: int = 3  # placements per deployment, including the first
     MONITOR_INTERVAL_SECONDS: int = 15
     BACKGROUND_JOBS_ENABLED: bool = True
-    MIGRATE_ON_STARTUP: bool = True
 
     # Multi-replica coordination: "memory" (single API process) or "redis" (shared limits and tunnel routing)
     COORDINATION_BACKEND: str = "memory"
@@ -125,15 +123,6 @@ class Settings(BaseSettings):
     COMMUNITY_MODEL_IMPORTS_PER_MINUTE: int = 5
     HUGGINGFACE_URL: str = "https://huggingface.co"
 
-    @field_validator("DATABASE_URL")
-    @classmethod
-    def _use_async_driver(cls, url: str) -> str:
-        # Hosting providers hand out postgres:// or postgresql:// URLs; the engine needs the asyncpg driver.
-        for prefix in ("postgres://", "postgresql://"):
-            if url.startswith(prefix):
-                url = "postgresql+asyncpg://" + url[len(prefix) :]
-        return url.replace("sslmode=", "ssl=")
-
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def _parse_cors_origins(cls, value: object) -> object:
@@ -191,6 +180,8 @@ class Settings(BaseSettings):
                 or len(self.SECRET_KEY) < 32
             ):
                 raise ValueError("SECRET_KEY must be set to a random value of at least 32 characters outside dev/test")
+            if self.MONGODB_URL == DEFAULT_MONGODB_URL:
+                raise ValueError("MONGODB_URL must be set outside dev/test (e.g. a MongoDB Atlas connection string)")
             if "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must not contain '*' outside dev/test")
             if not self.CORS_ORIGINS:

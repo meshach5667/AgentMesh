@@ -5,10 +5,9 @@ worker and a real model (SmolLM2 135M through an isolated Ollama instance starte
 service is not used). It downloads the model (about 270 MB) into a temporary worker data directory.
 
 ```bash
-# 1. Control plane on a throwaway SQLite database
+# 1. Control plane on a throwaway MongoDB database (a replica set, e.g. `mongod --replSet rs0` + rs.initiate())
 cd server
-export DATABASE_URL=sqlite+aiosqlite:////tmp/agentmesh-e2e.db
-venv/bin/python scripts/init_dev_db.py
+export MONGODB_URL='mongodb://127.0.0.1:27017/?replicaSet=rs0' MONGODB_DB=agentmesh_e2e
 AGENTMESH_OPERATOR_PASSWORD=e2e-operator-password venv/bin/python scripts/create_operator.py ops@example.com
 venv/bin/uvicorn app.main:app --port 8000
 

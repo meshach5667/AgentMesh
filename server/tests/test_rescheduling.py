@@ -70,9 +70,7 @@ async def test_worker_resource_failure_moves_to_another_node(client, db, make_us
     got = (await client.get(f"/api/v1/deployments/{dep['id']}", headers=customer)).json()
     assert got["status"] == "READY" and got["endpoint"].endswith(f"/deployments/{dep['id']}/ollama")
 
-    active = (
-        await db.find(ResourceReservation, {"status": "ACTIVE"})
-    )
+    active = await db.find(ResourceReservation, {"status": "ACTIVE"})
     assert len(active) == 1  # history row for node A is RELEASED
 
 

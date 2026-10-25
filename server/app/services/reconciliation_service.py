@@ -138,16 +138,17 @@ async def report(db: Session) -> dict[str, Any]:
 
     credits = await _sums(db, {"to_wallet": {"$ne": None}, "status": TransactionStatus.SETTLED.value}, "to_wallet")
     debits = await _sums(db, {"from_wallet": {"$ne": None}, "status": {"$in": list(DEBIT_STATES)}}, "from_wallet")
-    wallets = await db.find(Wallet)
+    # Stored balances as they are now, not as loaded earlier into this session.
+    wallets = await db.aggregate(Wallet, [{"$project": {"user_id": 1, "balance": 1}}])
     for wallet in wallets:
-        expected = money(credits.get(wallet.id, (0, Decimal(0)))[1] - debits.get(wallet.id, (0, Decimal(0)))[1])
-        balance = money(wallet.balance or 0)
+        expected = money(credits.get(wallet["_id"], (0, Decimal(0)))[1] - debits.get(wallet["_id"], (0, Decimal(0)))[1])
+        balance = money(wallet.get("balance") or 0)
         if balance != expected:
             issues.append(
                 {
                     "kind": "wallet_balance",
-                    "wallet_id": str(wallet.id),
-                    "user_id": str(wallet.user_id),
+                    "wallet_id": str(wallet["_id"]),
+                    "user_id": str(wallet.get("user_id")),
                     "balance": str(balance),
                     "ledger": str(expected),
                 }

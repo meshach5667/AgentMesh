@@ -236,9 +236,7 @@ async def test_capacity_is_never_oversubscribed(client, db, make_user, enroll_no
     assert codes == [201, 201, 503, 503, 503]
     n = await _node(db, node["node_id"])
     assert n.reserved_ram_mb == 2048
-    active = (
-        await db.find(ResourceReservation, {"status": "ACTIVE"})
-    )
+    active = await db.find(ResourceReservation, {"status": "ACTIVE"})
     assert len(active) == 2
 
 

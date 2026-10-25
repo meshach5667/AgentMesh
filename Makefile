@@ -1,4 +1,4 @@
-.PHONY: help dev dev-up dev-down dev-logs dev-restart db-migrate db-revision db-downgrade db-reset server-install server-run server-lint server-format server-typecheck server-test server-test-cov agent-install agent-run agent-register e2e client-install client-dev client-build client-lint client-test client-e2e test test-server test-client test-e2e docker-build docker-clean ci lint typecheck
+.PHONY: help dev dev-up dev-down dev-logs dev-restart server-install server-run server-lint server-format server-typecheck server-test server-test-cov agent-install agent-run agent-register e2e client-install client-dev client-build client-lint client-test client-e2e test test-server test-client test-e2e docker-build docker-clean ci lint typecheck
 
 help:
 	@echo "Available commands:"
@@ -8,12 +8,6 @@ help:
 	@echo "  make dev-down         - Stop services"
 	@echo "  make dev-logs         - View logs"
 	@echo "  make dev-restart      - Restart all services"
-	@echo ""
-	@echo "Database:"
-	@echo "  make db-migrate       - Run alembic migrations"
-	@echo "  make db-revision MSG  - Create new migration"
-	@echo "  make db-downgrade     - Rollback last migration"
-	@echo "  make db-reset         - Reset database"
 	@echo ""
 	@echo "Server:"
 	@echo "  make server-install   - Install Python deps"
@@ -57,19 +51,6 @@ dev-logs:
 
 dev-restart:
 	docker-compose restart
-
-# Database
-db-migrate:
-	cd server && alembic upgrade head
-
-db-revision:
-	cd server && alembic revision --autogenerate -m "$(MSG)"
-
-db-downgrade:
-	cd server && alembic downgrade -1
-
-db-reset:
-	cd server && alembic downgrade base && alembic upgrade head
 
 # Server
 server-install:

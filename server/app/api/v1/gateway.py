@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
-from app.core.database import Session, get_db, session_scope
+from app.core.database import Session, get_db, retry_transient, session_scope
 from app.core.logging import current_request_id, new_request_id
 from app.core.ratelimit import limiters
 from app.core.security import ALGORITHM
@@ -198,14 +198,19 @@ def _parse_usage(path: str, tail: bytes) -> tuple[int | None, int | None]:
 
 
 async def _record_usage(**fields) -> None:
+    started = fields.pop("started")
     try:
         async with session_scope() as db:
-            db.add(UsageRecord(kind="inference", period_start=fields.pop("started"), period_end=utcnow(), **fields))
-            if fields.get("api_key_id"):
-                key = await db.get(ApiKey, fields["api_key_id"])
-                if key is not None:
-                    key.last_used_at = utcnow()
-            await db.commit()
+
+            async def attempt() -> None:
+                db.add(UsageRecord(kind="inference", period_start=started, period_end=utcnow(), **fields))
+                if fields.get("api_key_id"):
+                    key = await db.get(ApiKey, fields["api_key_id"])
+                    if key is not None:
+                        key.last_used_at = utcnow()
+                await db.commit()
+
+            await retry_transient(db, attempt)
     except DuplicateKeyError:
         pass  # duplicate request_id: already recorded
     except Exception:  # noqa: BLE001

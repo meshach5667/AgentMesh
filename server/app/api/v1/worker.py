@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
-from app.core.database import Session, get_db, session_scope
+from app.core.database import Session, get_db, retry_transient, session_scope
 from app.documents.node import Node
 from app.schemas.worker import (
     CommandAck,
@@ -36,6 +36,13 @@ async def current_node(
 ) -> Node:
     credential = authorization[7:] if authorization.lower().startswith("bearer ") else None
     return await worker_service.authenticate_worker(db, x_agentmesh_node_id, credential, x_agentmesh_protocol or "1")
+
+
+async def _reload(db: Session, node: Node) -> Node:
+    fresh = await db.get(Node, node.id)
+    if fresh is None:
+        raise HTTPException(status_code=401, detail="Invalid node credentials")
+    return fresh
 
 
 @router.post("/enroll", response_model=EnrollResponse)
@@ -73,7 +80,11 @@ async def whoami(node: Node = Depends(current_node)):
 
 @router.post("/heartbeat", response_model=HeartbeatResponse)
 async def heartbeat(req: HeartbeatRequest, node: Node = Depends(current_node), db: Session = Depends(get_db)):
-    return await worker_service.heartbeat(db, node, req)
+    async def attempt():
+        # Reloaded on each attempt: the rollback before a retry forgets the node loaded for authentication.
+        return await worker_service.heartbeat(db, await _reload(db, node), req)
+
+    return await retry_transient(db, attempt)
 
 
 @router.post("/disconnect")
@@ -89,7 +100,10 @@ async def poll(req: PollRequest, node: Node = Depends(current_node), db: Session
 
 @router.post("/commands/{command_id}/ack")
 async def ack(command_id: str, req: CommandAck, node: Node = Depends(current_node), db: Session = Depends(get_db)):
-    await worker_service.ack_command(db, node, command_id, req.status, req.error)
+    async def attempt():
+        await worker_service.ack_command(db, await _reload(db, node), command_id, req.status, req.error)
+
+    await retry_transient(db, attempt)
     return {"ok": True}
 
 
@@ -100,7 +114,10 @@ async def deployment_status(
     node: Node = Depends(current_node),
     db: Session = Depends(get_db),
 ):
-    return await worker_service.report_deployment_status(db, node, deployment_id, report)
+    async def attempt():
+        return await worker_service.report_deployment_status(db, await _reload(db, node), deployment_id, report)
+
+    return await retry_transient(db, attempt)
 
 
 @router.websocket("/tunnel")

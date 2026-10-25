@@ -278,17 +278,25 @@ async def set_payout_account(db: Session, user: User, account_number: str, bank_
             status_code=422 if exc.status and exc.status < 500 else 502, detail=f"Paystack: {exc}"
         ) from None
     details = recipient.get("details") or {}
-    account = await get_payout_account(db, user) or PayoutAccount(id=uuid.uuid4(), user_id=user.id)
-    account.provider = "paystack"
-    account.recipient_code = str(recipient.get("recipient_code") or "")
-    if not account.recipient_code:
+    recipient_code = str(recipient.get("recipient_code") or "")
+    if not recipient_code:
         raise HTTPException(status_code=502, detail="Paystack did not return a recipient code")
-    account.bank_code = bank_code
-    account.bank_name = str(details.get("bank_name") or "")[:200] or None
-    account.account_name = name or None
-    account.account_last4 = account_number[-4:]
-    account.currency = settings.BILLING_CURRENCY
-    db.add(account)
+    fields = {
+        "provider": "paystack",
+        "recipient_code": recipient_code,
+        "bank_code": bank_code,
+        "bank_name": str(details.get("bank_name") or "")[:200] or None,
+        "account_name": name or None,
+        "account_last4": account_number[-4:],
+        "currency": settings.BILLING_CURRENCY,
+    }
+    account = await get_payout_account(db, user)
+    if account is None:
+        account = PayoutAccount(id=uuid.uuid4(), user_id=user.id, **fields)
+        db.add(account)
+    else:
+        for key, value in fields.items():
+            setattr(account, key, value)
     audit_service.record(
         db,
         actor_id=user.id,

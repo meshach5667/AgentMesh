@@ -1,20 +1,22 @@
 # Control plane stack. Providers run workers separately with docker-compose.worker.yml.
 services:
-  postgres:
-    image: postgres:16-alpine
-    ports:
-      - "5432:5432"
+  # A single-node replica set: ledger postings commit in multi-document transactions, which need one.
+  # Not published on the host; only the API reaches it.
+  mongo:
+    image: mongo:8.0
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_DB: agentmesh
-      POSTGRES_USER: agentmesh
-      POSTGRES_PASSWORD: agentmesh
+      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agentmesh -d agentmesh"]
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --eval "try { rs.status().ok } catch (e) {
+          rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}).ok }"
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 10s
 
   redis:
     image: redis:7-alpine
@@ -33,12 +35,13 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
+      mongo:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql+asyncpg://agentmesh:agentmesh@postgres:5432/agentmesh
+      - MONGODB_URL=mongodb://mongo:27017/?replicaSet=rs0
+      - MONGODB_DB=agentmesh
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY to a random value of at least 32 characters}
       - ENVIRONMENT=production
@@ -52,7 +55,7 @@ services:
       - BILLING_CURRENCY=${BILLING_CURRENCY:-NGN}
       - METRICS_TOKEN=${METRICS_TOKEN:-}
     # --proxy-headers: client addresses (rate limits, audit log, webhook IP checks) come from the TLS proxy.
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 30s
@@ -70,4 +73,4 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres_data:
+  mongo_data:

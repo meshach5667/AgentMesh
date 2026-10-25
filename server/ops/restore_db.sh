@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# Restore a dump made by backup_db.sh into an EMPTY database, then report the schema revision.
+# Restore an archive made by backup_db.sh into an EMPTY database.
 #
-#   DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/agentmesh_restore ops/restore_db.sh agentmesh-....dump
+#   MONGODB_URL=mongodb://127.0.0.1:27017/?replicaSet=rs0 MONGODB_DB=agentmesh_restore \
+#     ops/restore_db.sh agentmesh-....archive.gz
 #
-# Restore into a new database and point the API at it after checking it; never restore over a live one.
-# Afterwards run `alembic upgrade head` if the dump predates the deployed code, then
-# GET /api/v1/admin/reconciliation to confirm the ledger is consistent.
+# Restore into a new database and point the API at it (MONGODB_DB) after checking it; never restore over a live one.
+# The API creates any missing collections and indexes at startup. Afterwards GET /api/v1/admin/reconciliation to
+# confirm the ledger is consistent.
 set -euo pipefail
 
-file="${1:?usage: restore_db.sh <dump file>}"
-url="${DATABASE_URL:?DATABASE_URL is required}"
-url="${url/postgresql+asyncpg:/postgresql:}"
-pg_restore="${PG_RESTORE:-pg_restore}"
-psql="${PSQL:-psql}"
+file="${1:?usage: restore_db.sh <archive>}"
+url="${MONGODB_URL:?MONGODB_URL is required}"
+db="${MONGODB_DB:?MONGODB_DB is required (the database to restore into)}"
+mongorestore="${MONGORESTORE:-mongorestore}"
+mongosh="${MONGOSH:-mongosh}"
 
-tables=$($psql "$url" -tAc "select count(*) from information_schema.tables where table_schema='public'")
-if [ "$tables" != "0" ]; then
-  echo "Refusing to restore: the target database is not empty ($tables tables)." >&2
+count=$($mongosh "$url" --quiet --eval "db.getSiblingDB('$db').getCollectionNames().length")
+if [ "$count" != "0" ]; then
+  echo "Refusing to restore: database $db is not empty ($count collections)." >&2
   exit 1
 fi
-$pg_restore --no-owner --no-privileges --exit-on-error --dbname="$url" < "$file"
-echo "Restored $file; schema revision: $($psql "$url" -tAc 'select version_num from alembic_version')"
+# Archives hold the source database name (agentmesh); --nsFrom/--nsTo rename it to the target.
+# The archive is read from stdin, so MONGORESTORE may be a container without access to the file.
+$mongorestore --uri="$url" --gzip --archive --nsFrom="agentmesh.*" --nsTo="$db.*" --stopOnError < "$file"
+echo "Restored $file into $db"

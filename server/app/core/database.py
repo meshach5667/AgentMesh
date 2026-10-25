@@ -4,9 +4,9 @@
 jobs, streaming responses that outlive the request). See app.core.mongo for how a Session works.
 """
 
-from app.core.mongo import Session, get_mongo_db, init_mongo, mongo_session
+from app.core.mongo import Session, get_mongo_db, init_mongo, mongo_session, retry_transient
 
 get_db = get_mongo_db
 session_scope = mongo_session
 
-__all__ = ["Session", "get_db", "init_mongo", "session_scope"]
+__all__ = ["Session", "get_db", "init_mongo", "retry_transient", "session_scope"]
