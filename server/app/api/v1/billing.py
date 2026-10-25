@@ -1,16 +1,18 @@
 """Pricing (public) and rated charges (customers see what they paid, providers what they earned)."""
 
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.config import settings
 from app.core.database import Session, get_db
 from app.core.dependencies import get_current_user, is_staff
 from app.core.timeutil import utcnow
 from app.documents.billing import Charge, PricingRule
-from app.schemas.billing import ChargeOut, PricingOut, PricingRuleOut
-from app.services import billing_service, ledger_service
+from app.documents.user import UserRole
+from app.schemas.billing import BillingSummary, ChargeOut, PricingOut, PricingRuleOut, RefundOut
+from app.services import billing_service, ledger_service, refund_service
 
 router = APIRouter()
 
@@ -26,7 +28,28 @@ async def pricing(db: Session = Depends(get_db)):
         currency=settings.BILLING_CURRENCY,
         min_prepaid_hours=settings.BILLING_MIN_PREPAID_HOURS,
         billing_interval_seconds=settings.BILLING_INTERVAL_SECONDS,
+        default_platform_fee_rate=settings.DEFAULT_PLATFORM_FEE_RATE,
+        max_platform_fee_rate=settings.MAX_PLATFORM_FEE_RATE,
     )
+
+
+@router.get("/summary", response_model=BillingSummary)
+async def summary(
+    days: int = Query(30, ge=1, le=365),
+    scope: Literal["customer", "provider", "network"] | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Fee breakdown of rated charges: customers see what they paid (and how much of it was platform commission),
+    providers what their nodes earned before and after commission, staff the whole network."""
+    default = {UserRole.customer: "customer", UserRole.provider: "provider"}.get(current_user.role, "network")
+    chosen = scope or default
+    allowed = {"customer", "provider", "network"} if is_staff(current_user) else {default}
+    if chosen not in allowed:
+        raise HTTPException(status_code=403, detail=f"Scope '{chosen}' is not available to this account")
+    result = await billing_service.summary(db, current_user, chosen, days)
+    await db.commit()  # may have created the caller's wallet
+    return result
 
 
 @router.get("/charges", response_model=list[ChargeOut])
@@ -46,3 +69,9 @@ async def charges(
     rows = await db.find(Charge, filter, sort=[("created_at", -1)], limit=limit)
     await db.commit()
     return rows
+
+
+@router.get("/refunds", response_model=list[RefundOut])
+async def my_refunds(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Refunds issued to the caller (charge refunds to the wallet, and top-ups refunded to their card)."""
+    return await refund_service.list_refunds(db, current_user)

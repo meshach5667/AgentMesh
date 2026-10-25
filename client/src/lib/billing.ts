@@ -16,7 +16,25 @@ export function isFree(rule: PricingRule | null | undefined): boolean {
   );
 }
 
-export function sumAmounts(charges: Charge[], field: 'amount' | 'provider_amount' = 'amount'): number {
+/** A commission rate such as "0.1000" as "10%" (one decimal place only when needed). */
+export function percent(rate: string | number | null | undefined): string {
+  if (rate == null || rate === '') return '—';
+  const p = Math.round(Number(rate) * 1000) / 10;
+  return `${Number.isInteger(p) ? p.toFixed(0) : p.toFixed(1)}%`;
+}
+
+/** The provider's share of a charge at a given commission rate, e.g. "0.1" -> "90%". */
+export function providerShare(rate: string | number | null | undefined): string {
+  return rate == null || rate === '' ? '—' : percent(1 - Number(rate));
+}
+
+/** The rate a charge was split at; older charges without a recorded rate get it from their own amounts. */
+export function chargeFeeRate(charge: Charge): number | null {
+  if (charge.platform_fee_rate != null) return Number(charge.platform_fee_rate);
+  return Number(charge.amount) > 0 ? Number(charge.platform_fee) / Number(charge.amount) : null;
+}
+
+export function sumAmounts(charges: Charge[], field: 'amount' | 'provider_amount' | 'platform_fee' = 'amount'): number {
   return charges.reduce((t, c) => t + Number(c[field]), 0);
 }
 

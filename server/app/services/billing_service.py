@@ -4,8 +4,12 @@ What is charged, per deployment and node:
 
 * READY time x reserved resources (CPU cores, RAM, VRAM) at the pricing version in force. READY intervals come
   from the control plane's own lifecycle events, not from the worker. UNHEALTHY time is not charged.
-* Input/output tokens at the per-million prices. Counts are runtime-reported (see UsageRecord.token_source);
-  requests without counts are not charged for tokens.
+* Input/output tokens at the per-million prices, for successful requests only. Counts are runtime-reported (see
+  UsageRecord.token_source); requests without counts are not charged for tokens.
+
+Each charge is split by the platform commission of its pricing version (settings.DEFAULT_PLATFORM_FEE_RATE, 10%,
+unless the operator set another): the fee is rounded to the ledger's precision and the provider is credited exactly
+the rest, so fee + provider share always equals what the customer paid.
 
 A background job rates each deployment's window [metered_until, now) at most every BILLING_INTERVAL_SECONDS,
 splitting at pricing-version boundaries and node changes. Each (deployment, node, period_start) produces at most
@@ -59,8 +63,15 @@ async def list_rules(db: Session) -> list[PricingRule]:
 
 async def create_rule(db: Session, data: dict, actor: User) -> PricingRule:
     """Add a new pricing version. Versions are immutable and cannot take effect in the past, so charges
-    already rated are never re-priced."""
+    already rated are never re-priced. Without a ``platform_fee_rate`` it gets settings.DEFAULT_PLATFORM_FEE_RATE."""
     now = utcnow()
+    if data.get("platform_fee_rate") is None:
+        data["platform_fee_rate"] = settings.DEFAULT_PLATFORM_FEE_RATE
+    if not 0 <= data["platform_fee_rate"] <= settings.MAX_PLATFORM_FEE_RATE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"platform_fee_rate must be between 0 and {settings.MAX_PLATFORM_FEE_RATE} on this network",
+        )
     effective = data.pop("effective_from", None) or now
     if effective.tzinfo is not None:
         effective = effective.astimezone(UTC).replace(tzinfo=None)
@@ -88,6 +99,36 @@ async def create_rule(db: Session, data: dict, actor: User) -> PricingRule:
     await db.commit()
     await db.refresh(rule)
     return rule
+
+
+RULE_PRICES = ("cpu_core_hour", "ram_gb_hour", "vram_gb_hour", "input_tokens_per_million", "output_tokens_per_million")
+
+
+async def change_commission(
+    db: Session, rate: Decimal, effective_from: datetime | None, notes: str | None, actor: User
+) -> PricingRule:
+    """Publish a version with the prices in force and a new commission rate. Refused while a later version is
+    scheduled (it would keep its own rate, which is easy to miss): publish a full version instead."""
+    current = await active_rule(db)
+    if current is None:
+        raise HTTPException(status_code=409, detail="No prices are in force yet; publish a full price version first")
+    if await db.count(PricingRule, {"effective_from": {"$gt": utcnow()}}):
+        raise HTTPException(
+            status_code=409, detail="A later price version is already scheduled; publish a full version instead"
+        )
+    data: dict = {k: getattr(current, k) for k in RULE_PRICES}
+    data |= {
+        "platform_fee_rate": rate,
+        "effective_from": effective_from,
+        "notes": notes or f"Commission {current.platform_fee_rate} -> {rate} (prices of version {current.version})",
+    }
+    return await create_rule(db, data, actor)
+
+
+def split(amount: Decimal, rate: Decimal) -> tuple[Decimal, Decimal]:
+    """(provider share, platform fee) of a charge. The fee is rounded; the provider gets exactly the rest."""
+    fee = money(amount * Decimal(rate))
+    return amount - fee, fee
 
 
 def hourly_resource_price(rule: PricingRule, cpu_cores: int, ram_mb: int, vram_mb: int) -> Decimal:
@@ -179,6 +220,7 @@ async def _tokens(db: Session, dep_id: uuid.UUID, start: datetime, end: datetime
                 "$match": {
                     "deployment_id": dep_id,
                     "kind": "inference",
+                    "outcome": "success",  # failed, cancelled or timed-out requests are not billed
                     "created_at": {"$gte": start, "$lt": end},
                 }
             },
@@ -236,8 +278,8 @@ def price(rule: PricingRule, ready_seconds: float, cpu: int, ram_mb: int, vram_m
         (Decimal(rule.input_tokens_per_million) * tin + Decimal(rule.output_tokens_per_million) * tout) / MILLION
     )
     amount = resource + tokens
-    fee = money(amount * Decimal(rule.platform_fee_rate))
-    return resource, tokens, amount, amount - fee, fee
+    provider_amount, fee = split(amount, rule.platform_fee_rate)
+    return resource, tokens, amount, provider_amount, fee
 
 
 async def _rules_in(db: Session, start: datetime, end: datetime) -> list[tuple[datetime, PricingRule | None]]:
@@ -297,6 +339,7 @@ async def rate_deployment(db: Session, dep: Deployment, now: datetime) -> list[C
                 amount=amount,
                 provider_amount=provider_amt if provider_wallet else money(0),
                 platform_fee=fee if provider_wallet else amount,
+                platform_fee_rate=rule.platform_fee_rate,
                 currency=rule.currency,
             )
             db.add(charge)
@@ -416,3 +459,53 @@ async def run_billing(now: datetime | None = None) -> int:
                 await db.rollback()
                 logger.exception("Billing failed for deployment %s", dep_id)
     return created
+
+
+# --- Summaries ---------------------------------------------------------------------------------------------
+
+
+async def charge_totals(db: Session, match: dict) -> dict:
+    """Totals of the charges matching ``match``: gross, platform fee and provider share, by resources and tokens."""
+    rows = await db.aggregate(
+        Charge,
+        [
+            {"$match": match},
+            {
+                "$group": {
+                    "_id": None,
+                    "charges": {"$sum": 1},
+                    **{f: {"$sum": f"${f}"} for f in ("amount", "platform_fee", "provider_amount")},
+                    **{f: {"$sum": f"${f}"} for f in ("resource_amount", "token_amount")},
+                }
+            },
+        ],
+    )
+    row = rows[0] if rows else {}
+    gross = money(row.get("amount") or 0)
+    fee = money(row.get("platform_fee") or 0)
+    return {
+        "charges": int(row.get("charges") or 0),
+        "gross": gross,
+        "platform_fee": fee,
+        "provider_share": money(row.get("provider_amount") or 0),
+        "resource_amount": money(row.get("resource_amount") or 0),
+        "token_amount": money(row.get("token_amount") or 0),
+        "effective_fee_rate": (fee / gross).quantize(Decimal("0.0001")) if gross else None,
+    }
+
+
+async def summary(db: Session, user: User, scope: str, days: int) -> dict:
+    """What the caller paid ("customer"), earned ("provider"), or the whole network's compute revenue ("network",
+    staff only, checked by the caller) over the last ``days`` days."""
+    since = utcnow() - timedelta(days=days)
+    match: dict = {"created_at": {"$gte": since}}
+    if scope != "network":
+        wallet = await ledger_service.wallet_for_user(db, user.id)
+        match["customer_wallet_id" if scope == "customer" else "provider_wallet_id"] = wallet.id
+    return {
+        "scope": scope,
+        "days": days,
+        "since": since,
+        "currency": settings.BILLING_CURRENCY,
+        "totals": await charge_totals(db, match),
+    }

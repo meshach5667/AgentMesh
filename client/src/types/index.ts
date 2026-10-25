@@ -8,3 +8,4 @@ export * from './apiKey';
 export * from './admin';
 export * from './billing';
 export * from './ai';
+export * from './sponsorship';

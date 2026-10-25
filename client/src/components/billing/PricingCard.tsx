@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePricing } from '@/hooks/useBilling';
+import { percent, providerShare } from '@/lib/billing';
 import { dateTime, money } from '@/lib/format';
 
 export function PricingCard() {
@@ -31,10 +32,15 @@ export function PricingCard() {
             <dd>{money(r.input_tokens_per_million, r.currency)}</dd>
             <dt className="text-muted-foreground">Output tokens, per million</dt>
             <dd>{money(r.output_tokens_per_million, r.currency)}</dd>
+            <dt className="text-muted-foreground">Platform commission</dt>
+            <dd data-testid="commission">
+              {percent(r.platform_fee_rate)} (the provider running your deployment receives {providerShare(r.platform_fee_rate)})
+            </dd>
           </dl>
           <p className="mt-3 text-xs text-muted-foreground">
             Resource charges use the capacity reserved for the deployment, for the time it is READY (not while unhealthy).
-            Token counts are reported by the model runtime on the provider&apos;s node. A deployment needs a balance
+            Tokens are charged for successful requests only, as counted by the model runtime on the provider&apos;s node.
+            The commission is included in these prices, not added on top. A deployment needs a balance
             covering {data.min_prepaid_hours} h of its reservation; when the balance runs out, deployments are stopped.
           </p>
           {data.upcoming.length > 0 && (

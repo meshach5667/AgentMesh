@@ -13,7 +13,10 @@ class TransactionType(str, enum.Enum):  # noqa: UP042
     COMPUTE_CHARGE = "COMPUTE_CHARGE"
     PROVIDER_CREDIT = "PROVIDER_CREDIT"
     PLATFORM_FEE = "PLATFORM_FEE"
-    REFUND = "REFUND"
+    REFUND = "REFUND"  # a refunded compute charge credited back to the customer
+    REFUND_CLAWBACK = "REFUND_CLAWBACK"  # the provider's share of a refunded charge, taken back
+    PLATFORM_FEE_REVERSAL = "PLATFORM_FEE_REVERSAL"  # the commission on a refunded charge, given up
+    TOPUP_REFUND = "TOPUP_REFUND"  # wallet funds returned to the customer's card through Paystack
     PAYOUT = "PAYOUT"
 
 

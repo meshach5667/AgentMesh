@@ -199,10 +199,12 @@ export default function ProviderGuide() {
         <Callout tone="warning" title="Paystack test mode">Payouts run through Paystack in test mode. No real money is transferred yet.</Callout>
         <List
           items={[
-            'You are credited your share (after the platform fee) of each charge for deployments your nodes served. Earnings & Payouts lists the credits.',
+            'You are credited your share of each charge for deployments your nodes served: everything except the platform commission (10% unless the operator set another rate; the wallet page shows the rate in force). Earnings & Payouts shows each charge with what the customer paid, the commission and your share, plus totals for the last 30 days.',
             'Add a bank account there. Paystack verifies it, and only its last four digits are stored. Then request a payout.',
             'The amount is held from your balance at once. An operator approves the payout and Paystack transfers it. A failed or rejected payout returns the money.',
             'Served Usage shows the requests your nodes answered.',
+            'If an operator refunds a charge your node earned, your share of the refunded amount is reversed (a Refund clawback entry). If you were already paid out, your balance can go negative until later earnings cover it.',
+            'Earnings over time charts your share and the commission per day; Transactions can be filtered and exported as CSV.',
           ]}
         />
       </Section>

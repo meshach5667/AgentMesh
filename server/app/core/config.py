@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     BILLING_INTERVAL_SECONDS: int = 300  # how often READY time and tokens are rated into charges
     # A deployment needs enough balance for this many hours of its reserved resources at current prices.
     BILLING_MIN_PREPAID_HOURS: float = 1.0
+    # Platform commission: the share of each compute charge AgentMesh keeps; the node's provider is credited the
+    # rest. The rate is stored on each pricing version (and on each charge), so changing it never re-prices past
+    # usage. DEFAULT_ is what a new version gets when the operator gives no rate; MAX_ is the most any may set.
+    DEFAULT_PLATFORM_FEE_RATE: Decimal = Decimal("0.10")
+    MAX_PLATFORM_FEE_RATE: Decimal = Decimal("0.50")
 
     # Paystack (https://paystack.com/docs/api). Test-mode keys (sk_test_...) unless PAYSTACK_ALLOW_LIVE.
     PAYSTACK_SECRET_KEY: str = ""
@@ -213,6 +218,8 @@ class Settings(BaseSettings):
             raise ValueError("A live Paystack key needs PAYSTACK_ALLOW_LIVE=true (payments default to test mode)")
         if len(self.BILLING_CURRENCY) != 3 or not self.BILLING_CURRENCY.isupper():
             raise ValueError("BILLING_CURRENCY must be an ISO 4217 code such as NGN")
+        if not 0 <= self.DEFAULT_PLATFORM_FEE_RATE <= self.MAX_PLATFORM_FEE_RATE < 1:
+            raise ValueError("Platform fee rates need 0 <= DEFAULT_PLATFORM_FEE_RATE <= MAX_PLATFORM_FEE_RATE < 1")
         return self
 
 

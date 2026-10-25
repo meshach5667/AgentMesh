@@ -2,14 +2,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState } from '@/components/common/Notices';
 import { dateTime, money, shortId } from '@/lib/format';
-import type { Transaction } from '@/types';
+import type { Transaction, TransactionType } from '@/types';
 
-const TYPE_LABEL: Record<string, string> = {
+export const TYPE_LABEL: Record<TransactionType, string> = {
   DEPOSIT: 'Deposit',
   COMPUTE_CHARGE: 'Compute charge',
   PROVIDER_CREDIT: 'Provider credit',
-  PLATFORM_FEE: 'Platform fee',
+  PLATFORM_FEE: 'Platform commission',
   REFUND: 'Refund',
+  REFUND_CLAWBACK: 'Refund clawback',
+  PLATFORM_FEE_REVERSAL: 'Commission reversed',
+  TOPUP_REFUND: 'Refund to card',
   PAYOUT: 'Payout',
 };
 
@@ -30,7 +33,8 @@ export function LedgerTable({ rows, walletId, empty }: { rows: Transaction[]; wa
       </TableHeader>
       <TableBody>
         {rows.map((tx) => {
-          const incoming = walletId ? tx.to_wallet === walletId : true;
+          const incoming = tx.direction ? tx.direction === 'credit' : walletId ? tx.to_wallet === walletId : true;
+          const signed = !!tx.direction || !!walletId;
           return (
             <TableRow key={tx.id}>
               <TableCell className="text-sm">{dateTime(tx.created_at)}</TableCell>
@@ -41,7 +45,7 @@ export function LedgerTable({ rows, walletId, empty }: { rows: Transaction[]; wa
                 <StatusBadge status={tx.status} />
               </TableCell>
               <TableCell className={`text-right font-mono text-sm ${incoming ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
-                {walletId ? (incoming ? '+' : '−') : ''}
+                {signed ? (incoming ? '+' : '−') : ''}
                 {money(tx.amount)}
               </TableCell>
             </TableRow>

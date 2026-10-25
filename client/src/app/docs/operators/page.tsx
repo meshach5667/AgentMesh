@@ -109,8 +109,16 @@ python scripts/create_operator.py lead@example.com --role admin`}
       <Section id="pricing" title="Pricing">
         <P>
           Under <strong>Pricing</strong>, publish an immutable price version, effective now or later: CPU core-hour, memory GB-hour, GPU-memory
-          GB-hour, input and output tokens per million, and the platform fee. Until a price list exists, usage is measured but not charged. You
+          GB-hour, input and output tokens per million, and the platform commission. Until a price list exists, usage is measured but not charged. You
           can set token prices to zero to charge for resources only.
+        </P>
+        <P>
+          The commission is the share of each charge the platform keeps; the provider whose node served the deployment is credited the rest.
+          A version published without a rate gets <C>DEFAULT_PLATFORM_FEE_RATE</C> (10%), and no version may exceed{' '}
+          <C>MAX_PLATFORM_FEE_RATE</C> (50%). To change only the commission, use <strong>Change commission</strong> (or{' '}
+          <C>POST /admin/commission</C>): it publishes a version with the prices in force. Every charge keeps the rate it was split at, so
+          past earnings never change. The fee is rounded to the ledger&apos;s precision and the provider gets exactly the rest, so commission
+          plus provider share always equals what the customer paid. Only READY time and successful requests are charged.
         </P>
       </Section>
 
@@ -131,6 +139,40 @@ python scripts/create_operator.py lead@example.com --role admin`}
         <P>
           Top-ups are credited once, only after Paystack reports success with a matching amount and currency. Payouts are held at request time and
           need operator approval (<strong>Payouts</strong>). Reconciliation runs every 10 minutes when payments are enabled.
+        </P>
+      </Section>
+
+      <Section id="revenue" title="Revenue analytics">
+        <P>
+          <strong>Revenue</strong> charts, per day for the last 7, 30 or 90 days, what customers paid, split into the provider share and the
+          commission, together with refunds, top-ups, payouts and card refunds. <strong>Platform revenue</strong> is the commission net of reversed
+          fees, plus sponsorship revenue, which is shown as a separate figure. Every number is computed by the server from rated charges, refunds and
+          payments; nothing is estimated. The same data is available at <C>GET /analytics/revenue?scope=network&amp;days=30</C>.
+        </P>
+      </Section>
+
+      <Section id="refunds" title="Refunds">
+        <List
+          items={[
+            <>A <strong>compute charge</strong> refund (full or partial) credits the customer&apos;s wallet. The provider share and the commission are reversed in the same proportions as the original split (<C>REFUND_CLAWBACK</C> and <C>PLATFORM_FEE_REVERSAL</C> ledger entries). A provider who was already paid out can go negative; later earnings cover it.</>,
+            <>A <strong>top-up</strong> refund returns unspent wallet funds to the customer&apos;s card through Paystack. The amount is held at once; the refund settles when Paystack reports it processed (webhook or reconciliation) and the hold is released if it fails. Only one card refund per top-up can be open at a time.</>,
+            'Each refund needs a reason, which the customer sees. Refunds are audited and checked by reconciliation; a charge can never be refunded beyond what was paid.',
+          ]}
+        />
+      </Section>
+
+      <Section id="sponsorships" title="Sponsorships">
+        <P>
+          Sponsored placements are optional and <strong>off by default</strong>. Under <strong>Sponsorships</strong>, turn advertising on, choose
+          which placements show items (landing page, docs, customer and provider dashboards, 1 to 3 items each) and manage campaigns for AI tools,
+          GPU hardware and infrastructure providers. Campaigns start as drafts; drafts can be activated, active campaigns paused and resumed, and
+          any campaign ended (final). A campaign is served only while active, inside its schedule and under its budget.
+        </P>
+        <P>
+          Items are labelled &ldquo;Sponsored&rdquo;, link only to the campaign&apos;s stored https URL with <C>rel=&quot;sponsored&quot;</C>, and can
+          be dismissed by viewers. Impressions count once per signed view token when at least half the item is visible; clicks count once per view.
+          No personal data is used to select items, and no third-party ad scripts are loaded. Pricing is CPM, CPC or a flat fee; earnings are reported
+          on the Revenue page separately from compute commission.
         </P>
       </Section>
 

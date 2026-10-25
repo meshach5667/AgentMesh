@@ -223,7 +223,8 @@ async def handle_webhook(db: Session, payload: dict[str, Any]) -> str:
     if not isinstance(data, dict):
         return "ignored_malformed"
     reference = str(data.get("reference") or "")[:100] or None
-    key = f"{event}:{data.get('id') or reference}"[:200]
+    ident = data.get("id") or reference or data.get("refund_reference") or data.get("transaction_reference")
+    key = f"{event}:{ident}"[:200]
     inbox = PaymentEvent(provider="paystack", event_key=key, event_type=event or "unknown", reference=reference)
     db.add(inbox)
     try:
@@ -235,6 +236,10 @@ async def handle_webhook(db: Session, payload: dict[str, Any]) -> str:
     if event == "charge.success" and reference:
         payment = await db.find_one(Payment, {"reference": reference})
         outcome = await apply_paystack_result(db, payment, data, source="webhook") if payment else "unknown_reference"
+    elif event.startswith("refund."):
+        from app.services import refund_service
+
+        outcome = await refund_service.handle_webhook_event(db, event, data)
     elif event.startswith("transfer.") and reference:
         payout = await db.find_one(Payout, {"reference": reference})
         outcome = await apply_transfer_result(db, payout, data) if payout else "unknown_reference"

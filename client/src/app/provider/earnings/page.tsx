@@ -8,12 +8,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChargesTable } from '@/components/billing/ChargesTable';
+import { RevenueView } from '@/components/billing/RevenueView';
 import { StatCard } from '@/components/common/StatCard';
 import { Pill, StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState, ErrorState, Notice, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import {
   useBanks,
+  usePricing,
   useCharges,
   usePaymentsConfig,
   usePayoutAccount,
@@ -22,6 +24,7 @@ import {
   useSetPayoutAccount,
 } from '@/hooks/useBilling';
 import { useEarnings } from '@/hooks/useEarnings';
+import { percent, providerShare } from '@/lib/billing';
 import { errorMessage } from '@/lib/errors';
 import { dateTime, money } from '@/lib/format';
 
@@ -29,6 +32,7 @@ import { dateTime, money } from '@/lib/format';
 export default function EarningsPage() {
   const earnings = useEarnings();
   const config = usePaymentsConfig();
+  const pricing = usePricing();
   const charges = useCharges();
   const account = usePayoutAccount();
   const payouts = usePayouts();
@@ -45,14 +49,23 @@ export default function EarningsPage() {
   if (earnings.error || !earnings.data) return <ErrorState message={errorMessage(earnings.error)} retry={() => earnings.refetch()} />;
   const e = earnings.data;
   const currency = config.data?.currency;
+  const rate = pricing.data?.current?.platform_fee_rate ?? null;
   const held = (payouts.data ?? []).filter((p) => ['REQUESTED', 'PENDING', 'OTP_REQUIRED'].includes(p.status));
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Earnings" description="Your share of what customers paid for deployments your nodes served." />
-      <div className="grid gap-4 sm:grid-cols-3">
+      <PageHeader
+        title="Earnings"
+        description={
+          rate != null
+            ? `Your share of what customers paid for deployments your nodes served: ${providerShare(rate)}, after the ${percent(rate)} platform commission.`
+            : 'Your share of what customers paid for deployments your nodes served, after the platform commission.'
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Available to withdraw" value={money(e.available_balance, currency)} />
-        <StatCard title="Earned in total" value={money(e.total_earnings, currency)} hint="Settled provider credits" />
+        <StatCard title="Earned in total" value={money(e.total_earnings, currency)} hint={`Settled credits, from ${money(e.gross_earnings, currency)} customers paid`} />
+        <StatCard title="Platform commission" value={money(e.platform_fees, currency)} hint="Kept from your charges, all time" />
         <StatCard title="Payouts in progress" value={money(held.reduce((t, p) => t + Number(p.amount), 0), currency)} hint={`${held.length} payout(s)`} />
       </div>
 
@@ -186,6 +199,11 @@ export default function EarningsPage() {
           )}
         </CardContent>
       </Card>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold tracking-tight">Earnings over time</h2>
+        <RevenueView />
+      </section>
 
       <Card>
         <CardHeader>

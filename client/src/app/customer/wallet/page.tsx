@@ -8,12 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChargesTable } from '@/components/billing/ChargesTable';
+import { RefundsTable } from '@/components/billing/RefundsTable';
+import { RevenueView } from '@/components/billing/RevenueView';
 import { PricingCard } from '@/components/billing/PricingCard';
 import { StatCard } from '@/components/common/StatCard';
 import { Pill, StatusBadge } from '@/components/common/StatusBadge';
 import { ErrorState, Notice, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
-import { useCharges, useCreateTopup, usePaymentsConfig, useTopups, useVerifyTopup } from '@/hooks/useBilling';
+import { useCharges, useCreateTopup, useMyRefunds, usePaymentsConfig, useTopups, useVerifyTopup } from '@/hooks/useBilling';
 import { useAddTestCredits, useWallet } from '@/hooks/useWallet';
 import { isPaystackCheckout, returnedReference, sumAmounts } from '@/lib/billing';
 import { errorMessage } from '@/lib/errors';
@@ -26,6 +28,7 @@ function Wallet() {
   const config = usePaymentsConfig();
   const topups = useTopups();
   const charges = useCharges();
+  const refunds = useMyRefunds();
   const createTopup = useCreateTopup();
   const verify = useVerifyTopup();
   const addCredits = useAddTestCredits();
@@ -174,9 +177,27 @@ function Wallet() {
         </Card>
       )}
 
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold tracking-tight">Spending</h2>
+        <RevenueView />
+      </section>
+
+      {(refunds.data ?? []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Refunds</CardTitle>
+            <CardDescription>Charges credited back to your wallet, and top-ups returned to your card.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RefundsTable refunds={refunds.data ?? []} empty="No refunds." />
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Recent charges</CardTitle>
+          <CardDescription>Each billing window, with the platform commission and the provider&apos;s share of what you paid.</CardDescription>
         </CardHeader>
         <CardContent>
           <ChargesTable charges={charges.data ?? []} empty="No charges yet." />

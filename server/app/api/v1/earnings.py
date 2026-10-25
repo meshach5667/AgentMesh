@@ -9,6 +9,7 @@ from app.documents.transaction import Transaction, TransactionStatus, Transactio
 from app.documents.wallet import Wallet
 from app.schemas.earnings import EarningsSummary
 from app.schemas.transaction import TransactionResponse
+from app.services import billing_service
 from app.services.deployment_lifecycle import ACTIVE
 from app.services.ledger_service import money
 from app.services.reporting_service import provider_node_ids
@@ -54,7 +55,10 @@ async def get_earnings(db: Session = Depends(get_db), current_user=Depends(get_c
             active_deployments=active_deployments,
         )
 
+    served = await billing_service.charge_totals(db, {"provider_wallet_id": wallet.id})
     return EarningsSummary(
+        gross_earnings=served["gross"],
+        platform_fees=served["platform_fee"],
         total_earnings=await _credited(db, wallet.id, TransactionStatus.SETTLED),
         pending_earnings=await _credited(db, wallet.id, TransactionStatus.PENDING),
         available_balance=Decimal(wallet.balance or 0),

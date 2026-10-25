@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     admin,
     ai,
+    analytics,
     api_keys,
     auth,
     billing,
@@ -13,6 +14,7 @@ from app.api.v1 import (
     models,
     nodes,
     payments,
+    sponsored,
     stats,
     transactions,
     usage,
@@ -38,3 +40,5 @@ api_router.include_router(stats.router, prefix="/stats", tags=["stats"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai deployment agent"])
+api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+api_router.include_router(sponsored.router, prefix="/sponsored", tags=["sponsored placements"])

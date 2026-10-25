@@ -58,6 +58,13 @@ class Charge(Doc):
     amount: Money
     provider_amount: Money
     platform_fee: Money
+    # Commission rate of the pricing version, kept with the charge so its split can always be explained. A charge
+    # for a node without a provider account keeps the whole amount as platform_fee.
+    platform_fee_rate: Money | None = None
+    # Refunded so far (see Refund): the total, and how much of it came from the commission and the provider's share.
+    refunded_amount: Money = ZERO
+    refunded_fee: Money = ZERO
+    refunded_provider: Money = ZERO
     currency: str
     created_at: datetime = Field(default_factory=utcnow)
 
@@ -173,3 +180,57 @@ class Payout(Doc):
     class Settings(Doc.Settings):
         name = "payouts"
         indexes = [unique("reference", name="uq_payouts_reference"), index("user_id"), index("status")]
+
+
+class RefundKind(str, enum.Enum):  # noqa: UP042
+    CHARGE = "charge"  # a compute charge credited back to the wallet (commission and provider share reversed)
+    TOPUP = "topup"  # wallet funds sent back to the customer's card through Paystack
+
+
+class RefundStatus(str, enum.Enum):  # noqa: UP042
+    PENDING = "PENDING"  # top-up refund: funds held, waiting for Paystack
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"  # held funds returned to the wallet
+
+
+class Refund(Doc):
+    """A refund issued by an operator. Charge refunds settle at once; top-up refunds hold the amount (a PENDING
+    ledger debit) until Paystack reports the refund processed or failed."""
+
+    kind: str
+    reference: str
+    user_id: uuid.UUID  # the customer
+    wallet_id: uuid.UUID
+    charge_id: uuid.UUID | None = None
+    payment_id: uuid.UUID | None = None
+    provider_wallet_id: uuid.UUID | None = None
+    amount: Money
+    provider_amount: Money = ZERO  # taken back from the provider (charge refunds)
+    platform_fee: Money = ZERO  # commission given back (charge refunds)
+    currency: str
+    reason: str
+    status: str = RefundStatus.PENDING.value
+    paystack_refund_id: str | None = None
+    provider_status: str | None = None
+    failure_reason: str | None = None
+    transaction_id: uuid.UUID | None = None  # the hold, for top-up refunds
+    requested_by: uuid.UUID
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    completed_at: datetime | None = None
+
+    class Settings(Doc.Settings):
+        name = "refunds"
+        indexes = [
+            unique("reference", name="uq_refunds_reference"),
+            # At most one top-up refund in flight per payment, so Paystack's refund events match it unambiguously.
+            unique(
+                "payment_id",
+                name="uq_refunds_open_topup",
+                where={"kind": RefundKind.TOPUP.value, "status": RefundStatus.PENDING.value},
+            ),
+            index("user_id"),
+            index("charge_id"),
+            index("status"),
+            index("created_at"),
+        ]

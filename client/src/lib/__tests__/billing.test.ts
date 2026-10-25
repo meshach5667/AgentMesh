@@ -1,4 +1,4 @@
-import { hourlyResourcePrice, isFree, isPaystackCheckout, returnedReference, sumAmounts } from '../billing';
+import { chargeFeeRate, hourlyResourcePrice, isFree, isPaystackCheckout, percent, providerShare, returnedReference, sumAmounts } from '../billing';
 import type { Charge, PricingRule } from '@/types';
 
 const rule = (over: Partial<PricingRule> = {}): PricingRule => ({
@@ -18,6 +18,22 @@ const rule = (over: Partial<PricingRule> = {}): PricingRule => ({
 });
 
 describe('billing helpers', () => {
+  it('shows commission rates as percentages and the provider share as the rest', () => {
+    expect(percent('0.1000')).toBe('10%');
+    expect(percent('0.125')).toBe('12.5%');
+    expect(percent(0)).toBe('0%');
+    expect(percent(null)).toBe('—');
+    expect(providerShare('0.1000')).toBe('90%');
+    expect(providerShare('0.15')).toBe('85%');
+  });
+
+  it('uses the rate recorded on a charge, or derives it for older charges', () => {
+    const charge = { amount: '200', platform_fee: '20', platform_fee_rate: '0.1000' } as Parameters<typeof chargeFeeRate>[0];
+    expect(chargeFeeRate(charge)).toBe(0.1);
+    expect(chargeFeeRate({ ...charge, platform_fee_rate: null, platform_fee: '30' })).toBe(0.15);
+    expect(chargeFeeRate({ ...charge, platform_fee_rate: null, amount: '0' })).toBeNull();
+  });
+
   it('prices a reservation like the server (1 core + 1 GB = 30 NGN/h in tests/test_billing.py)', () => {
     expect(hourlyResourcePrice(rule(), 1, 1024, 0)).toBe(30);
     expect(hourlyResourcePrice(rule({ vram_gb_hour: '50' }), 2, 2048, 4096)).toBe(2 * 10 + 2 * 20 + 4 * 50);

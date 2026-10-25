@@ -1,5 +1,6 @@
 'use client';
 
+import { SponsoredSlot } from '@/components/sponsorship/SponsoredSlot';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -183,6 +184,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       <div className="mx-auto flex max-w-7xl gap-10 px-4 sm:px-6">
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto py-8 md:block">
           <DocsNav />
+          <SponsoredSlot placement="docs" className="mt-8" />
         </aside>
         <main className="min-w-0 flex-1 py-10 md:py-12">{children}</main>
       </div>

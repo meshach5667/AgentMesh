@@ -7,6 +7,7 @@ import { HowItWorks } from '@/components/landing/HowItWorks';
 import { LiveStats } from '@/components/landing/LiveStats';
 import { PricingSection } from '@/components/landing/PricingSection';
 import { Status } from '@/components/landing/Status';
+import { SponsoredSlot } from '@/components/sponsorship/SponsoredSlot';
 
 export default function Home() {
   return (
@@ -18,6 +19,7 @@ export default function Home() {
         <Features />
         <HowItWorks />
         <PricingSection />
+        <SponsoredSlot placement="landing" title="From our partners" className="mx-auto -mt-16 mb-16 max-w-3xl px-4 sm:px-6" />
         <Status />
         <CTA />
       </main>

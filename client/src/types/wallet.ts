@@ -1,5 +1,14 @@
 // Decimal amounts are serialized as strings by the API.
-export type TransactionType = 'DEPOSIT' | 'COMPUTE_CHARGE' | 'PROVIDER_CREDIT' | 'PLATFORM_FEE' | 'REFUND' | 'PAYOUT';
+export type TransactionType =
+  | 'DEPOSIT'
+  | 'COMPUTE_CHARGE'
+  | 'PROVIDER_CREDIT'
+  | 'PLATFORM_FEE'
+  | 'REFUND'
+  | 'REFUND_CLAWBACK'
+  | 'PLATFORM_FEE_REVERSAL'
+  | 'TOPUP_REFUND'
+  | 'PAYOUT';
 export type TransactionStatus = 'PENDING' | 'AUTHORIZED' | 'SETTLED' | 'REFUNDED' | 'FAILED';
 
 export interface Wallet {
@@ -20,11 +29,16 @@ export interface Transaction {
   reference: string | null;
   description: string | null;
   created_at: string;
+  /** Relative to the caller's wallet; null in operator listings. */
+  direction?: 'credit' | 'debit' | null;
 }
 
 export interface EarningsSummary {
   total_earnings: string;
   pending_earnings: string;
+  /** What customers paid for deployments on the provider's nodes, and the platform commission kept from it. */
+  gross_earnings: string;
+  platform_fees: string;
   available_balance: string;
   total_deployments: number;
   active_deployments: number;

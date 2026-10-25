@@ -6,7 +6,9 @@ the answer through the same code as webhooks. ``report`` never changes anything;
 * a wallet balance that differs from its ledger (settled credits minus pending and settled debits);
 * a charge whose debit differs from its provider credit plus platform fee, or that lacks its debit;
 * a SUCCEEDED top-up without exactly one matching deposit, or a deposit for a payment that did not succeed;
-* a payout whose hold does not match its state.
+* a payout whose hold does not match its state;
+* a refund whose ledger entries do not match it, a charge refunded more than it cost, or a top-up refunded more
+  than it paid.
 """
 
 import logging
@@ -17,10 +19,10 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import Session, session_scope
 from app.core.timeutil import utcnow
-from app.documents.billing import Charge, Payment, PaymentStatus, Payout, PayoutStatus
+from app.documents.billing import Charge, Payment, PaymentStatus, Payout, PayoutStatus, Refund, RefundKind, RefundStatus
 from app.documents.transaction import Transaction, TransactionStatus, TransactionType
 from app.documents.wallet import Wallet
-from app.services import payments_service, paystack
+from app.services import payments_service, paystack, refund_service
 from app.services.ledger_service import DEBIT_STATES, money
 from app.services.paystack import PaystackError
 
@@ -116,6 +118,29 @@ async def run(now=None) -> dict[str, Any]:
                 logger.error("Payout %s %s", ref, outcome)
             await db.commit()
             results["payouts"][ref] = outcome
+    async with session_scope() as db:
+        stale_refunds = [
+            r.id
+            for r in await db.find(
+                Refund,
+                {"kind": RefundKind.TOPUP.value, "status": RefundStatus.PENDING.value, "created_at": {"$lt": cutoff}},
+            )
+        ]
+    results["refunds"] = {}
+    for refund_id in stale_refunds:
+        async with session_scope() as db:
+            refund = await db.get(Refund, refund_id)
+            if refund is None or not refund.paystack_refund_id:
+                if refund is not None:
+                    results["refunds"][refund.reference] = "unverifiable: no Paystack refund id"
+                continue
+            try:
+                data = await paystack.fetch_refund(refund.paystack_refund_id)
+            except PaystackError:
+                results["errors"] += 1
+                continue
+            results["refunds"][refund.reference] = await refund_service.apply_paystack_result(db, refund, data)
+            await db.commit()
     return results
 
 
@@ -131,6 +156,53 @@ async def _sums(db: Session, match: dict[str, Any], *group: str) -> dict[Any, tu
         k = tuple(r["_id"].get(g) for g in group) if len(group) > 1 else r["_id"]
         out[k] = (int(r["n"]), money(r["amount"] or 0))
     return out
+
+
+HOLD_FOR_REFUND = {
+    RefundStatus.PENDING.value: TransactionStatus.PENDING.value,
+    RefundStatus.SUCCEEDED.value: TransactionStatus.SETTLED.value,
+    RefundStatus.FAILED.value: TransactionStatus.FAILED.value,
+}
+
+
+async def _refund_issues(db: Session, charges: list[Charge]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    postings = {
+        k: a for k, (_, a) in (await _sums(db, {"reference": {"$regex": "^am-rf-"}}, "reference", "type")).items()
+    }
+    holds = {t.reference: t.status for t in await db.find(Transaction, {"type": TransactionType.TOPUP_REFUND.value})}
+
+    def posted(refund: Refund, type_: TransactionType) -> Decimal:
+        return postings.get((refund.reference, type_.value), Decimal(0))
+
+    by_charge: dict[Any, Decimal] = {}
+    by_payment: dict[Any, Decimal] = {}
+    for r in await db.find(Refund):
+        amount = money(r.amount)
+        if r.kind == RefundKind.CHARGE.value:
+            by_charge[r.charge_id] = by_charge.get(r.charge_id, Decimal(0)) + amount
+            if (
+                posted(r, TransactionType.REFUND) != amount
+                or posted(r, TransactionType.REFUND_CLAWBACK) != money(r.provider_amount)
+                or posted(r, TransactionType.PLATFORM_FEE_REVERSAL) != money(r.platform_fee)
+                or money(r.provider_amount) + money(r.platform_fee) != amount
+            ):
+                issues.append({"kind": "refund_postings", "reference": r.reference, "amount": str(amount)})
+            continue
+        if holds.get(r.reference) != HOLD_FOR_REFUND[r.status] or posted(r, TransactionType.TOPUP_REFUND) != amount:
+            issues.append({"kind": "refund_hold", "reference": r.reference, "status": r.status})
+        if r.status != RefundStatus.FAILED.value:
+            by_payment[r.payment_id] = by_payment.get(r.payment_id, Decimal(0)) + amount
+        if r.status == RefundStatus.PENDING.value and not r.paystack_refund_id:
+            issues.append({"kind": "refund_unverifiable", "reference": r.reference})
+    for c in charges:
+        refunded = money(c.refunded_amount or 0)
+        if refunded != by_charge.get(c.id, Decimal(0)) or refunded > money(c.amount):
+            issues.append({"kind": "charge_refunds", "charge_id": str(c.id), "refunded": str(refunded)})
+    for payment in await db.find(Payment, {"_id": {"$in": list(by_payment)}}):
+        if by_payment[payment.id] > money(payment.amount):
+            issues.append({"kind": "topup_over_refunded", "reference": payment.reference})
+    return issues
 
 
 async def report(db: Session) -> dict[str, Any]:
@@ -204,9 +276,12 @@ async def report(db: Session) -> dict[str, Any]:
                 }
             )
 
+    issues += await _refund_issues(db, charges)
+
     open_counts = {
         "payments_initialized": await db.count(Payment, {"status": PaymentStatus.INITIALIZED.value}),
         "payouts_awaiting_approval": await db.count(Payout, {"status": PayoutStatus.REQUESTED.value}),
+        "refunds_in_flight": await db.count(Refund, {"status": RefundStatus.PENDING.value}),
         "payouts_in_flight": await db.count(
             Payout, {"status": {"$in": [PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value]}}
         ),

@@ -27,6 +27,8 @@ class FakePaystack:
         self.transactions: dict[str, dict] = {}  # reference -> verify data
         self.transfers: dict[str, dict] = {}
         self.transfer_reply: dict | Exception = {"status": "pending"}
+        self.refunds: dict[str, dict] = {}  # refund id -> data
+        self.refund_reply: dict | Exception = {"status": "pending"}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == f"Bearer {SECRET}"
@@ -67,6 +69,23 @@ class FakePaystack:
             if ref not in self.transfers:
                 return httpx.Response(404, json={"status": False, "message": "Transfer not found"})
             return ok({"reference": ref, **self.transfers[ref]})
+        if path == "/refund":
+            if isinstance(self.refund_reply, Exception):
+                raise self.refund_reply
+            rid = str(1000 + len(self.refunds))
+            self.refunds[rid] = {
+                "id": int(rid),
+                "transaction": {"reference": body["transaction"]},
+                "amount": body["amount"],
+                "currency": "NGN",
+                **self.refund_reply,
+            }
+            return ok(self.refunds[rid])
+        if path.startswith("/refund/"):
+            rid = path.rsplit("/", 1)[1]
+            if rid not in self.refunds:
+                return httpx.Response(404, json={"status": False, "message": "Refund not found"})
+            return ok(self.refunds[rid])
         return httpx.Response(404, json={"status": False, "message": "unknown"})
 
 

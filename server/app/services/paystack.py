@@ -141,3 +141,16 @@ async def initiate_transfer(*, amount: Decimal, recipient: str, reference: str, 
 
 async def verify_transfer(reference: str) -> dict[str, Any]:
     return await _call("GET", f"/transfer/verify/{reference}")
+
+
+async def create_refund(*, transaction_reference: str, amount: Decimal, note: str) -> dict[str, Any]:
+    """Refund (part of) a successful transaction to the customer's card or account."""
+    return await _call(
+        "POST",
+        "/refund",
+        json={"transaction": transaction_reference, "amount": to_subunits(amount), "merchant_note": note[:200]},
+    )
+
+
+async def fetch_refund(refund_id: str) -> dict[str, Any]:
+    return await _call("GET", f"/refund/{refund_id}")

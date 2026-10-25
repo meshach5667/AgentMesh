@@ -20,6 +20,8 @@ export interface Pricing {
   currency: string;
   min_prepaid_hours: number;
   billing_interval_seconds: number;
+  default_platform_fee_rate: string;
+  max_platform_fee_rate: string;
 }
 
 export interface Charge {
@@ -40,8 +42,31 @@ export interface Charge {
   amount: string;
   provider_amount: string;
   platform_fee: string;
+  /** Commission rate the charge was split at; null on charges made before it was recorded. */
+  platform_fee_rate: string | null;
+  refunded_amount: string;
   currency: string;
   created_at: string;
+}
+
+export interface ChargeTotals {
+  charges: number;
+  gross: string;
+  platform_fee: string;
+  provider_share: string;
+  resource_amount: string;
+  token_amount: string;
+  effective_fee_rate: string | null;
+}
+
+export type BillingScope = 'customer' | 'provider' | 'network';
+
+export interface BillingSummary {
+  scope: BillingScope;
+  days: number;
+  since: string;
+  currency: string;
+  totals: ChargeTotals;
 }
 
 export interface PaymentsConfig {
@@ -108,4 +133,61 @@ export interface ReconciliationReport {
   checked: { wallets: number; charges: number };
   open: { payments_initialized: number; payouts_awaiting_approval: number; payouts_in_flight: number };
   generated_at: string;
+}
+
+export type RefundStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED';
+
+export interface Refund {
+  id: string;
+  kind: 'charge' | 'topup';
+  reference: string;
+  user_id: string;
+  charge_id: string | null;
+  payment_id: string | null;
+  amount: string;
+  provider_amount: string;
+  platform_fee: string;
+  currency: string;
+  reason: string;
+  status: RefundStatus;
+  provider_status: string | null;
+  failure_reason: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface AdminTopup extends Payment {
+  user_email: string | null;
+  refundable: string;
+}
+
+/** One day of revenue; network scope adds topups, payouts, card_refunds and sponsorship. */
+export interface RevenuePoint {
+  date: string;
+  gross: string;
+  platform_fee: string;
+  provider_share: string;
+  refunded: string;
+  fee_reversed: string;
+  clawback: string;
+  topups?: string;
+  payouts?: string;
+  card_refunds?: string;
+  sponsorship?: string;
+}
+
+export interface RevenueAnalytics {
+  scope: BillingScope;
+  days: number;
+  since: string;
+  currency: string;
+  series: RevenuePoint[];
+  totals: Omit<RevenuePoint, 'date'> & {
+    net_platform_commission: string;
+    net_provider_earnings: string;
+    net_customer_spend: string;
+    platform_revenue?: string;
+  };
+  breakdown: { id: string; label: string; charges: number; gross: string; platform_fee: string; provider_share: string }[];
+  breakdown_by: 'deployment' | 'node' | 'provider';
 }

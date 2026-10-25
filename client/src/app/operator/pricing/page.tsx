@@ -10,7 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Pill } from '@/components/common/StatusBadge';
 import { EmptyState, ErrorState, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
-import { useCreatePricing, usePricing, usePricingVersions, type PricingInput } from '@/hooks/useBilling';
+import { FeeBreakdown } from '@/components/billing/FeeBreakdown';
+import { useChangeCommission, useCreatePricing, usePricing, usePricingVersions, type PricingInput } from '@/hooks/useBilling';
+import { percent, providerShare } from '@/lib/billing';
 import { errorMessage } from '@/lib/errors';
 import { dateTime, money } from '@/lib/format';
 
@@ -20,13 +22,15 @@ const FIELDS: { key: keyof PricingInput; label: string }[] = [
   { key: 'vram_gb_hour', label: 'GPU memory, per GB-hour' },
   { key: 'input_tokens_per_million', label: 'Input tokens, per million' },
   { key: 'output_tokens_per_million', label: 'Output tokens, per million' },
-  { key: 'platform_fee_rate', label: 'Platform fee (0 to 0.5)' },
+  { key: 'platform_fee_rate', label: 'Platform commission (fraction)' },
 ];
 
 export default function OperatorPricingPage() {
   const versions = usePricingVersions();
   const pricing = usePricing();
   const create = useCreatePricing();
+  const changeCommission = useChangeCommission();
+  const [commission, setCommission] = useState('');
   const current = pricing.data?.current;
   const [form, setForm] = useState<Record<string, string>>({});
   const [effective, setEffective] = useState('');
@@ -35,7 +39,10 @@ export default function OperatorPricingPage() {
   if (versions.isLoading) return <PageSkeleton />;
   if (versions.error) return <ErrorState message={errorMessage(versions.error)} retry={() => versions.refetch()} />;
   const currency = pricing.data?.currency;
-  const value = (k: keyof PricingInput) => form[k] ?? (current ? String(current[k as keyof typeof current] ?? '') : k === 'platform_fee_rate' ? '0.1' : '0');
+  const defaultRate = pricing.data?.default_platform_fee_rate ?? '0.1';
+  const maxRate = pricing.data?.max_platform_fee_rate ?? '0.5';
+  const value = (k: keyof PricingInput) =>
+    form[k] ?? (current ? String(current[k as keyof typeof current] ?? '') : k === 'platform_fee_rate' ? defaultRate : '0');
 
   return (
     <div className="space-y-6">
@@ -71,7 +78,21 @@ export default function OperatorPricingPage() {
               {FIELDS.map(({ key, label }) => (
                 <div key={key} className="space-y-1">
                   <Label htmlFor={key}>{label}</Label>
-                  <Input id={key} type="number" min={0} step="any" required value={value(key)} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
+                  <Input
+                    id={key}
+                    type="number"
+                    min={0}
+                    max={key === 'platform_fee_rate' ? maxRate : undefined}
+                    step="any"
+                    required
+                    value={value(key)}
+                    onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                  />
+                  {key === 'platform_fee_rate' && (
+                    <p className="text-xs text-muted-foreground">
+                      {percent(value(key))} to the platform, {providerShare(value(key))} to providers. Default {percent(defaultRate)}, at most {percent(maxRate)}.
+                    </p>
+                  )}
                 </div>
               ))}
               <div className="space-y-1">
@@ -89,6 +110,56 @@ export default function OperatorPricingPage() {
           </form>
         </CardContent>
       </Card>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Platform commission</CardTitle>
+            <CardDescription>
+              {current
+                ? `Now ${percent(current.platform_fee_rate)}: providers receive ${providerShare(current.platform_fee_rate)} of each charge. Changing it publishes a new version with the same prices; charges already made keep their rate.`
+                : 'Publish a price version first. New versions default to the network commission.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="flex flex-wrap items-end gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                changeCommission.mutate(
+                  { platform_fee_rate: (Number(commission) / 100).toFixed(4) },
+                  {
+                    onSuccess: (r) => {
+                      toast.success(`Commission is now ${percent(r.platform_fee_rate)} (version ${r.version})`);
+                      setCommission('');
+                    },
+                    onError: (err) => toast.error(errorMessage(err)),
+                  },
+                );
+              }}
+            >
+              <div className="space-y-1">
+                <Label htmlFor="commission">New commission (%)</Label>
+                <Input
+                  id="commission"
+                  type="number"
+                  min={0}
+                  max={Number(maxRate) * 100}
+                  step="0.01"
+                  required
+                  value={commission}
+                  onChange={(e) => setCommission(e.target.value)}
+                  className="w-32"
+                />
+              </div>
+              <Button type="submit" variant="outline" disabled={!current || changeCommission.isPending}>
+                Change commission
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+        <FeeBreakdown scope="network" />
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Versions</CardTitle>
@@ -107,7 +178,7 @@ export default function OperatorPricingPage() {
                   <TableHead className="text-right">VRAM GB-h</TableHead>
                   <TableHead className="text-right">In/1M</TableHead>
                   <TableHead className="text-right">Out/1M</TableHead>
-                  <TableHead className="text-right">Fee</TableHead>
+                  <TableHead className="text-right">Commission</TableHead>
                   <TableHead>Notes</TableHead>
                 </TableRow>
               </TableHeader>
@@ -123,7 +194,7 @@ export default function OperatorPricingPage() {
                         {money(v, r.currency)}
                       </TableCell>
                     ))}
-                    <TableCell className="text-right text-xs">{(Number(r.platform_fee_rate) * 100).toFixed(1)}%</TableCell>
+                    <TableCell className="text-right text-xs">{percent(r.platform_fee_rate)}</TableCell>
                     <TableCell className="max-w-xs truncate text-xs text-muted-foreground">{r.notes}</TableCell>
                   </TableRow>
                 ))}

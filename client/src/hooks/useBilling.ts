@@ -1,6 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import type { Bank, Charge, Payment, PaymentsConfig, Payout, PayoutAccount, Pricing, PricingRule, ReconciliationReport } from '../types';
+import type {
+  AdminTopup,
+  Bank,
+  BillingScope,
+  BillingSummary,
+  Charge,
+  Payment,
+  PaymentsConfig,
+  Payout,
+  PayoutAccount,
+  Pricing,
+  PricingRule,
+  ReconciliationReport,
+  Refund,
+  RevenueAnalytics,
+} from '../types';
 
 export const usePricing = () =>
   useQuery({ queryKey: ['billing', 'pricing'], queryFn: async () => (await api.get<Pricing>('/billing/pricing')).data });
@@ -12,6 +27,25 @@ export const useCharges = (deploymentId?: string) =>
       (await api.get<Charge[]>('/billing/charges', { params: { deployment_id: deploymentId, limit: 200 } })).data,
     refetchInterval: 30000,
   });
+
+/** Gross, platform commission and provider share of the caller's charges (or the network's, for staff). */
+export const useBillingSummary = (days = 30, scope?: BillingScope) =>
+  useQuery({
+    queryKey: ['billing', 'summary', days, scope ?? 'default'],
+    queryFn: async () => (await api.get<BillingSummary>('/billing/summary', { params: { days, scope } })).data,
+    refetchInterval: 60000,
+  });
+
+/** Daily revenue (charges and refunds) for the caller's scope, with totals and the biggest contributors. */
+export const useRevenue = (days = 30, scope?: BillingScope) =>
+  useQuery({
+    queryKey: ['billing', 'revenue', days, scope ?? 'default'],
+    queryFn: async () => (await api.get<RevenueAnalytics>('/analytics/revenue', { params: { days, scope } })).data,
+    refetchInterval: 60000,
+  });
+
+export const useMyRefunds = () =>
+  useQuery({ queryKey: ['billing', 'refunds'], queryFn: async () => (await api.get<Refund[]>('/billing/refunds')).data });
 
 export const usePaymentsConfig = () =>
   useQuery({ queryKey: ['payments', 'config'], queryFn: async () => (await api.get<PaymentsConfig>('/payments/config')).data });
@@ -86,6 +120,15 @@ export type PricingInput = Pick<
   'cpu_core_hour' | 'ram_gb_hour' | 'vram_gb_hour' | 'input_tokens_per_million' | 'output_tokens_per_million' | 'platform_fee_rate'
 > & { notes?: string; effective_from?: string };
 
+export const useChangeCommission = () => {
+  const invalidate = useInvalidateMoney();
+  return useMutation({
+    mutationFn: async (body: { platform_fee_rate: string; notes?: string; effective_from?: string }) =>
+      (await api.post<PricingRule>('/admin/commission', body)).data,
+    onSuccess: invalidate,
+  });
+};
+
 export const useCreatePricing = () => {
   const invalidate = useInvalidateMoney();
   return useMutation({
@@ -122,6 +165,41 @@ export const useRunReconciliation = () => {
   const invalidate = useInvalidateMoney();
   return useMutation({
     mutationFn: async () => (await api.post<Record<string, unknown>>('/admin/reconciliation/run')).data,
+    onSuccess: invalidate,
+  });
+};
+
+export const useAdminRefunds = () =>
+  useQuery({
+    queryKey: ['admin', 'refunds'],
+    queryFn: async () => (await api.get<Refund[]>('/admin/refunds')).data,
+    refetchInterval: 15000,
+  });
+
+export const useAdminTopups = (email?: string) =>
+  useQuery({
+    queryKey: ['admin', 'topups', email ?? ''],
+    queryFn: async () =>
+      (await api.get<AdminTopup[]>('/admin/topups', { params: { status: 'SUCCEEDED', email: email || undefined } })).data,
+  });
+
+export interface RefundInput {
+  id: string;
+  kind: 'charge' | 'topup';
+  amount?: string;
+  reason: string;
+}
+
+export const useIssueRefund = () => {
+  const invalidate = useInvalidateMoney();
+  return useMutation({
+    mutationFn: async ({ id, kind, amount, reason }: RefundInput) =>
+      (
+        await api.post<Refund>(`/admin/refunds/${kind === 'charge' ? 'charges' : 'topups'}/${id}`, {
+          reason,
+          ...(amount ? { amount } : {}),
+        })
+      ).data,
     onSuccess: invalidate,
   });
 };

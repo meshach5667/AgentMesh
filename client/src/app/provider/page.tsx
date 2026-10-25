@@ -1,5 +1,6 @@
 'use client';
 
+import { SponsoredSlot } from '@/components/sponsorship/SponsoredSlot';
 import Link from 'next/link';
 import { Activity, MessageSquare, Server, Wallet } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
@@ -78,6 +79,7 @@ export default function ProviderOverview() {
           )}
         </CardContent>
       </Card>
+      <SponsoredSlot placement="provider_dashboard" className="max-w-xl" />
     </div>
   );
 }

@@ -5,11 +5,12 @@ from app.documents.ai import AiInferenceNode, AiInferenceRequest, AiRun, AiRunEv
 from app.documents.api_key import ApiKey
 from app.documents.audit import AuditLog, Event
 from app.documents.base import Doc
-from app.documents.billing import Charge, Payment, PaymentEvent, Payout, PayoutAccount, PricingRule
+from app.documents.billing import Charge, Payment, PaymentEvent, Payout, PayoutAccount, PricingRule, Refund
 from app.documents.deployment import Deployment, DeploymentEvent
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeHardware, NodePricing
 from app.documents.reservation import ResourceReservation
+from app.documents.sponsorship import AdSettings, SponsorCampaign, SponsorStat, SponsorView
 from app.documents.transaction import Transaction
 from app.documents.usage import UsageRecord
 from app.documents.user import Customer, Provider, User
@@ -18,6 +19,7 @@ from app.documents.worker import NodeCommand, NodeEnrollmentToken
 from app.documents.workload import Workload, WorkloadStatus
 
 DOCUMENTS: list[type[Doc]] = [
+    AdSettings,
     AgentAction,
     AgentTask,
     AiInferenceNode,
@@ -44,7 +46,11 @@ DOCUMENTS: list[type[Doc]] = [
     PayoutAccount,
     PricingRule,
     Provider,
+    Refund,
     ResourceReservation,
+    SponsorCampaign,
+    SponsorStat,
+    SponsorView,
     Transaction,
     UsageRecord,
     User,

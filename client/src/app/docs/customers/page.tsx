@@ -154,9 +154,12 @@ print(reply.choices[0].message.content)`}
             <>Deployments are <strong>prepaid</strong>. Add funds under <strong>Wallet</strong>; you return to the wallet after checkout and the top-up is credited once Paystack confirms it.</>,
             'Prices are set by the network operator as a versioned price list: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. The landing page and deploy form show the current list.',
             'Every few minutes while a deployment is READY, you are charged for its reserved resources multiplied by READY time, plus its tokens. Downloads, startup and unhealthy time are free.',
-            'Each deployment lists its charges, and the wallet lists them all.',
+            'Each deployment lists its charges, and the wallet lists them all, each split into the platform commission and the share paid to the provider whose machine ran it. Requests that fail are not charged for tokens.',
             <>When your balance runs out, your deployments are stopped with <C>INSUFFICIENT_FUNDS</C>. The balance can dip below zero by at most one billing interval.</>,
             'If no price list has been published yet, usage is measured but not charged.',
+            'If an operator refunds a charge, the amount returns to your wallet and appears under Refunds with the reason. Unspent funds from a top-up can be refunded to your card by an operator.',
+            <>Transactions lists every ledger entry with filters; <strong>Export CSV</strong> downloads them (up to 10,000 rows).</>,
+            'Dashboards may show an item labelled “Sponsored” if the operator enabled sponsorships. It is chosen without using your personal data, and you can dismiss it.',
           ]}
         />
       </Section>

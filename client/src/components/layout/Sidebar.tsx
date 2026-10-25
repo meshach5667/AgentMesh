@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity, Banknote, BarChart3, BookOpen, Box, CreditCard, KeyRound, LayoutDashboard, LogOut, PlusCircle, Receipt, Scale,
-  ScrollText, Server, Settings, Sparkles, Tag, Wallet, type LucideIcon,
+  Megaphone, ScrollText, Server, Settings, Sparkles, Tag, TrendingUp, Undo2, Wallet, type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
@@ -73,10 +73,13 @@ export const operatorSections: Section[] = [
   {
     title: 'Finance',
     links: [
+      { href: '/operator/revenue', label: 'Revenue', icon: TrendingUp },
       { href: '/operator/pricing', label: 'Pricing', icon: Tag },
       { href: '/operator/payouts', label: 'Payouts', icon: Banknote },
+      { href: '/operator/refunds', label: 'Refunds', icon: Undo2 },
       { href: '/operator/reconciliation', label: 'Reconciliation', icon: Scale },
       { href: '/operator/transactions', label: 'Ledger', icon: Receipt },
+      { href: '/operator/sponsorships', label: 'Sponsorships', icon: Megaphone },
     ],
   },
   { title: 'Security', links: [{ href: '/operator/audit', label: 'Audit Log', icon: ScrollText }] },

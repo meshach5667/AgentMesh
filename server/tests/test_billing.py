@@ -71,7 +71,10 @@ def test_ready_intervals_follow_lifecycle_events():
     n1, n2 = uuid.uuid4(), uuid.uuid4()
 
     def ev(minutes, to, node):
-        return DeploymentEvent(to_status=to, actor="system", created_at=t0 + timedelta(minutes=minutes), node_id=node)
+        # model_construct: a plain value object, no database registration needed
+        return DeploymentEvent.model_construct(
+            to_status=to, actor="system", created_at=t0 + timedelta(minutes=minutes), node_id=node
+        )
 
     events = [
         ev(0, "SCHEDULED", n1),
@@ -106,6 +109,7 @@ async def test_ready_time_and_tokens_are_charged_and_split(client, db, enroll_no
     db.add(
         UsageRecord(
             kind="inference",
+            outcome="success",
             deployment_id=uuid.UUID(dep["id"]),
             node_id=uuid.UUID(node["node_id"]),
             request_id=uuid.uuid4().hex,
@@ -268,6 +272,7 @@ async def test_billable_output_tokens_are_bounded_by_measured_bytes(client, db, 
     db.add(
         UsageRecord(
             kind="inference",
+            outcome="success",
             deployment_id=uuid.UUID(dep["id"]),
             node_id=uuid.UUID(node["node_id"]),
             request_id=uuid.uuid4().hex,

@@ -89,9 +89,14 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --shadow-color: 0 0% 0%;
+  /* Revenue chart series (validated with the dataviz palette checks against this surface). */
+  --viz-provider: #2a78d6;
+  --viz-commission: #eb6834;
 }
 
 .dark {
+  --viz-provider: #3987e5;
+  --viz-commission: #d95926;
   --background: oklch(0.13 0 0);
   --foreground: oklch(0.97 0 0);
   --card: oklch(0.16 0 0);

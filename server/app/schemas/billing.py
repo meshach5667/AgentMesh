@@ -14,7 +14,18 @@ class PricingRuleCreate(BaseModel):
     vram_gb_hour: Decimal = PRICE
     input_tokens_per_million: Decimal = PRICE
     output_tokens_per_million: Decimal = PRICE
-    platform_fee_rate: Decimal = Field(ge=0, le=Decimal("0.5"), max_digits=5, decimal_places=4)
+    platform_fee_rate: Decimal | None = Field(
+        None, ge=0, lt=1, max_digits=5, decimal_places=4, description="Share kept by the platform; default 0.10"
+    )
+    effective_from: datetime | None = Field(None, description="UTC; defaults to now. Cannot be in the past")
+    notes: str | None = Field(None, max_length=500)
+
+
+class CommissionChange(BaseModel):
+    """A new pricing version with the prices in force and another platform commission."""
+
+    model_config = ConfigDict(extra="forbid")
+    platform_fee_rate: Decimal = Field(ge=0, lt=1, max_digits=5, decimal_places=4)
     effective_from: datetime | None = Field(None, description="UTC; defaults to now. Cannot be in the past")
     notes: str | None = Field(None, max_length=500)
 
@@ -41,6 +52,8 @@ class PricingOut(BaseModel):
     currency: str
     min_prepaid_hours: float
     billing_interval_seconds: int
+    default_platform_fee_rate: Decimal
+    max_platform_fee_rate: Decimal
 
 
 class ChargeOut(BaseModel):
@@ -62,8 +75,29 @@ class ChargeOut(BaseModel):
     amount: Decimal
     provider_amount: Decimal
     platform_fee: Decimal
+    # The commission rate this charge was split at (null on charges made before it was recorded).
+    platform_fee_rate: Decimal | None = None
+    refunded_amount: Decimal = Decimal(0)
     currency: str
     created_at: datetime
+
+
+class ChargeTotals(BaseModel):
+    charges: int
+    gross: Decimal = Field(description="What customers were charged")
+    platform_fee: Decimal = Field(description="Platform commission")
+    provider_share: Decimal = Field(description="Credited to node providers")
+    resource_amount: Decimal
+    token_amount: Decimal
+    effective_fee_rate: Decimal | None = Field(description="platform_fee / gross; null when nothing was charged")
+
+
+class BillingSummary(BaseModel):
+    scope: str  # customer | provider | network
+    days: int
+    since: datetime
+    currency: str
+    totals: ChargeTotals
 
 
 class TopupCreate(BaseModel):
@@ -125,3 +159,34 @@ class PayoutOut(BaseModel):
 class PayoutDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str | None = Field(None, max_length=300)
+
+
+class RefundCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    amount: Decimal | None = Field(None, gt=0, max_digits=18, decimal_places=8, description="Default: all that is left")
+    reason: str = Field(min_length=3, max_length=300, description="Shown to the customer and kept in the audit log")
+
+
+class RefundOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    kind: str
+    reference: str
+    user_id: uuid.UUID
+    charge_id: uuid.UUID | None
+    payment_id: uuid.UUID | None
+    amount: Decimal
+    provider_amount: Decimal
+    platform_fee: Decimal
+    currency: str
+    reason: str
+    status: str
+    provider_status: str | None
+    failure_reason: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class AdminTopupOut(PaymentOut):
+    user_email: str | None = None
+    refundable: Decimal
