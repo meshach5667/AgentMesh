@@ -34,9 +34,8 @@ async def test_gateway_meters_with_request_id_even_if_client_replays_header(
     client, db, make_user, enroll_node, ollama_model
 ):
     """A client cannot suppress metering by reusing an X-Request-ID."""
-    from sqlalchemy import select
 
-    from app.models import UsageRecord
+    from app.documents import UsageRecord
     from tests.test_gateway import FakeWorker
 
     node = await enroll_node()
@@ -57,7 +56,7 @@ async def test_gateway_meters_with_request_id_even_if_client_replays_header(
             assert resp.headers["x-agentmesh-request-id"] == resp.headers["x-request-id"]
     finally:
         broker.unregister(worker.conn)
-    rows = (await db.execute(select(UsageRecord))).scalars().all()
+    rows = await db.find(UsageRecord)
     assert len(rows) == 2 and len({r.request_id for r in rows}) == 2
 
 

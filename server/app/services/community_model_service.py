@@ -9,29 +9,29 @@ import math
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import Session
 from app.core.ids import parse_uuid
 from app.core.timeutil import utcnow
-from app.models.deployment import Deployment
-from app.models.model import Model, ModelArtifact
-from app.models.user import Customer, User
+from app.documents.deployment import Deployment
+from app.documents.model import Model, ModelArtifact
+from app.documents.user import Customer, User
 from app.schemas.model import CommunityModelImport
 from app.services import audit_service, huggingface
+from app.services.catalog_service import load_artifacts
 from app.services.deployment_lifecycle import TERMINAL
 
 
-async def _customer(db: AsyncSession, user: User) -> Customer:
-    customer = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
+async def _customer(db: Session, user: User) -> Customer:
+    customer = await db.find_one(Customer, {"user_id": user.id})
     if customer is None:
         raise HTTPException(status_code=403, detail="Customer account required")
     return customer
 
 
-def _active(customer_id: uuid.UUID):
-    return select(Model).where(Model.owner_customer_id == customer_id, Model.withdrawn_at.is_(None))
+def _active(customer_id: uuid.UUID, **extra) -> dict:
+    return {"owner_customer_id": customer_id, "withdrawn_at": None, **extra}
 
 
 def estimated_requirements(size_bytes: int) -> dict:
@@ -48,7 +48,7 @@ async def preview(ref_text: str, revision: str | None) -> huggingface.RepoInfo:
     return await huggingface.fetch_repo(huggingface.parse_reference(ref_text, revision=revision))
 
 
-async def import_model(db: AsyncSession, user: User, req: CommunityModelImport) -> Model:
+async def import_model(db: Session, user: User, req: CommunityModelImport) -> Model:
     if not settings.COMMUNITY_MODELS_ENABLED:
         raise HTTPException(status_code=403, detail="Importing community models is disabled on this AgentMesh")
     customer = await _customer(db, user)
@@ -72,16 +72,11 @@ async def import_model(db: AsyncSession, user: User, req: CommunityModelImport) 
         raise HTTPException(status_code=422, detail=problem)
 
     source_url = f"https://huggingface.co/{info.repo}/blob/{info.commit}/{gguf.name}"
-    existing: Model | None = (
-        (await db.execute(_active(customer.id).where(Model.source_url == source_url))).scalars().first()
-    )
+    existing = await db.find_one(Model, _active(customer.id, source_url=source_url))
     if existing:
+        await load_artifacts(db, existing)
         return existing
-    count = (
-        await db.execute(
-            select(func.count(Model.id)).where(Model.owner_customer_id == customer.id, Model.withdrawn_at.is_(None))
-        )
-    ).scalar() or 0
+    count = await db.count(Model, _active(customer.id))
     if count >= settings.COMMUNITY_MODELS_PER_CUSTOMER:
         raise HTTPException(
             status_code=409,
@@ -146,37 +141,32 @@ async def import_model(db: AsyncSession, user: User, req: CommunityModelImport) 
     )
     await db.commit()
     await db.refresh(model)
+    await load_artifacts(db, model)
     return model
 
 
-async def list_models(db: AsyncSession, user: User) -> list[Model]:
+async def list_models(db: Session, user: User) -> list[Model]:
     customer = await _customer(db, user)
-    return list((await db.execute(_active(customer.id).order_by(Model.created_at.desc()))).scalars().all())
+    models = await db.find(Model, _active(customer.id), sort=[("created_at", -1)])
+    await load_artifacts(db, models)
+    return models
 
 
-async def get_model(db: AsyncSession, user: User, model_id: str) -> Model:
+async def get_model(db: Session, user: User, model_id: str) -> Model:
     """The caller's own community model. Anyone else's is 404 so ids cannot be probed."""
     customer = await _customer(db, user)
-    model: Model | None = (
-        await db.execute(_active(customer.id).where(Model.id == parse_uuid(model_id, "Model")))
-    ).scalar_one_or_none()
+    model = await db.find_one(Model, _active(customer.id, _id=parse_uuid(model_id, "Model")))
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
+    await load_artifacts(db, model)
     return model
 
 
-async def withdraw(db: AsyncSession, user: User, model_id: str) -> None:
+async def withdraw(db: Session, user: User, model_id: str) -> None:
     model = await get_model(db, user, model_id)
     if model.is_approved:
         raise HTTPException(status_code=409, detail="An operator added this model to the catalog; it cannot be removed")
-    running = (
-        await db.execute(
-            select(func.count(Deployment.id)).where(
-                Deployment.model_id == model.id,
-                Deployment.status.not_in([s.value for s in TERMINAL]),
-            )
-        )
-    ).scalar() or 0
+    running = await db.count(Deployment, {"model_id": model.id, "status": {"$nin": [s.value for s in TERMINAL]}})
     if running:
         raise HTTPException(status_code=409, detail="Stop this model's deployments before removing it")
     model.withdrawn_at = utcnow()

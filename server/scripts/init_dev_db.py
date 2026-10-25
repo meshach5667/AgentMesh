@@ -20,7 +20,7 @@ from sqlalchemy import select  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.database import AsyncSessionLocal, engine  # noqa: E402
 from app.core.timeutil import utcnow  # noqa: E402
-from app.models import Base, Model, ModelArtifact  # noqa: E402
+from app.documents import Base, Model, ModelArtifact  # noqa: E402
 
 
 def _migration(name: str):

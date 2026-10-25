@@ -1,25 +1,19 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import get_current_user
-from app.models.transaction import Transaction
-from app.models.wallet import Wallet
+from app.documents.transaction import Transaction
+from app.documents.wallet import Wallet
 from app.schemas.transaction import TransactionResponse
 
 router = APIRouter()
 
 
 @router.get("", response_model=list[TransactionResponse])
-async def list_transactions(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
-    wallet = result.scalars().first()
+async def list_transactions(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    wallet = await db.find_one(Wallet, {"user_id": current_user.id})
     if not wallet:
         return []
-    result = await db.execute(
-        select(Transaction)
-        .filter(or_(Transaction.from_wallet == wallet.id, Transaction.to_wallet == wallet.id))
-        .order_by(Transaction.created_at.desc())
+    return await db.find(
+        Transaction, {"$or": [{"from_wallet": wallet.id}, {"to_wallet": wallet.id}]}, sort=[("created_at", -1)]
     )
-    return result.scalars().all()

@@ -21,7 +21,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.database import session_scope  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.models.user import User, UserRole  # noqa: E402
+from app.documents.user import User, UserRole  # noqa: E402
 from app.services import audit_service  # noqa: E402
 
 MIN_PASSWORD = 12

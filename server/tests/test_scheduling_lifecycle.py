@@ -5,16 +5,14 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
 
 from app.background import monitors
 from app.core.config import settings
 from app.core.timeutil import utcnow
-from app.models import ApiKey, Deployment, Model, Node, NodeCommand, ResourceReservation
-from app.models.deployment import DeploymentStatus as S
+from app.documents import ApiKey, Deployment, Model, Node, NodeCommand, ResourceReservation
+from app.documents.deployment import DeploymentStatus as S
 from app.services import deployment_lifecycle as lifecycle
 from app.services.deployment_lifecycle import TRANSITIONS
-from tests.conftest import TEST_DATABASE_URL
 
 
 async def _deploy(client, headers, model, **body):
@@ -229,7 +227,6 @@ async def test_reservation_rejects_stale_capacity_read(db, enroll_node, ollama_m
     assert (await _node(db, node["node_id"])).reserved_ram_mb == 1024
 
 
-@pytest.mark.skipif("sqlite" in TEST_DATABASE_URL, reason="needs a database with real concurrent connections")
 async def test_capacity_is_never_oversubscribed(client, db, make_user, enroll_node, ollama_model):
     """The node has room for exactly two deployments; five concurrent requests must yield exactly two."""
     node = await enroll_node(cpu=8, ram_mb=2048, disk_mb=10000)
@@ -240,7 +237,7 @@ async def test_capacity_is_never_oversubscribed(client, db, make_user, enroll_no
     n = await _node(db, node["node_id"])
     assert n.reserved_ram_mb == 2048
     active = (
-        (await db.execute(select(ResourceReservation).where(ResourceReservation.status == "ACTIVE"))).scalars().all()
+        await db.find(ResourceReservation, {"status": "ACTIVE"})
     )
     assert len(active) == 2
 
@@ -324,7 +321,7 @@ async def test_provisioning_stall_fails_and_cleans_up(client, db, make_user, enr
     got = await _dep(db, dep["id"])
     assert got.status == "FAILED" and got.error_code == "PROVISION_STALLED"
     assert (await _node(db, node["node_id"])).reserved_ram_mb == 0
-    stops = (await db.execute(select(NodeCommand).where(NodeCommand.type == "STOP"))).scalars().all()
+    stops = await db.find(NodeCommand, {"type": "STOP"})
     assert len(stops) == 1
 
 
@@ -354,7 +351,7 @@ async def test_undelivered_deploy_fails_after_max_attempts(client, db, make_user
     node = await enroll_node()
     _, customer = await make_user("customer")
     dep = (await _deploy(client, customer, ollama_model)).json()
-    cmd = (await db.execute(select(NodeCommand))).scalars().one()
+    cmd = await db.find_one(NodeCommand)
     cmd.status, cmd.attempts = "LEASED", cmd.max_attempts
     cmd.lease_expires_at = utcnow() - timedelta(seconds=1)
     await db.commit()

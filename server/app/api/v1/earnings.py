@@ -1,41 +1,50 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import get_current_user
-from app.models.deployment import Deployment
-from app.models.node import Node
-from app.models.transaction import Transaction, TransactionStatus, TransactionType
-from app.models.user import Provider
-from app.models.wallet import Wallet
+from app.documents.deployment import Deployment
+from app.documents.transaction import Transaction, TransactionStatus, TransactionType
+from app.documents.wallet import Wallet
 from app.schemas.earnings import EarningsSummary
 from app.schemas.transaction import TransactionResponse
 from app.services.deployment_lifecycle import ACTIVE
+from app.services.ledger_service import money
+from app.services.reporting_service import provider_node_ids
 
 router = APIRouter()
 
 
-async def _hosted_deployments(db: AsyncSession, user_id) -> tuple[int, int]:
+async def _hosted_deployments(db: Session, user_id) -> tuple[int, int]:
     """Deployments ever placed on, and currently active on, the caller's nodes."""
-    owned = select(Node.id).join(Provider, Node.owner_id == Provider.id).where(Provider.user_id == user_id)
-    on_nodes = Deployment.node_id.in_(owned)
-    total = (await db.execute(select(func.count(Deployment.id)).where(on_nodes))).scalar() or 0
-    active = (
-        await db.execute(
-            select(func.count(Deployment.id)).where(on_nodes, Deployment.status.in_([s.value for s in ACTIVE]))
-        )
-    ).scalar() or 0
-    return int(total), int(active)
+    on_nodes = {"node_id": {"$in": await provider_node_ids(db, user_id)}}
+    total = await db.count(Deployment, on_nodes)
+    active = await db.count(Deployment, {**on_nodes, "status": {"$in": [s.value for s in ACTIVE]}})
+    return total, active
+
+
+async def _credited(db: Session, wallet_id, status: TransactionStatus) -> Decimal:
+    rows = await db.aggregate(
+        Transaction,
+        [
+            {
+                "$match": {
+                    "to_wallet": wallet_id,
+                    "type": TransactionType.PROVIDER_CREDIT.value,
+                    "status": status.value,
+                }
+            },
+            {"$group": {"_id": None, "amount": {"$sum": "$amount"}}},
+        ],
+    )
+    return money(rows[0]["amount"]) if rows else Decimal(0)
 
 
 @router.get("", response_model=EarningsSummary)
-async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+async def get_earnings(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     total_deployments, active_deployments = await _hosted_deployments(db, current_user.id)
-    result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
-    wallet = result.scalars().first()
+    wallet = await db.find_one(Wallet, {"user_id": current_user.id})
     if not wallet:
         return EarningsSummary(
             total_earnings=Decimal(0),
@@ -45,27 +54,9 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
             active_deployments=active_deployments,
         )
 
-    settled = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-            Transaction.to_wallet == wallet.id,
-            Transaction.type == TransactionType.PROVIDER_CREDIT,
-            Transaction.status == TransactionStatus.SETTLED,
-        )
-    )
-    total_earnings = settled.scalar() or 0
-
-    pending = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-            Transaction.to_wallet == wallet.id,
-            Transaction.type == TransactionType.PROVIDER_CREDIT,
-            Transaction.status == TransactionStatus.PENDING,
-        )
-    )
-    pending_earnings = pending.scalar() or 0
-
     return EarningsSummary(
-        total_earnings=Decimal(total_earnings),
-        pending_earnings=Decimal(pending_earnings),
+        total_earnings=await _credited(db, wallet.id, TransactionStatus.SETTLED),
+        pending_earnings=await _credited(db, wallet.id, TransactionStatus.PENDING),
         available_balance=Decimal(wallet.balance or 0),
         total_deployments=total_deployments,
         active_deployments=active_deployments,
@@ -73,14 +64,12 @@ async def get_earnings(db: AsyncSession = Depends(get_db), current_user=Depends(
 
 
 @router.get("/history", response_model=list[TransactionResponse])
-async def get_history(db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
-    result = await db.execute(select(Wallet).filter(Wallet.user_id == current_user.id))
-    wallet = result.scalars().first()
+async def get_history(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    wallet = await db.find_one(Wallet, {"user_id": current_user.id})
     if not wallet:
         return []
-    result = await db.execute(
-        select(Transaction)
-        .filter(Transaction.to_wallet == wallet.id, Transaction.type == TransactionType.PROVIDER_CREDIT)
-        .order_by(Transaction.created_at.desc())
+    return await db.find(
+        Transaction,
+        {"to_wallet": wallet.id, "type": TransactionType.PROVIDER_CREDIT.value},
+        sort=[("created_at", -1)],
     )
-    return result.scalars().all()

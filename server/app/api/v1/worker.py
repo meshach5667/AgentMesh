@@ -8,10 +8,9 @@ import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db, session_scope
-from app.models.node import Node
+from app.core.database import Session, get_db, session_scope
+from app.documents.node import Node
 from app.schemas.worker import (
     CommandAck,
     DeploymentStatusReport,
@@ -30,7 +29,7 @@ router = APIRouter()
 
 
 async def current_node(
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     authorization: str = Header(default=""),
     x_agentmesh_node_id: str | None = Header(default=None),
     x_agentmesh_protocol: str | None = Header(default=None),
@@ -40,7 +39,7 @@ async def current_node(
 
 
 @router.post("/enroll", response_model=EnrollResponse)
-async def enroll(req: EnrollRequest, db: AsyncSession = Depends(get_db)):
+async def enroll(req: EnrollRequest, db: Session = Depends(get_db)):
     return await worker_service.enroll(db, req)
 
 
@@ -73,23 +72,23 @@ async def whoami(node: Node = Depends(current_node)):
 
 
 @router.post("/heartbeat", response_model=HeartbeatResponse)
-async def heartbeat(req: HeartbeatRequest, node: Node = Depends(current_node), db: AsyncSession = Depends(get_db)):
+async def heartbeat(req: HeartbeatRequest, node: Node = Depends(current_node), db: Session = Depends(get_db)):
     return await worker_service.heartbeat(db, node, req)
 
 
 @router.post("/disconnect")
-async def disconnect(node: Node = Depends(current_node), db: AsyncSession = Depends(get_db)):
+async def disconnect(node: Node = Depends(current_node), db: Session = Depends(get_db)):
     await worker_service.disconnect(db, node)
     return {"ok": True}
 
 
 @router.post("/commands/poll", response_model=PollResponse)
-async def poll(req: PollRequest, node: Node = Depends(current_node), db: AsyncSession = Depends(get_db)):
+async def poll(req: PollRequest, node: Node = Depends(current_node), db: Session = Depends(get_db)):
     return {"commands": await worker_service.poll_commands(db, node, req.max_commands, req.wait_seconds)}
 
 
 @router.post("/commands/{command_id}/ack")
-async def ack(command_id: str, req: CommandAck, node: Node = Depends(current_node), db: AsyncSession = Depends(get_db)):
+async def ack(command_id: str, req: CommandAck, node: Node = Depends(current_node), db: Session = Depends(get_db)):
     await worker_service.ack_command(db, node, command_id, req.status, req.error)
     return {"ok": True}
 
@@ -99,7 +98,7 @@ async def deployment_status(
     deployment_id: str,
     report: DeploymentStatusReport,
     node: Node = Depends(current_node),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     return await worker_service.report_deployment_status(db, node, deployment_id, report)
 

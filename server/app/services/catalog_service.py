@@ -12,11 +12,10 @@ from typing import Any
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import Session
 from app.core.ids import parse_uuid
-from app.models.model import Model, ModelArtifact
+from app.documents.model import Model, ModelArtifact
 
 # Runtimes the control plane can schedule, in default preference order (most widely available first).
 RUNTIME_PREFERENCE = ("ollama", "llamacpp", "vllm")
@@ -88,7 +87,7 @@ def is_unreviewed(model: Model) -> bool:
     return model.owner_customer_id is not None and not model.is_approved
 
 
-async def get_deployable_model(db: AsyncSession, model_id, customer_id=None) -> Model:
+async def get_deployable_model(db: Session, model_id, customer_id=None) -> Model:
     """An approved catalog model, or the caller's own community model. Others' community models are 404."""
     model = await db.get(Model, parse_uuid(model_id, "Model"))
     if (
@@ -100,17 +99,25 @@ async def get_deployable_model(db: AsyncSession, model_id, customer_id=None) -> 
     return model
 
 
-async def deployable_artifacts(db: AsyncSession, model: Model, runtime: str | None = None) -> list[ModelArtifact]:
+async def load_artifacts(db: Session, models: Model | list[Model]) -> None:
+    """Attach each model's artifacts (all of them, enabled or not) as ``model.artifacts``."""
+    batch = [models] if isinstance(models, Model) else models
+    found: dict[Any, list[ModelArtifact]] = {}
+    for artifact in await db.find(
+        ModelArtifact, {"model_id": {"$in": [m.id for m in batch]}}, sort=[("created_at", 1), ("_id", 1)]
+    ):
+        found.setdefault(artifact.model_id, []).append(artifact)
+    for model in batch:
+        model._artifacts = found.get(model.id, [])
+
+
+async def deployable_artifacts(db: Session, model: Model, runtime: str | None = None) -> list[ModelArtifact]:
     """Enabled, valid artifacts for ``model`` in preference order (or only ``runtime`` if given)."""
     if runtime is not None and runtime not in SUPPORTED_RUNTIMES:
         raise HTTPException(
             status_code=422, detail=f"Unknown runtime '{runtime}'. Supported: {', '.join(RUNTIME_PREFERENCE)}"
         )
-    rows = (
-        (await db.execute(select(ModelArtifact).where(ModelArtifact.model_id == model.id, ModelArtifact.is_enabled)))
-        .scalars()
-        .all()
-    )
+    rows = await db.find(ModelArtifact, {"model_id": model.id, "is_enabled": True})
     valid = [a for a in rows if artifact_problem(a) is None]
     offered = sorted({a.runtime for a in valid}, key=RUNTIME_PREFERENCE.index)
     if runtime is not None:

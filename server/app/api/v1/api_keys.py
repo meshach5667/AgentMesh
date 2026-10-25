@@ -3,11 +3,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import require_roles
-from app.models.user import UserRole
+from app.documents.user import UserRole
 from app.services import api_key_service
 
 router = APIRouter()
@@ -42,7 +41,7 @@ customer_only = require_roles(UserRole.customer)
 
 
 @router.post("", response_model=ApiKeyCreated, status_code=201)
-async def create_key(req: ApiKeyCreate, db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def create_key(req: ApiKeyCreate, db: Session = Depends(get_db), user=Depends(customer_only)):
     key, secret = await api_key_service.create_api_key(
         db, user, req.name, req.scopes, str(req.deployment_id) if req.deployment_id else None, req.expires_at
     )
@@ -50,10 +49,10 @@ async def create_key(req: ApiKeyCreate, db: AsyncSession = Depends(get_db), user
 
 
 @router.get("", response_model=list[ApiKeyOut])
-async def list_keys(db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def list_keys(db: Session = Depends(get_db), user=Depends(customer_only)):
     return await api_key_service.list_api_keys(db, user)
 
 
 @router.delete("/{key_id}", response_model=ApiKeyOut)
-async def revoke_key(key_id: str, db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def revoke_key(key_id: str, db: Session = Depends(get_db), user=Depends(customer_only)):
     return await api_key_service.revoke_api_key(db, user, key_id)

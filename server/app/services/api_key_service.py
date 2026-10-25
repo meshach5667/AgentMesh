@@ -1,14 +1,13 @@
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import Session
 from app.core.ids import parse_uuid
 from app.core.security import generate_secret, hash_secret
 from app.core.timeutil import utcnow
-from app.models.api_key import ApiKey
-from app.models.user import User
+from app.documents.api_key import ApiKey
+from app.documents.user import User
 from app.services import audit_service
 
 API_KEY_PREFIX = "am_sk_"
@@ -16,7 +15,7 @@ SCOPES = frozenset({"inference"})
 
 
 async def create_api_key(
-    db: AsyncSession, user: User, name: str, scopes: list[str], deployment_id: str | None, expires_at: datetime | None
+    db: Session, user: User, name: str, scopes: list[str], deployment_id: str | None, expires_at: datetime | None
 ) -> tuple[ApiKey, str]:
     unknown = set(scopes) - SCOPES
     if unknown or not scopes:
@@ -51,12 +50,11 @@ async def create_api_key(
     return key, secret
 
 
-async def list_api_keys(db: AsyncSession, user: User) -> list[ApiKey]:
-    result = await db.execute(select(ApiKey).where(ApiKey.user_id == user.id).order_by(ApiKey.created_at.desc()))
-    return list(result.scalars().all())
+async def list_api_keys(db: Session, user: User) -> list[ApiKey]:
+    return await db.find(ApiKey, {"user_id": user.id}, sort=[("created_at", -1)])
 
 
-async def revoke_api_key(db: AsyncSession, user: User, key_id: str) -> ApiKey:
+async def revoke_api_key(db: Session, user: User, key_id: str) -> ApiKey:
     key = await db.get(ApiKey, parse_uuid(key_id, "API key"))
     if key is None or key.user_id != user.id:
         raise HTTPException(status_code=404, detail="API key not found")
@@ -69,11 +67,11 @@ async def revoke_api_key(db: AsyncSession, user: User, key_id: str) -> ApiKey:
     return key
 
 
-async def resolve_api_key(db: AsyncSession, secret: str) -> ApiKey | None:
+async def resolve_api_key(db: Session, secret: str) -> ApiKey | None:
     """Return the active key for ``secret``, or None. Lookup is by hash; the plaintext is never stored."""
     if not secret.startswith(API_KEY_PREFIX):
         return None
-    key = (await db.execute(select(ApiKey).where(ApiKey.key_hash == hash_secret(secret)))).scalar_one_or_none()
+    key = await db.find_one(ApiKey, {"key_hash": hash_secret(secret)})
     if key is None or key.revoked_at is not None:
         return None
     if key.expires_at is not None and key.expires_at <= utcnow():

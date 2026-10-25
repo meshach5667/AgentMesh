@@ -5,10 +5,9 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from app.core.config import settings
-from app.models import ApiKey, UsageRecord
+from app.documents import ApiKey, UsageRecord
 from app.services.tunnel import WorkerConnection, broker
 from node_agent.tunnel import TunnelHandler
 
@@ -87,7 +86,7 @@ async def test_api_key_lifecycle_and_hash_storage(client, db, make_user):
     assert created["key"].startswith("am_sk_")
     listed = (await client.get("/api/v1/api-keys", headers=customer)).json()
     assert "key" not in listed[0] and listed[0]["prefix"] == created["prefix"]
-    row = (await db.execute(select(ApiKey))).scalars().one()
+    row = await db.find_one(ApiKey)
     assert created["key"] not in row.key_hash
     revoked = await client.delete(f"/api/v1/api-keys/{created['id']}", headers=customer)
     assert revoked.json()["revoked_at"] is not None
@@ -120,7 +119,7 @@ async def test_streaming_chat_relays_pins_model_and_meters(client, db, ready_dep
     assert "keep_alive" not in sent
     assert sent["options"]["num_ctx"] == 2048 and sent["options"]["temperature"] == 0.1
 
-    rec = (await db.execute(select(UsageRecord).where(UsageRecord.kind == "inference"))).scalars().one()
+    rec = await db.find_one(UsageRecord, {"kind": "inference"})
     assert rec.outcome == "success" and rec.status_code == 200
     assert (rec.input_tokens, rec.output_tokens, rec.token_source) == (12, 2, "runtime_reported")
     assert rec.api_key_id == uuid.UUID(key["id"]) and rec.deployment_id == uuid.UUID(dep["id"])
@@ -209,7 +208,7 @@ async def test_node_not_connected(client, db, ready_deployment):
     broker.unregister(ready_deployment["worker"].conn)
     resp = await client.post(_url(ready_deployment["dep"]["id"]), json={}, headers=ready_deployment["customer"])
     assert resp.status_code == 503 and resp.json()["error"]["code"] == "node_unavailable"
-    rec = (await db.execute(select(UsageRecord))).scalars().one()
+    rec = await db.find_one(UsageRecord)
     assert rec.outcome == "node_unavailable" and rec.input_tokens is None
 
 
@@ -217,7 +216,7 @@ async def test_runtime_error_midstream_is_not_counted_as_success(client, db, rea
     ready_deployment["worker"].mode = "error_midstream"
     resp = await client.post(_url(ready_deployment["dep"]["id"]), json={}, headers=ready_deployment["customer"])
     assert resp.status_code == 200  # headers were already sent; body is truncated
-    rec = (await db.execute(select(UsageRecord))).scalars().one()
+    rec = await db.find_one(UsageRecord)
     assert rec.outcome == "runtime_error"
     assert rec.input_tokens is None and rec.output_tokens is None  # never estimated
 
@@ -228,7 +227,7 @@ async def test_first_byte_timeout(client, db, ready_deployment, monkeypatch):
     resp = await client.post(_url(ready_deployment["dep"]["id"]), json={}, headers=ready_deployment["customer"])
     assert resp.status_code == 504
     assert ready_deployment["worker"].cancelled  # the worker was told to abandon the request
-    rec = (await db.execute(select(UsageRecord))).scalars().one()
+    rec = await db.find_one(UsageRecord)
     assert rec.outcome == "timeout"
 
 

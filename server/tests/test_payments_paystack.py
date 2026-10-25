@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 
 from app.core.config import Settings, settings
 from app.core.timeutil import utcnow
-from app.models import Payment, Payout, Wallet
+from app.documents import Payment, Payout, Wallet
 from app.services import paystack, reconciliation_service
 
 SECRET = "sk_test_" + "a" * 40

@@ -4,12 +4,11 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
 
 from app.background import monitors
 from app.core.config import settings
 from app.core.timeutil import utcnow
-from app.models import Deployment, Node, NodeCommand, ResourceReservation
+from app.documents import Deployment, Node, NodeCommand, ResourceReservation
 
 
 async def _deploy(client, headers, model):
@@ -72,7 +71,7 @@ async def test_worker_resource_failure_moves_to_another_node(client, db, make_us
     assert got["status"] == "READY" and got["endpoint"].endswith(f"/deployments/{dep['id']}/ollama")
 
     active = (
-        (await db.execute(select(ResourceReservation).where(ResourceReservation.status == "ACTIVE"))).scalars().all()
+        await db.find(ResourceReservation, {"status": "ACTIVE"})
     )
     assert len(active) == 1  # history row for node A is RELEASED
 
@@ -130,7 +129,7 @@ async def test_offline_node_moves_provisioning_deployments_immediately(client, d
     got = await _dep(db, dep["id"])
     assert str(got.node_id) == b["node_id"] and got.status == "SCHEDULED"
     # A gets a STOP to clean up whatever it started, if it ever returns.
-    stops = (await db.execute(select(NodeCommand).where(NodeCommand.type == "STOP"))).scalars().all()
+    stops = await db.find(NodeCommand, {"type": "STOP"})
     assert [str(c.node_id) for c in stops] == [a["node_id"]]
 
 

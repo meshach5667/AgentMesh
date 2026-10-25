@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from app.models.deployment import Deployment
+from app.documents.deployment import Deployment
 from app.services.tunnel import NodeUnavailable, broker
 
 PROBE_TIMEOUT_SECONDS = 120.0

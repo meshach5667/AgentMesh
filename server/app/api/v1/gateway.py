@@ -21,21 +21,19 @@ from typing import Any
 import jwt
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
-from app.core.database import get_db, session_scope
+from app.core.database import Session, get_db, session_scope
 from app.core.logging import current_request_id, new_request_id
 from app.core.ratelimit import limiters
 from app.core.security import ALGORITHM
 from app.core.timeutil import utcnow
-from app.models.api_key import ApiKey
-from app.models.deployment import Deployment
-from app.models.deployment import DeploymentStatus as S
-from app.models.usage import UsageRecord
-from app.models.user import Customer, User
+from app.documents.api_key import ApiKey
+from app.documents.deployment import Deployment
+from app.documents.deployment import DeploymentStatus as S
+from app.documents.usage import UsageRecord
+from app.documents.user import Customer, User
 from app.services.api_key_service import API_KEY_PREFIX, resolve_api_key
 from app.services.tunnel import NodeUnavailable, broker
 
@@ -82,7 +80,7 @@ class GatewayError(Exception):  # noqa: N818
         self.response = gateway_error(status, code, message, headers)
 
 
-async def _authenticate(request: Request, db: AsyncSession) -> tuple[User, ApiKey | None]:
+async def _authenticate(request: Request, db: Session) -> tuple[User, ApiKey | None]:
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer "):
         raise GatewayError(401, "unauthorized", "Missing bearer credentials")
@@ -106,7 +104,7 @@ async def _authenticate(request: Request, db: AsyncSession) -> tuple[User, ApiKe
     return user, api_key
 
 
-async def _resolve_deployment(db: AsyncSession, user: User, api_key: ApiKey | None, deployment_id: str) -> Deployment:
+async def _resolve_deployment(db: Session, user: User, api_key: ApiKey | None, deployment_id: str) -> Deployment:
     not_found = GatewayError(404, "deployment_not_found", "Deployment not found")
     try:
         dep_uuid = uuid.UUID(deployment_id)
@@ -114,7 +112,7 @@ async def _resolve_deployment(db: AsyncSession, user: User, api_key: ApiKey | No
         raise not_found from None
     if api_key is not None and api_key.deployment_id is not None and api_key.deployment_id != dep_uuid:
         raise not_found
-    customer = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
+    customer = await db.find_one(Customer, {"user_id": user.id})
     dep = await db.get(Deployment, dep_uuid)
     # Only the owning customer may call a deployment; staff accounts are deliberately not exempt here.
     if dep is None or customer is None or dep.customer_id != customer.id or dep.deleted_at is not None:
@@ -208,33 +206,33 @@ async def _record_usage(**fields) -> None:
                 if key is not None:
                     key.last_used_at = utcnow()
             await db.commit()
-    except IntegrityError:
+    except DuplicateKeyError:
         pass  # duplicate request_id: already recorded
     except Exception:  # noqa: BLE001
         logger.exception("Failed to record usage for request %s", fields.get("request_id"))
 
 
 @router.get("/{deployment_id}/ollama/{path:path}")
-async def gateway_get(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def gateway_get(deployment_id: str, path: str, request: Request, db: Session = Depends(get_db)):
     return await _gateway_get(deployment_id, path, request, db, via_ollama_prefix=True)
 
 
 @router.get("/{deployment_id}/v1/{path:path}")
-async def gateway_get_openai(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def gateway_get_openai(deployment_id: str, path: str, request: Request, db: Session = Depends(get_db)):
     return await _gateway_get(deployment_id, f"v1/{path}", request, db, via_ollama_prefix=False)
 
 
 @router.post("/{deployment_id}/ollama/{path:path}")
-async def gateway_post(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def gateway_post(deployment_id: str, path: str, request: Request, db: Session = Depends(get_db)):
     return await _gateway_post(deployment_id, path, request, db, via_ollama_prefix=True)
 
 
 @router.post("/{deployment_id}/v1/{path:path}")
-async def gateway_post_openai(deployment_id: str, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def gateway_post_openai(deployment_id: str, path: str, request: Request, db: Session = Depends(get_db)):
     return await _gateway_post(deployment_id, f"v1/{path}", request, db, via_ollama_prefix=False)
 
 
-async def _gateway_get(deployment_id: str, path: str, request: Request, db: AsyncSession, via_ollama_prefix: bool):
+async def _gateway_get(deployment_id: str, path: str, request: Request, db: Session, via_ollama_prefix: bool):
     try:
         user, api_key = await _authenticate(request, db)
         dep = await _resolve_deployment(db, user, api_key, deployment_id)
@@ -251,7 +249,7 @@ async def _gateway_get(deployment_id: str, path: str, request: Request, db: Asyn
     }
 
 
-async def _gateway_post(deployment_id: str, path: str, request: Request, db: AsyncSession, via_ollama_prefix: bool):
+async def _gateway_post(deployment_id: str, path: str, request: Request, db: Session, via_ollama_prefix: bool):
     try:
         user, api_key = await _authenticate(request, db)
         dep = await _resolve_deployment(db, user, api_key, deployment_id)

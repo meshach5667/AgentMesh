@@ -7,20 +7,19 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import require_roles
-from app.models.model import Model
-from app.models.transaction import Transaction
-from app.models.user import UserRole
+from app.documents.model import Model
+from app.documents.transaction import Transaction
+from app.documents.user import UserRole
 from app.schemas.billing import PayoutDecision, PayoutOut, PricingRuleCreate, PricingRuleOut
 from app.schemas.deployment import DeploymentOut
 from app.schemas.model import ModelOut
 from app.schemas.node import NodeOut
 from app.schemas.transaction import TransactionResponse
 from app.services import audit_service, billing_service, payments_service, reconciliation_service, reporting_service
+from app.services.catalog_service import load_artifacts
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,7 +45,7 @@ async def audit_logs(
     resource_id: str | None = Query(None, max_length=100),
     actor_id: uuid.UUID | None = None,
     limit: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     _staff=Depends(staff_only),
 ):
     return await audit_service.search(
@@ -63,7 +62,7 @@ class AdminDeploymentOut(DeploymentOut):
 
 
 @router.get("/overview")
-async def overview(db: AsyncSession = Depends(get_db), _staff=Depends(staff_only)):
+async def overview(db: Session = Depends(get_db), _staff=Depends(staff_only)):
     """Network-wide counts: nodes and deployments by status, catalog, last-24h usage, and ledger totals."""
     return await reporting_service.operator_overview(db)
 
@@ -72,7 +71,7 @@ async def overview(db: AsyncSession = Depends(get_db), _staff=Depends(staff_only
 async def all_nodes(
     status: str | None = Query(None, max_length=20),
     limit: int = Query(200, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     _staff=Depends(staff_only),
 ):
     rows = await reporting_service.list_nodes_with_owner(db, status, limit)
@@ -84,7 +83,7 @@ async def all_deployments(
     status: str | None = Query(None, max_length=20),
     node_id: uuid.UUID | None = None,
     limit: int = Query(200, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     _staff=Depends(staff_only),
 ):
     rows = await reporting_service.list_deployments_with_owner(db, status, node_id, limit)
@@ -95,25 +94,25 @@ async def all_deployments(
 
 
 @router.get("/models", response_model=list[ModelOut])
-async def all_models(db: AsyncSession = Depends(get_db), _staff=Depends(staff_only)):
+async def all_models(db: Session = Depends(get_db), _staff=Depends(staff_only)):
     """The whole catalog, including unapproved models and disabled artifacts."""
-    return (await db.execute(select(Model).order_by(Model.name))).scalars().all()
+    models = await db.find(Model, sort=[("name", 1), ("_id", 1)])
+    await load_artifacts(db, models)
+    return models
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])
-async def ledger(
-    limit: int = Query(200, ge=1, le=1000), db: AsyncSession = Depends(get_db), _staff=Depends(staff_only)
-):
-    return (await db.execute(select(Transaction).order_by(Transaction.created_at.desc()).limit(limit))).scalars().all()
+async def ledger(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db), _staff=Depends(staff_only)):
+    return await db.find(Transaction, sort=[("created_at", -1)], limit=limit)
 
 
 @router.get("/pricing", response_model=list[PricingRuleOut])
-async def pricing_versions(db: AsyncSession = Depends(get_db), _staff=Depends(staff_only)):
+async def pricing_versions(db: Session = Depends(get_db), _staff=Depends(staff_only)):
     return await billing_service.list_rules(db)
 
 
 @router.post("/pricing", response_model=PricingRuleOut, status_code=201)
-async def create_pricing_version(req: PricingRuleCreate, db: AsyncSession = Depends(get_db), staff=Depends(staff_only)):
+async def create_pricing_version(req: PricingRuleCreate, db: Session = Depends(get_db), staff=Depends(staff_only)):
     """Publish a new, immutable pricing version. It applies from ``effective_from`` (now or later); usage
     before that keeps the price it was rated at."""
     return await billing_service.create_rule(db, req.model_dump(), staff)
@@ -121,25 +120,25 @@ async def create_pricing_version(req: PricingRuleCreate, db: AsyncSession = Depe
 
 @router.get("/payouts", response_model=list[PayoutOut])
 async def payouts(
-    status: str | None = Query(None, max_length=20), db: AsyncSession = Depends(get_db), _staff=Depends(staff_only)
+    status: str | None = Query(None, max_length=20), db: Session = Depends(get_db), _staff=Depends(staff_only)
 ):
     return await payments_service.list_payouts(db, None, status)
 
 
 @router.post("/payouts/{payout_id}/approve", response_model=PayoutOut)
-async def approve_payout(payout_id: uuid.UUID, db: AsyncSession = Depends(get_db), staff=Depends(staff_only)):
+async def approve_payout(payout_id: uuid.UUID, db: Session = Depends(get_db), staff=Depends(staff_only)):
     return await payments_service.decide_payout(db, str(payout_id), staff, True, None)
 
 
 @router.post("/payouts/{payout_id}/reject", response_model=PayoutOut)
 async def reject_payout(
-    payout_id: uuid.UUID, req: PayoutDecision, db: AsyncSession = Depends(get_db), staff=Depends(staff_only)
+    payout_id: uuid.UUID, req: PayoutDecision, db: Session = Depends(get_db), staff=Depends(staff_only)
 ):
     return await payments_service.decide_payout(db, str(payout_id), staff, False, req.reason)
 
 
 @router.get("/reconciliation")
-async def reconciliation_report(db: AsyncSession = Depends(get_db), _staff=Depends(staff_only)):
+async def reconciliation_report(db: Session = Depends(get_db), _staff=Depends(staff_only)):
     """Ledger invariants and open payment items. Read-only."""
     return await reconciliation_service.report(db)
 

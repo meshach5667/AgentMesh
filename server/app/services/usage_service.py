@@ -1,10 +1,9 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.models.usage import UsageRecord
+from app.documents.usage import UsageRecord
 
 
-async def record_usage(db: AsyncSession, deployment_id: str, node_id: str, gpu_seconds: float, cpu_seconds: float):
+async def record_usage(db: Session, deployment_id: str, node_id: str, gpu_seconds: float, cpu_seconds: float):
     usage = UsageRecord(
         deployment_id=deployment_id,
         node_id=node_id,

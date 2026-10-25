@@ -1,16 +1,14 @@
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
+from app.core.database import Session
 from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models.user import Customer, Provider, User, UserRole
+from app.documents.user import Customer, Provider, User, UserRole
 from app.schemas.auth import UserCreate, UserLogin
 from app.services import audit_service
 
 
-async def register_user(db: AsyncSession, user_data: UserCreate):
-    result = await db.execute(select(User).filter(User.email == user_data.email))
-    if result.scalars().first():
+async def register_user(db: Session, user_data: UserCreate):
+    if await db.find_one(User, {"email": user_data.email}):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = User(email=user_data.email, hashed_password=get_password_hash(user_data.password), role=user_data.role.value)
@@ -35,9 +33,8 @@ async def register_user(db: AsyncSession, user_data: UserCreate):
     return {"access_token": access_token, "token_type": "bearer", "user": user}
 
 
-async def login(db: AsyncSession, user_data: UserLogin):
-    result = await db.execute(select(User).filter(User.email == user_data.email))
-    user = result.scalars().first()
+async def login(db: Session, user_data: UserLogin):
+    user = await db.find_one(User, {"email": user_data.email})
     if not user or not verify_password(user_data.password, user.hashed_password):
         audit_service.record(
             db,

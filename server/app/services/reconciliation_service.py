@@ -14,15 +14,12 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import settings
-from app.core.database import session_scope
+from app.core.database import Session, session_scope
 from app.core.timeutil import utcnow
-from app.models.billing import Charge, Payment, PaymentStatus, Payout, PayoutStatus
-from app.models.transaction import Transaction, TransactionStatus, TransactionType
-from app.models.wallet import Wallet
+from app.documents.billing import Charge, Payment, PaymentStatus, Payout, PayoutStatus
+from app.documents.transaction import Transaction, TransactionStatus, TransactionType
+from app.documents.wallet import Wallet
 from app.services import payments_service, paystack
 from app.services.ledger_service import DEBIT_STATES, money
 from app.services.paystack import PaystackError
@@ -48,47 +45,38 @@ async def run(now=None) -> dict[str, Any]:
     cutoff = now - timedelta(minutes=settings.RECONCILE_AFTER_MINUTES)
     results: dict[str, Any] = {"payments": {}, "payouts": {}, "errors": 0}
     async with session_scope() as db:
-        payment_refs = (
-            (
-                await db.execute(
-                    select(Payment.reference).where(
-                        Payment.status == PaymentStatus.INITIALIZED.value, Payment.created_at < cutoff
-                    )
-                )
+        payment_refs = [
+            p.reference
+            for p in await db.find(Payment, {"status": PaymentStatus.INITIALIZED.value, "created_at": {"$lt": cutoff}})
+        ]
+        payout_refs = [
+            p.reference
+            for p in await db.find(
+                Payout,
+                {
+                    "status": {"$in": [PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value]},
+                    "updated_at": {"$lt": cutoff},
+                },
             )
-            .scalars()
-            .all()
-        )
-        payout_refs = (
-            (
-                await db.execute(
-                    select(Payout.reference).where(
-                        Payout.status.in_([PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value]),
-                        Payout.updated_at < cutoff,
-                    )
-                )
+        ]
+        unconfirmed = [
+            p.reference
+            for p in await db.find(
+                Payout,
+                {
+                    "status": {
+                        "$in": [PayoutStatus.SUCCEEDED.value, PayoutStatus.FAILED.value, PayoutStatus.REVERSED.value]
+                    },
+                    "transfer_code": {"$ne": None},
+                    "reconciled_at": None,
+                },
             )
-            .scalars()
-            .all()
-        )
-        unconfirmed = (
-            (
-                await db.execute(
-                    select(Payout.reference).where(
-                        Payout.status.in_(
-                            [PayoutStatus.SUCCEEDED.value, PayoutStatus.FAILED.value, PayoutStatus.REVERSED.value]
-                        ),
-                        Payout.transfer_code.is_not(None),
-                        Payout.reconciled_at.is_(None),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
+        ]
     for ref in payment_refs:
         async with session_scope() as db:
-            payment = (await db.execute(select(Payment).where(Payment.reference == ref))).scalars().one()
+            payment = await db.find_one(Payment, {"reference": ref})
+            if payment is None:
+                continue
             try:
                 data = await paystack.verify_transaction(ref)
             except PaystackError as exc:
@@ -102,7 +90,9 @@ async def run(now=None) -> dict[str, Any]:
             results["payments"][ref] = outcome
     for ref in [*payout_refs, *unconfirmed]:
         async with session_scope() as db:
-            payout = (await db.execute(select(Payout).where(Payout.reference == ref))).scalars().one()
+            payout = await db.find_one(Payout, {"reference": ref})
+            if payout is None:
+                continue
             try:
                 data = await paystack.verify_transfer(ref)
             except PaystackError as exc:
@@ -129,54 +119,44 @@ async def run(now=None) -> dict[str, Any]:
     return results
 
 
-async def report(db: AsyncSession) -> dict[str, Any]:
+async def _sums(db: Session, match: dict[str, Any], *group: str) -> dict[Any, tuple[int, Decimal]]:
+    """(count, summed amount) of ledger entries matching ``match``, grouped by the given fields."""
+    key: Any = {g: f"${g}" for g in group} if len(group) > 1 else f"${group[0]}"
+    rows = await db.aggregate(
+        Transaction,
+        [{"$match": match}, {"$group": {"_id": key, "n": {"$sum": 1}, "amount": {"$sum": "$amount"}}}],
+    )
+    out: dict[Any, tuple[int, Decimal]] = {}
+    for r in rows:
+        k = tuple(r["_id"].get(g) for g in group) if len(group) > 1 else r["_id"]
+        out[k] = (int(r["n"]), money(r["amount"] or 0))
+    return out
+
+
+async def report(db: Session) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
 
-    credits: dict[Any, Any] = {
-        wallet: total
-        for wallet, total in (
-            await db.execute(
-                select(Transaction.to_wallet, func.coalesce(func.sum(Transaction.amount), 0))
-                .where(Transaction.to_wallet.is_not(None), Transaction.status == TransactionStatus.SETTLED.value)
-                .group_by(Transaction.to_wallet)
-            )
-        ).all()
-    }
-    debits: dict[Any, Any] = {
-        wallet: total
-        for wallet, total in (
-            await db.execute(
-                select(Transaction.from_wallet, func.coalesce(func.sum(Transaction.amount), 0))
-                .where(Transaction.from_wallet.is_not(None), Transaction.status.in_(DEBIT_STATES))
-                .group_by(Transaction.from_wallet)
-            )
-        ).all()
-    }
-    wallets = (await db.execute(select(Wallet.id, Wallet.user_id, Wallet.balance))).all()
-    for wallet_id, user_id, balance in wallets:
-        expected = money(Decimal(credits.get(wallet_id, 0)) - Decimal(debits.get(wallet_id, 0)))
-        if money(Decimal(balance or 0)) != expected:
+    credits = await _sums(db, {"to_wallet": {"$ne": None}, "status": TransactionStatus.SETTLED.value}, "to_wallet")
+    debits = await _sums(db, {"from_wallet": {"$ne": None}, "status": {"$in": list(DEBIT_STATES)}}, "from_wallet")
+    wallets = await db.find(Wallet)
+    for wallet in wallets:
+        expected = money(credits.get(wallet.id, (0, Decimal(0)))[1] - debits.get(wallet.id, (0, Decimal(0)))[1])
+        balance = money(wallet.balance or 0)
+        if balance != expected:
             issues.append(
                 {
                     "kind": "wallet_balance",
-                    "wallet_id": str(wallet_id),
-                    "user_id": str(user_id),
-                    "balance": str(money(Decimal(balance or 0))),
+                    "wallet_id": str(wallet.id),
+                    "user_id": str(wallet.user_id),
+                    "balance": str(balance),
                     "ledger": str(expected),
                 }
             )
 
     posted = {
-        (ref, t): Decimal(a)
-        for ref, t, a in (
-            await db.execute(
-                select(Transaction.reference, Transaction.type, func.sum(Transaction.amount))
-                .where(Transaction.reference.like("charge:%"))
-                .group_by(Transaction.reference, Transaction.type)
-            )
-        ).all()
+        k: a for k, (_, a) in (await _sums(db, {"reference": {"$regex": "^charge:"}}, "reference", "type")).items()
     }
-    charges = (await db.execute(select(Charge))).scalars().all()
+    charges = await db.find(Charge)
     for c in charges:
         key = f"charge:{c.id}"
         debit = posted.get((key, TransactionType.COMPUTE_CHARGE.value), Decimal(0))
@@ -198,17 +178,10 @@ async def report(db: AsyncSession) -> dict[str, Any]:
                 }
             )
 
-    deposits = {
-        ref: (n, Decimal(a))
-        for ref, n, a in (
-            await db.execute(
-                select(Transaction.reference, func.count(), func.sum(Transaction.amount))
-                .where(Transaction.type == TransactionType.DEPOSIT.value, Transaction.reference.like("am-top-%"))
-                .group_by(Transaction.reference)
-            )
-        ).all()
-    }
-    for p in (await db.execute(select(Payment))).scalars().all():
+    deposits = await _sums(
+        db, {"type": TransactionType.DEPOSIT.value, "reference": {"$regex": "^am-top-"}}, "reference"
+    )
+    for p in await db.find(Payment):
         n, amount = deposits.get(p.reference, (0, Decimal(0)))
         if p.status == PaymentStatus.SUCCEEDED.value and (n != 1 or money(amount) != money(p.amount)):
             issues.append({"kind": "payment_not_credited_once", "reference": p.reference, "deposits": n})
@@ -217,10 +190,10 @@ async def report(db: AsyncSession) -> dict[str, Any]:
         if p.status == PaymentStatus.REVIEW.value:
             issues.append({"kind": "payment_needs_review", "reference": p.reference, "reason": p.failure_reason})
 
-    for po in (await db.execute(select(Payout))).scalars().all():
+    for po in await db.find(Payout):
         hold = await db.get(Transaction, po.transaction_id) if po.transaction_id else None
         want = HOLD_FOR.get(po.status)
-        if hold is None or hold.status != want or money(Decimal(hold.amount)) != money(Decimal(po.amount)):
+        if hold is None or hold.status != want or money(hold.amount) != money(po.amount):
             issues.append(
                 {
                     "kind": "payout_hold",
@@ -231,22 +204,10 @@ async def report(db: AsyncSession) -> dict[str, Any]:
             )
 
     open_counts = {
-        "payments_initialized": int(
-            (await db.execute(select(func.count()).where(Payment.status == PaymentStatus.INITIALIZED.value))).scalar()
-            or 0
-        ),
-        "payouts_awaiting_approval": int(
-            (await db.execute(select(func.count()).where(Payout.status == PayoutStatus.REQUESTED.value))).scalar() or 0
-        ),
-        "payouts_in_flight": int(
-            (
-                await db.execute(
-                    select(func.count()).where(
-                        Payout.status.in_([PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value])
-                    )
-                )
-            ).scalar()
-            or 0
+        "payments_initialized": await db.count(Payment, {"status": PaymentStatus.INITIALIZED.value}),
+        "payouts_awaiting_approval": await db.count(Payout, {"status": PayoutStatus.REQUESTED.value}),
+        "payouts_in_flight": await db.count(
+            Payout, {"status": {"$in": [PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value]}}
         ),
     }
     return {

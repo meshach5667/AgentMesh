@@ -3,9 +3,8 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
 
-from app.models import Model, ModelArtifact, NodeCommand
+from app.documents import Model, ModelArtifact, NodeCommand
 from tests.conftest import HARDWARE
 from tests.test_gateway import FakeWorker
 
@@ -82,7 +81,7 @@ async def _deploy(client, headers, model, **body):
 
 
 async def _payload(db, dep_id):
-    cmd = (await db.execute(select(NodeCommand).where(NodeCommand.deployment_id == uuid.UUID(dep_id)))).scalars().one()
+    cmd = await db.find_one(NodeCommand, {"deployment_id": uuid.UUID(dep_id)})
     return cmd.payload
 
 
@@ -160,11 +159,7 @@ async def test_runtime_the_model_lacks_is_rejected_with_alternatives(client, mak
 async def test_disabled_artifact_is_not_deployable(client, db, make_user, enroll_node, multi_model):
     await enroll_node(runtimes=rt("llamacpp"))
     _, operator = await make_user("operator")
-    art = (
-        await db.execute(
-            select(ModelArtifact).where(ModelArtifact.model_id == multi_model.id, ModelArtifact.runtime == "llamacpp")
-        )
-    ).scalar_one()
+    art = await db.find_one(ModelArtifact, {"model_id": multi_model.id, "runtime": "llamacpp"})
     resp = await client.patch(
         f"/api/v1/models/{multi_model.id}/artifacts/{art.id}", json={"is_enabled": False}, headers=operator
     )
@@ -260,9 +255,7 @@ async def test_llamacpp_endpoint_and_readiness_evidence(db, ready_llamacpp, mult
     dep, _, _ = ready_llamacpp
     assert dep["endpoint"].endswith(f"/deployments/{dep['id']}/v1")
     assert dep["openai_base_url"] == dep["endpoint"]
-    art = (
-        await db.execute(select(ModelArtifact).where(ModelArtifact.id == uuid.UUID(dep["artifact_id"])))
-    ).scalar_one()
+    art = await db.get(ModelArtifact, uuid.UUID(dep["artifact_id"]))
     await db.refresh(art)
     assert art.last_ready_at is not None  # evidence the combination really serves
 

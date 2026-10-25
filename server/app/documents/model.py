@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 
 from app.core.timeutil import utcnow
 from app.documents.base import Doc, index, unique
@@ -49,6 +49,13 @@ class Model(Doc):
     owner_customer_id: uuid.UUID | None = None
     source_url: str | None = None
     withdrawn_at: datetime | None = None
+
+    # Not stored: filled by catalog_service.load_artifacts for code and responses that need them.
+    _artifacts: list["ModelArtifact"] = PrivateAttr(default_factory=list)
+
+    @property
+    def artifacts(self) -> list["ModelArtifact"]:
+        return self._artifacts
 
     class Settings(Doc.Settings):
         name = "models"

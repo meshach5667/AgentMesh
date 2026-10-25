@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import require_roles
 from app.core.ratelimit import limiters
-from app.models.user import User, UserRole
+from app.documents.user import User, UserRole
 from app.schemas.model import (
     ArtifactCreate,
     ArtifactOut,
@@ -36,12 +35,12 @@ async def _limit_hf_lookups(user: User) -> None:
 
 
 @router.get("", response_model=list[ModelOut])
-async def list_models(db: AsyncSession = Depends(get_db)):
+async def list_models(db: Session = Depends(get_db)):
     return await model_service.list_models(db)
 
 
 @router.get("/community", response_model=list[ModelOut])
-async def list_community_models(db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def list_community_models(db: Session = Depends(get_db), user=Depends(customer_only)):
     """Models the caller imported from Hugging Face. Nobody else can see or deploy them."""
     return await community_model_service.list_models(db, user)
 
@@ -76,9 +75,7 @@ async def preview_community_model(
 
 
 @router.post("/community", response_model=ModelOut, status_code=201)
-async def import_community_model(
-    req: CommunityModelImport, db: AsyncSession = Depends(get_db), user=Depends(customer_only)
-):
+async def import_community_model(req: CommunityModelImport, db: Session = Depends(get_db), user=Depends(customer_only)):
     """Import one GGUF file from a public Hugging Face repository, pinned to the current commit and its
     SHA-256. The model is private to the caller and runs only on nodes whose provider opted in."""
     await _limit_hf_lookups(user)
@@ -86,25 +83,25 @@ async def import_community_model(
 
 
 @router.get("/community/{id}", response_model=ModelOut)
-async def get_community_model(id: str, db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def get_community_model(id: str, db: Session = Depends(get_db), user=Depends(customer_only)):
     return await community_model_service.get_model(db, user, id)
 
 
 @router.delete("/community/{id}", status_code=204)
-async def withdraw_community_model(id: str, db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def withdraw_community_model(id: str, db: Session = Depends(get_db), user=Depends(customer_only)):
     await community_model_service.withdraw(db, user, id)
     return Response(status_code=204)
 
 
 @router.get("/{id}", response_model=ModelOut)
-async def get_model(id: str, db: AsyncSession = Depends(get_db)):
+async def get_model(id: str, db: Session = Depends(get_db)):
     return await model_service.get_model(db, id)
 
 
 @router.post("", response_model=ModelOut)
 async def create_model(
     model: ModelCreate,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     staff=Depends(require_roles(UserRole.operator, UserRole.admin)),
 ):
     # Catalog entries are created unapproved; approval is a separate, explicit operator decision.
@@ -115,7 +112,7 @@ async def create_model(
 async def set_model_approval(
     id: str,
     approved: bool = True,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     staff=Depends(require_roles(UserRole.operator, UserRole.admin)),
 ):
     """Approve (or withdraw) a catalog entry for deployment. Approval does not guarantee a node can run it."""
@@ -126,7 +123,7 @@ async def set_model_approval(
 async def add_artifact(
     id: str,
     artifact: ArtifactCreate,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     staff=Depends(require_roles(UserRole.operator, UserRole.admin)),
 ):
     """Declare that a runtime can serve this model, from a pinned source. Validated like deployments are."""
@@ -138,7 +135,7 @@ async def update_artifact(
     id: str,
     artifact_id: str,
     update: ArtifactUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     staff=Depends(require_roles(UserRole.operator, UserRole.admin)),
 ):
     return await model_service.set_artifact_enabled(db, id, artifact_id, update.is_enabled, actor_id=staff.id)

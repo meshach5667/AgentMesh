@@ -2,19 +2,17 @@ import uuid
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from pymongo.errors import DuplicateKeyError
 
+from app.core.database import Session
 from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
 from app.core.timeutil import utcnow
-from app.models.api_key import ApiKey
-from app.models.deployment import Deployment, DeploymentEvent
-from app.models.deployment import DeploymentStatus as S
-from app.models.user import Customer, User
-from app.models.worker import CommandType
+from app.documents.api_key import ApiKey
+from app.documents.deployment import Deployment, DeploymentEvent
+from app.documents.deployment import DeploymentStatus as S
+from app.documents.user import Customer, User
+from app.documents.worker import CommandType
 from app.schemas.deployment import DeploymentCreate
 from app.services import audit_service, billing_service, placement_service, worker_service
 from app.services import deployment_lifecycle as lifecycle
@@ -30,21 +28,17 @@ from app.services.placement_service import deploy_payload
 from app.services.scheduler_service import NoEligibleNode, release_reservation, schedule
 
 
-async def _get_customer(db: AsyncSession, user_id: uuid.UUID) -> Customer | None:
-    result = await db.execute(select(Customer).filter(Customer.user_id == user_id))
-    return result.scalars().first()
+async def _get_customer(db: Session, user_id: uuid.UUID) -> Customer | None:
+    return await db.find_one(Customer, {"user_id": user_id})
 
 
-async def _existing_by_idempotency_key(db: AsyncSession, customer_id, key: str | None) -> Deployment | None:
+async def _existing_by_idempotency_key(db: Session, customer_id, key: str | None) -> Deployment | None:
     if not key:
         return None
-    result = await db.execute(
-        select(Deployment).where(Deployment.customer_id == customer_id, Deployment.idempotency_key == key)
-    )
-    return result.scalars().first()
+    return await db.find_one(Deployment, {"customer_id": customer_id, "idempotency_key": key})
 
 
-async def create_deployment(db: AsyncSession, deployment_data: DeploymentCreate, user_id: uuid.UUID):
+async def create_deployment(db: Session, deployment_data: DeploymentCreate, user_id: uuid.UUID):
     customer = await _get_customer(db, user_id)
     if not customer:
         raise HTTPException(status_code=403, detail="Customer account required")
@@ -74,7 +68,7 @@ async def create_deployment(db: AsyncSession, deployment_data: DeploymentCreate,
     db.add(deployment)
     try:
         await db.flush()
-    except IntegrityError:
+    except DuplicateKeyError:
         await db.rollback()
         existing = await _existing_by_idempotency_key(db, customer.id, deployment_data.idempotency_key)
         if existing:
@@ -148,22 +142,16 @@ async def create_deployment(db: AsyncSession, deployment_data: DeploymentCreate,
     return deployment
 
 
-async def list_deployments(db: AsyncSession, user_id: uuid.UUID):
+async def list_deployments(db: Session, user_id: uuid.UUID):
     customer = await _get_customer(db, user_id)
     if not customer:
         return []
-    result = await db.execute(
-        select(Deployment)
-        .filter(Deployment.customer_id == customer.id, Deployment.deleted_at.is_(None))
-        .order_by(Deployment.created_at.desc())
-    )
-    return result.scalars().all()
+    return await db.find(Deployment, {"customer_id": customer.id, "deleted_at": None}, sort=[("created_at", -1)])
 
 
-async def get_deployment_for_user(db: AsyncSession, deployment_id: str, user: User) -> Deployment:
+async def get_deployment_for_user(db: Session, deployment_id: str, user: User) -> Deployment:
     """Fetch a deployment the caller is allowed to see. Non-owners receive 404 so IDs cannot be probed."""
-    result = await db.execute(select(Deployment).filter(Deployment.id == parse_uuid(deployment_id, "Deployment")))
-    deployment = result.scalars().first()
+    deployment = await db.get(Deployment, parse_uuid(deployment_id, "Deployment"))
     if deployment and not is_staff(user):
         customer = await _get_customer(db, user.id)
         if not customer or deployment.customer_id != customer.id or deployment.deleted_at is not None:
@@ -173,7 +161,7 @@ async def get_deployment_for_user(db: AsyncSession, deployment_id: str, user: Us
     return deployment
 
 
-async def _stop(db: AsyncSession, deployment: Deployment, actor: str, message: str) -> None:
+async def _stop(db: Session, deployment: Deployment, actor: str, message: str) -> None:
     """Begin stopping a non-terminal deployment. Does not commit."""
     status = S(deployment.status)
     if status == S.STOPPING:
@@ -194,7 +182,7 @@ async def _stop(db: AsyncSession, deployment: Deployment, actor: str, message: s
     )
 
 
-async def stop_deployment(db: AsyncSession, deployment_id: str, user: User):
+async def stop_deployment(db: Session, deployment_id: str, user: User):
     deployment = await get_deployment_for_user(db, deployment_id, user)
     if S(deployment.status) in lifecycle.TERMINAL:
         raise HTTPException(status_code=409, detail=f"Deployment is already {deployment.status}")
@@ -206,7 +194,7 @@ async def stop_deployment(db: AsyncSession, deployment_id: str, user: User):
     return {"status": deployment.status}
 
 
-async def restart_deployment(db: AsyncSession, deployment_id: str, user: User):
+async def restart_deployment(db: Session, deployment_id: str, user: User):
     deployment = await get_deployment_for_user(db, deployment_id, user)
     await placement_service.restart(db, deployment)
     audit_service.record(
@@ -216,19 +204,14 @@ async def restart_deployment(db: AsyncSession, deployment_id: str, user: User):
     return {"status": deployment.status}
 
 
-async def delete_deployment(db: AsyncSession, deployment_id: str, user: User):
+async def delete_deployment(db: Session, deployment_id: str, user: User):
     """Stop the workload if needed, revoke deployment-scoped API keys, and hide the deployment. Usage and
     lifecycle records are retained for billing and audit."""
     deployment = await get_deployment_for_user(db, deployment_id, user)
     now = utcnow()
     if S(deployment.status) not in lifecycle.TERMINAL:
         await _stop(db, deployment, actor="customer", message="Deletion requested")
-    await db.execute(
-        update(ApiKey)
-        .where(ApiKey.deployment_id == deployment.id, ApiKey.revoked_at.is_(None))
-        .values(revoked_at=now)
-        .execution_options(synchronize_session=False)
-    )
+    await db.update_many(ApiKey, {"deployment_id": deployment.id, "revoked_at": None}, {"$set": {"revoked_at": now}})
     deployment.deleted_at = now
     audit_service.record(
         db, actor_id=user.id, action="deployment.deleted", resource_type="deployment", resource_id=deployment.id
@@ -237,11 +220,6 @@ async def delete_deployment(db: AsyncSession, deployment_id: str, user: User):
     return {"status": deployment.status, "deleted": True}
 
 
-async def list_events(db: AsyncSession, deployment_id: str, user: User):
+async def list_events(db: Session, deployment_id: str, user: User):
     deployment = await get_deployment_for_user(db, deployment_id, user)
-    result = await db.execute(
-        select(DeploymentEvent)
-        .where(DeploymentEvent.deployment_id == deployment.id)
-        .order_by(DeploymentEvent.created_at, DeploymentEvent.id)
-    )
-    return result.scalars().all()
+    return await db.find(DeploymentEvent, {"deployment_id": deployment.id}, sort=[("created_at", 1), ("_id", 1)])

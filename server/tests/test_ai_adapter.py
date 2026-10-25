@@ -13,15 +13,14 @@ import uuid
 import httpx
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import inspect
 
 from ai_adapter.config import AdapterSettings
 from ai_adapter.ollama import ChatResult, OllamaProvider, ProviderError, ProviderStatus
 from ai_adapter.service import Adapter
 from ai_adapter.system import Hardware, pull_problems, recommend
 from app.core.config import settings
+from app.documents import AiRun
 from app.main import app
-from app.models import AiRun
 
 TOKEN = "t" * 40
 MODEL = "gemma4:e2b-it-qat"
@@ -243,7 +242,7 @@ async def _drain(adapter):
 async def test_adapter_serves_a_run_end_to_end(client, db, make_user, enroll_node, ollama_model, control_plane):
     await enroll_node(cpu=4, ram_mb=8192)
     _, customer = await make_user("customer")
-    model_id = str(inspect(ollama_model).identity[0])
+    model_id = str(ollama_model.id)
     run = (
         await client.post(
             "/api/v1/ai/deployments",
@@ -277,12 +276,10 @@ async def test_adapter_reports_failures_for_retry(client, db, make_user, ollama_
     await adapter.heartbeat()
     assert await adapter.lease_once(wait_seconds=0) == 1
     await _drain(adapter)
-    from sqlalchemy import select
-
-    from app.models import AiInferenceRequest
+    from app.documents import AiInferenceRequest
 
     db.expire_all()
-    req = (await db.execute(select(AiInferenceRequest))).scalar_one()
+    req = await db.find_one(AiInferenceRequest)
     assert req.status == "PENDING" and req.error_code == "OLLAMA_UNREACHABLE"  # queued again, not lost
     await adapter._http.aclose()
 

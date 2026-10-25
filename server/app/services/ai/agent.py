@@ -14,7 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.logging import redact
-from app.models.ai import AiRun
+from app.documents.ai import AiRun
 from app.services.ai import tools
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan
 

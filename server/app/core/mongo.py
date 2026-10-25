@@ -4,7 +4,8 @@ A Session works like the SQLAlchemy session it replaces: documents loaded throug
 (one in-memory instance per id), changed in memory, and written together by ``commit()`` in one transaction, so a
 ledger posting and the balance it changes are saved together or not at all. Operations that must take effect
 immediately (``update_one``: atomic conditional updates such as reserving node capacity; ``flush``) run in that
-same transaction, which then stays open until ``commit()`` or ``rollback()``.
+same transaction, which then stays open until ``commit()`` or ``rollback()``. Like SQLAlchemy's autoflush, pending
+changes are flushed before a query or an atomic update, so they see everything added or changed so far.
 """
 
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -115,6 +116,16 @@ class Session:
         doc = await model.get(id, session=self._txn)
         return self._track(doc) if doc is not None else None
 
+    def _dirty(self) -> bool:
+        if self._new or self._deleted:
+            return True
+        new = {id(d) for d in self._new}
+        return any(id(doc) not in new and doc.get_changes() for doc in self._identity.values())
+
+    async def _autoflush(self) -> None:
+        if self._dirty():
+            await self.flush()
+
     async def find(
         self,
         model: type[D],
@@ -124,6 +135,7 @@ class Session:
         skip: int | None = None,
         limit: int | None = None,
     ) -> list[D]:
+        await self._autoflush()
         query = model.find(dict(filter or {}), session=self._txn)
         if sort:
             query = query.sort([(field, SortDirection(direction)) for field, direction in sort])
@@ -140,21 +152,39 @@ class Session:
         return found[0] if found else None
 
     async def count(self, model: type[D], filter: Mapping[str, Any] | None = None) -> int:
+        await self._autoflush()
         return await model.get_pymongo_collection().count_documents(dict(filter or {}), session=self._txn)
 
+    async def distinct(self, model: type[Doc], field: str, filter: Mapping[str, Any] | None = None) -> list[Any]:
+        await self._autoflush()
+        return await model.get_pymongo_collection().distinct(field, dict(filter or {}), session=self._txn)
+
     async def aggregate(self, model: type[Doc], pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        await self._autoflush()
         cursor = await model.get_pymongo_collection().aggregate(pipeline, session=self._txn)
         return await cursor.to_list()
 
+    def expire_all(self) -> None:
+        """Forget loaded documents (so the next read fetches them again), keeping ones added but not yet saved."""
+        new = {id(d) for d in self._new}
+        self._identity = {k: d for k, d in self._identity.items() if id(d) in new}
+
+    async def ping(self) -> None:
+        await self._client.admin.command("ping")
+
     async def refresh(self, doc: Doc) -> None:
-        """Reload a document's fields from the database, discarding unsaved changes to it."""
+        """Reload a document's fields from the database (e.g. after an atomic ``update_one``). Unsaved changes made
+        to it in memory are kept on top and still written by the next commit, as SQLAlchemy's autoflush would."""
         raw = await type(doc).get_pymongo_collection().find_one({"_id": doc.id}, session=self._txn)
         if raw is None:
             raise LookupError(f"{type(doc).__name__} {doc.id} no longer exists")
+        local = {name: getattr(doc, name) for name in {key.split(".")[0] for key in doc.get_changes()}}
         fresh = type(doc).model_validate(raw)
         for name in type(doc).model_fields:
             setattr(doc, name, getattr(fresh, name))
         doc._save_state()
+        for name, value in local.items():
+            setattr(doc, name, value)
 
     # --- Immediate writes (inside the open transaction) ----------------------------------------------------------
 
@@ -166,10 +196,26 @@ class Session:
 
     async def update_one(self, model: type[Doc], filter: Mapping[str, Any], update: Mapping[str, Any]) -> bool:
         """Atomic conditional update; True if a document matched. Use it where SQL used ``UPDATE ... WHERE``."""
+        await self._autoflush()
         txn = await self._begin()
         self._sent = True
         result = await model.get_pymongo_collection().update_one(dict(filter), dict(update), session=txn)
         return result.matched_count > 0
+
+    async def update_many(self, model: type[Doc], filter: Mapping[str, Any], update: Mapping[str, Any]) -> int:
+        """Atomic update of every matching document; returns how many matched."""
+        await self._autoflush()
+        txn = await self._begin()
+        self._sent = True
+        result = await model.get_pymongo_collection().update_many(dict(filter), dict(update), session=txn)
+        return result.matched_count
+
+    async def delete_many(self, model: type[Doc], filter: Mapping[str, Any]) -> int:
+        await self._autoflush()
+        txn = await self._begin()
+        self._sent = True
+        result = await model.get_pymongo_collection().delete_many(dict(filter), session=txn)
+        return result.deleted_count
 
     async def flush(self) -> None:
         """Send pending writes now (inside the transaction), e.g. to surface a duplicate key before going on."""

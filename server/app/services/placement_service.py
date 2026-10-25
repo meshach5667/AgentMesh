@@ -11,16 +11,15 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.models.deployment import Deployment
-from app.models.deployment import DeploymentStatus as S
-from app.models.model import Model, ModelArtifact
-from app.models.node import Node, NodeStatus
-from app.models.worker import CommandType
+from app.documents.deployment import Deployment
+from app.documents.deployment import DeploymentStatus as S
+from app.documents.model import Model, ModelArtifact
+from app.documents.node import Node, NodeStatus
+from app.documents.worker import CommandType
 from app.services import audit_service
 from app.services import deployment_lifecycle as lifecycle
 from app.services.catalog_service import (
@@ -56,22 +55,16 @@ RESCHEDULABLE_CODES = frozenset(
 )
 
 
-async def artifact_for(db: AsyncSession, dep: Deployment) -> ModelArtifact:
+async def artifact_for(db: Session, dep: Deployment) -> ModelArtifact:
     artifact = await db.get(ModelArtifact, dep.artifact_id) if dep.artifact_id else None
     if artifact is None:  # deployments created before artifacts existed
-        artifact = (
-            await db.execute(
-                select(ModelArtifact).where(
-                    ModelArtifact.model_id == dep.model_id, ModelArtifact.runtime == dep.runtime
-                )
-            )
-        ).scalar_one_or_none()
+        artifact = await db.find_one(ModelArtifact, {"model_id": dep.model_id, "runtime": dep.runtime})
     if artifact is None:
         raise ValueError(f"Deployment {dep.id} has no runtime artifact")
     return artifact
 
 
-async def requirements_for(db: AsyncSession, dep: Deployment) -> ResourceRequest:
+async def requirements_for(db: Session, dep: Deployment) -> ResourceRequest:
     model = await db.get(Model, dep.model_id)
     return estimate_requirements(
         await artifact_for(db, dep),
@@ -103,14 +96,14 @@ def deploy_payload(dep: Deployment, req: ResourceRequest, source: dict | None = 
     }
 
 
-async def _stop_on_old_node(db: AsyncSession, dep: Deployment, node_id: uuid.UUID) -> None:
+async def _stop_on_old_node(db: Session, dep: Deployment, node_id: uuid.UUID) -> None:
     # If the old node never received the deploy, there is nothing to clean up there.
     if not await cancel_undelivered(db, dep.id, CommandType.DEPLOY):
         await enqueue_command(db, node_id, dep.id, CommandType.STOP, {"deployment_id": str(dep.id)})
 
 
 async def fail_or_reschedule(
-    db: AsyncSession,
+    db: Session,
     dep: Deployment,
     *,
     code: str,
@@ -184,7 +177,7 @@ async def fail_or_reschedule(
     return False
 
 
-async def restart(db: AsyncSession, dep: Deployment) -> None:
+async def restart(db: Session, dep: Deployment) -> None:
     """Restart a serving deployment on its current node from the cached model. Does not commit."""
     status = S(dep.status)
     if status not in (S.READY, S.UNHEALTHY):

@@ -4,8 +4,8 @@ Rules (checked by reconciliation_service):
 
 * A debit (``from_wallet``) applies while the entry is PENDING or SETTLED; a credit (``to_wallet``) applies
   only when SETTLED. So: balance = settled credits - (pending + settled) debits.
-* Balances change with ``UPDATE ... SET balance = balance + :delta`` in the caller's transaction, never by
-  read-modify-write, so concurrent postings cannot lose updates.
+* Balances change with an atomic ``$inc`` in the caller's transaction, never by read-modify-write, so
+  concurrent postings cannot lose updates.
 * Every posting carries an idempotency key (unique in the database). Posting the same key twice returns the
   existing entry and changes nothing.
 * All amounts are in settings.BILLING_CURRENCY; a wallet in another currency is refused.
@@ -16,34 +16,32 @@ Nothing here commits.
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
 
+from bson import Decimal128
 from fastapi import HTTPException
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.db_utils import rowcount
+from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.models.transaction import Transaction, TransactionStatus, TransactionType
-from app.models.wallet import Wallet
+from app.documents.transaction import Transaction, TransactionStatus, TransactionType
+from app.documents.wallet import Wallet
 
 QUANTUM = Decimal("0.00000001")
 DEBIT_STATES = (TransactionStatus.PENDING.value, TransactionStatus.SETTLED.value)
 
 
-def money(value: Decimal | int | str | float) -> Decimal:
+def money(value: Decimal | Decimal128 | int | str | float) -> Decimal:
+    if isinstance(value, Decimal128):
+        value = value.to_decimal()
     return Decimal(str(value)).quantize(QUANTUM, rounding=ROUND_HALF_UP)
 
 
-async def wallet_for_user(db: AsyncSession, user_id: uuid.UUID, *, lock: bool = False) -> Wallet:
+async def wallet_for_user(db: Session, user_id: uuid.UUID) -> Wallet:
     """The user's wallet, created in the billing currency if missing. Does not commit."""
-    query = select(Wallet).where(Wallet.user_id == user_id)
-    if lock:
-        query = query.with_for_update()
-    wallet = (await db.execute(query)).scalars().first()
+    wallet = await db.find_one(Wallet, {"user_id": user_id})
     if wallet is None:
         wallet = Wallet(id=uuid.uuid4(), user_id=user_id, balance=Decimal(0), currency=settings.BILLING_CURRENCY)
         db.add(wallet)
-        await db.flush()
+        await db.flush()  # the unique user_id index rejects a concurrently created second wallet
     return wallet
 
 
@@ -55,21 +53,16 @@ def _check_currency(wallet: Wallet | None) -> None:
         )
 
 
-async def _adjust(db: AsyncSession, wallet_id: uuid.UUID, delta: Decimal) -> None:
-    await db.execute(
-        update(Wallet)
-        .where(Wallet.id == wallet_id)
-        .values(balance=Wallet.balance + delta)
-        .execution_options(synchronize_session=False)
-    )
+async def _adjust(db: Session, wallet_id: uuid.UUID, delta: Decimal) -> None:
+    await db.update_one(Wallet, {"_id": wallet_id}, {"$inc": {"balance": Decimal128(delta)}})
 
 
-async def _existing(db: AsyncSession, key: str) -> Transaction | None:
-    return (await db.execute(select(Transaction).where(Transaction.idempotency_key == key))).scalars().first()
+async def _existing(db: Session, key: str) -> Transaction | None:
+    return await db.find_one(Transaction, {"idempotency_key": key})
 
 
 async def post(
-    db: AsyncSession,
+    db: Session,
     *,
     key: str,
     type: TransactionType,
@@ -112,38 +105,44 @@ async def post(
     return tx
 
 
-async def settle(db: AsyncSession, tx: Transaction) -> bool:
+async def settle(db: Session, tx: Transaction) -> bool:
     """PENDING -> SETTLED. The debit already applied; the credit applies now. False if not PENDING."""
-    result = await db.execute(
-        update(Transaction)
-        .where(Transaction.id == tx.id, Transaction.status == TransactionStatus.PENDING.value)
-        .values(status=TransactionStatus.SETTLED.value, settled_at=utcnow())
-        .execution_options(synchronize_session=False)
+    now = utcnow()
+    moved = await db.update_one(
+        Transaction,
+        {"_id": tx.id, "status": TransactionStatus.PENDING.value},
+        {"$set": {"status": TransactionStatus.SETTLED.value, "settled_at": now}},
     )
-    if rowcount(result) != 1:
+    if not moved:
         return False
     if tx.to_wallet is not None:
-        await _adjust(db, tx.to_wallet, Decimal(tx.amount))
-    tx.status = TransactionStatus.SETTLED.value
+        await _adjust(db, tx.to_wallet, money(tx.amount))
+    _mark(tx, status=TransactionStatus.SETTLED.value, settled_at=now)
     return True
 
 
-async def fail(db: AsyncSession, tx: Transaction) -> bool:
+async def fail(db: Session, tx: Transaction) -> bool:
     """PENDING -> FAILED: the held debit is returned to the payer. False if not PENDING."""
-    result = await db.execute(
-        update(Transaction)
-        .where(Transaction.id == tx.id, Transaction.status == TransactionStatus.PENDING.value)
-        .values(status=TransactionStatus.FAILED.value)
-        .execution_options(synchronize_session=False)
+    moved = await db.update_one(
+        Transaction,
+        {"_id": tx.id, "status": TransactionStatus.PENDING.value},
+        {"$set": {"status": TransactionStatus.FAILED.value}},
     )
-    if rowcount(result) != 1:
+    if not moved:
         return False
     if tx.from_wallet is not None:
-        await _adjust(db, tx.from_wallet, Decimal(tx.amount))
-    tx.status = TransactionStatus.FAILED.value
+        await _adjust(db, tx.from_wallet, money(tx.amount))
+    _mark(tx, status=TransactionStatus.FAILED.value)
     return True
 
 
-async def balance(db: AsyncSession, wallet_id: uuid.UUID) -> Decimal:
-    value = (await db.execute(select(Wallet.balance).where(Wallet.id == wallet_id))).scalar()
-    return Decimal(value or 0)
+def _mark(tx: Transaction, **values) -> None:
+    """Mirror an atomic update onto the in-memory entry without making it look unsaved."""
+    for name, value in values.items():
+        setattr(tx, name, value)
+    tx._save_state()
+
+
+async def balance(db: Session, wallet_id: uuid.UUID) -> Decimal:
+    rows = await db.aggregate(Wallet, [{"$match": {"_id": wallet_id}}, {"$project": {"balance": 1}}])
+    return money(rows[0]["balance"]) if rows and rows[0].get("balance") is not None else Decimal(0)

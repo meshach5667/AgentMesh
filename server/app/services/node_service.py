@@ -1,22 +1,20 @@
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
+from app.core.database import Session
 from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
 from app.core.security import get_password_hash, verify_node_api_key
 from app.core.timeutil import utcnow
-from app.models.node import Node, NodeHardware, NodeStatus
-from app.models.user import Provider, User
+from app.documents.node import Node, NodeHardware, NodeStatus
+from app.documents.user import Provider, User
 from app.schemas.node import NodeCreate
 from app.services import audit_service
 
 
-async def register_node(db: AsyncSession, node_data: NodeCreate, user_id: uuid.UUID):
-    result = await db.execute(select(Provider).filter(Provider.user_id == user_id))
-    provider = result.scalars().first()
+async def register_node(db: Session, node_data: NodeCreate, user_id: uuid.UUID):
+    provider = await db.find_one(Provider, {"user_id": user_id})
     if not provider:
         raise HTTPException(status_code=403, detail="Provider account required")
 
@@ -38,37 +36,33 @@ async def register_node(db: AsyncSession, node_data: NodeCreate, user_id: uuid.U
     return {"id": node.id, "node_id": node.id, "api_key": api_key, "status": node.status}
 
 
-async def list_nodes(db: AsyncSession, user_id: uuid.UUID):
-    result = await db.execute(select(Provider).filter(Provider.user_id == user_id))
-    provider = result.scalars().first()
+async def list_nodes(db: Session, user_id: uuid.UUID):
+    provider = await db.find_one(Provider, {"user_id": user_id})
     if not provider:
         return []
-    result = await db.execute(select(Node).filter(Node.owner_id == provider.id))
-    return result.scalars().all()
+    return await db.find(Node, {"owner_id": provider.id}, sort=[("created_at", 1)])
 
 
-async def get_node(db: AsyncSession, node_id: str | uuid.UUID) -> Node:
-    result = await db.execute(select(Node).filter(Node.id == parse_uuid(node_id, "Node")))
-    node = result.scalars().first()
+async def get_node(db: Session, node_id: str | uuid.UUID) -> Node:
+    node = await db.get(Node, parse_uuid(node_id, "Node"))
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
 
 
-async def get_node_for_user(db: AsyncSession, node_id: str, user: User) -> Node:
+async def get_node_for_user(db: Session, node_id: str, user: User) -> Node:
     """Return a node only if the caller owns it or is platform staff. Other callers get 404, not 403,
     so node IDs cannot be probed."""
     node = await get_node(db, node_id)
     if is_staff(user):
         return node
-    result = await db.execute(select(Provider).filter(Provider.user_id == user.id))
-    provider = result.scalars().first()
+    provider = await db.find_one(Provider, {"user_id": user.id})
     if not provider or node.owner_id != provider.id:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
 
 
-async def process_heartbeat(db: AsyncSession, node: Node):
+async def process_heartbeat(db: Session, node: Node):
     if node.status == NodeStatus.SUSPENDED:
         raise HTTPException(status_code=403, detail="Node suspended")
     node.last_heartbeat = utcnow()
@@ -77,7 +71,7 @@ async def process_heartbeat(db: AsyncSession, node: Node):
     return {"status": "ok"}
 
 
-async def authenticate_node(db: AsyncSession, node_id: str, api_key: str) -> Node:
+async def authenticate_node(db: Session, node_id: str, api_key: str) -> Node:
     try:
         node = await get_node(db, node_id)
     except HTTPException:
@@ -87,7 +81,7 @@ async def authenticate_node(db: AsyncSession, node_id: str, api_key: str) -> Nod
     return node
 
 
-async def set_accepting_workloads(db: AsyncSession, node_id: str, user: User, accepting: bool) -> Node:
+async def set_accepting_workloads(db: Session, node_id: str, user: User, accepting: bool) -> Node:
     """Pause or resume scheduling onto a node. Existing deployments keep running (drain)."""
     node = await get_node_for_user(db, node_id, user)
     node.accepting_workloads = accepting
@@ -103,7 +97,7 @@ async def set_accepting_workloads(db: AsyncSession, node_id: str, user: User, ac
     return node
 
 
-async def set_accepts_community_models(db: AsyncSession, node_id: str, user: User, accept: bool) -> Node:
+async def set_accepts_community_models(db: Session, node_id: str, user: User, accept: bool) -> Node:
     """Provider opt-in to unreviewed community models. Opting out stops new placements; deployments already
     running keep running until they stop or move. Only the provider can consent; staff may only opt a node out."""
     node = await get_node_for_user(db, node_id, user)
@@ -122,10 +116,10 @@ async def set_accepts_community_models(db: AsyncSession, node_id: str, user: Use
     return node
 
 
-async def revoke_node(db: AsyncSession, node_id: str, user: User) -> Node:
+async def revoke_node(db: Session, node_id: str, user: User) -> Node:
     """Revoke a node's credential (disconnect or compromise). Its active deployments fail immediately and
     their reservations are released; the worker can no longer authenticate."""
-    from app.models.deployment import Deployment
+    from app.documents.deployment import Deployment
     from app.services import deployment_lifecycle as lifecycle
     from app.services import placement_service
     from app.services.scheduler_service import release_reservation
@@ -143,17 +137,7 @@ async def revoke_node(db: AsyncSession, node_id: str, user: User) -> Node:
     node.api_key_hash = None
     node.status = NodeStatus.REVOKED
     node.accepting_workloads = False
-    active = (
-        (
-            await db.execute(
-                select(Deployment).where(
-                    Deployment.node_id == node.id, Deployment.status.in_([s.value for s in lifecycle.ACTIVE])
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    active = await db.find(Deployment, {"node_id": node.id, "status": {"$in": [s.value for s in lifecycle.ACTIVE]}})
     actor = "operator" if is_staff(user) else "provider"
     for dep in active:
         if lifecycle.S(dep.status) == lifecycle.S.STOPPING:

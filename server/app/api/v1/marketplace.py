@@ -1,12 +1,9 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.core.database import get_db
-from app.models.node import Node, NodeStatus
+from app.core.database import Session, get_db
+from app.documents.node import Node, NodeHardware, NodePricing, NodeStatus
 from app.schemas.marketplace import MarketplaceNodeResponse
 
 router = APIRouter()
@@ -14,26 +11,23 @@ router = APIRouter()
 
 @router.get("/nodes", response_model=list[MarketplaceNodeResponse])
 async def search_nodes(
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     min_vram_gb: int | None = Query(None),
     region: str | None = Query(None),
     gpu_model: str | None = Query(None),
 ):
-    query = (
-        select(Node)
-        .options(selectinload(Node.hardware), selectinload(Node.pricing))
-        .filter(Node.status.in_([NodeStatus.AVAILABLE, NodeStatus.ONLINE]))
-    )
+    filter: dict = {"status": {"$in": [NodeStatus.AVAILABLE.value, NodeStatus.ONLINE.value]}}
     if region:
-        query = query.filter(Node.region == region)
-
-    result = await db.execute(query)
-    nodes = result.scalars().all()
+        filter["region"] = region
+    nodes = await db.find(Node, filter, sort=[("created_at", 1)])
+    ids = [n.id for n in nodes]
+    hardware = {h.node_id: h for h in await db.find(NodeHardware, {"node_id": {"$in": ids}})}
+    pricing = {p.node_id: p for p in await db.find(NodePricing, {"node_id": {"$in": ids}})}
 
     response = []
     for node in nodes:
-        hw = node.hardware
-        pr = node.pricing
+        hw = hardware.get(node.id)
+        pr = pricing.get(node.id)
         if min_vram_gb and (not hw or not hw.gpu_vram_gb or hw.gpu_vram_gb < min_vram_gb):
             continue
         if gpu_model and (not hw or not hw.gpu_model or gpu_model.lower() not in hw.gpu_model.lower()):

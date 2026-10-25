@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from app.models.deployment import DeploymentStatus
+from app.documents.deployment import DeploymentStatus
 
 
 class DeploymentCreate(BaseModel):

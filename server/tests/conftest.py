@@ -1,7 +1,7 @@
 """Shared test fixtures.
 
-Database-backed tests run against TEST_DATABASE_URL when it is set (CI points it at PostgreSQL),
-otherwise against an in-memory SQLite database. Each test gets a freshly created schema.
+Database-backed tests run against MongoDB (see tests/mongo_support.py): TEST_MONGODB_URL when set (CI), otherwise a
+private single-node replica set started from the local mongod. Each test gets a fresh database.
 """
 
 import os
@@ -12,59 +12,29 @@ os.environ["PAYSTACK_SECRET_KEY"] = ""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
-from app.core import database
 from app.core.ratelimit import limiters
 from app.core.security import create_access_token, get_password_hash
+from app.documents import Customer, Model, ModelArtifact, Provider, User
 from app.main import app
-from app.models import Base, Customer, Model, ModelArtifact, Provider, User
-
-TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 pytest_plugins = ["tests.mongo_support"]
 
 
 @pytest.fixture
-async def db_engine():
-    kwargs = (
-        {"poolclass": StaticPool, "connect_args": {"check_same_thread": False}} if "sqlite" in TEST_DATABASE_URL else {}
-    )
-    engine = create_async_engine(TEST_DATABASE_URL, **kwargs)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-
-
-@pytest.fixture
-async def session_factory(db_engine):
-    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@pytest.fixture
-async def db(session_factory):
-    async with session_factory() as session:
-        yield session
+async def db(mdb):
+    """A Session on the test database, like the one request handlers get."""
+    return mdb
 
 
 @pytest.fixture(autouse=True)
-async def _isolate_state(session_factory):
-    """Route all database access (request dependencies, background jobs, streaming metering) to the test
-    database and reset in-process limiters between tests."""
-    previous = database._session_factory
-    database.set_session_factory(session_factory)
+def _isolate_state():
+    """Reset in-process limiters between tests."""
     limiters.use_memory()
-    yield
-    database.set_session_factory(previous)
 
 
 @pytest.fixture
-async def client(session_factory):
+async def client(mongo):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

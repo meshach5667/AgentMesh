@@ -14,16 +14,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import settings
-from app.core.db_utils import rowcount
+from app.core.database import Session
 from app.core.logging import redact
 from app.core.timeutil import utcnow
-from app.models.ai import AiInferenceNode, AiInferenceRequest
+from app.documents.ai import AiInferenceNode, AiInferenceRequest
 
-OPEN = ("PENDING", "LEASED")
+OPEN = ["PENDING", "LEASED"]
 MAX_RESULT_CHARS = 16_000
 
 
@@ -36,19 +33,12 @@ def options() -> dict[str, Any]:
     return {"num_ctx": settings.AI_NUM_CTX, "num_predict": settings.AI_MAX_TOKENS, "temperature": 0}
 
 
-async def depth(db: AsyncSession) -> int:
-    return int(
-        (
-            await db.execute(
-                select(func.count()).select_from(AiInferenceRequest).where(AiInferenceRequest.status.in_(OPEN))
-            )
-        ).scalar()
-        or 0
-    )
+async def depth(db: Session) -> int:
+    return await db.count(AiInferenceRequest, {"status": {"$in": OPEN}})
 
 
 async def enqueue(
-    db: AsyncSession, *, run_id: uuid.UUID | None, purpose: str, messages: list[dict], schema: dict
+    db: Session, *, run_id: uuid.UUID | None, purpose: str, messages: list[dict], schema: dict
 ) -> AiInferenceRequest:
     """Queue one model call. Raises QueueFull when the queue is at its limit. Does not commit."""
     if await depth(db) >= settings.AI_QUEUE_MAX_LENGTH:
@@ -70,14 +60,13 @@ async def enqueue(
     return req
 
 
-async def cancel(db: AsyncSession, request_id: uuid.UUID | None) -> None:
+async def cancel(db: Session, request_id: uuid.UUID | None) -> None:
     if request_id is None:
         return
-    await db.execute(
-        update(AiInferenceRequest)
-        .where(AiInferenceRequest.id == request_id, AiInferenceRequest.status.in_(OPEN))
-        .values(status="CANCELLED", payload=None, completed_at=utcnow())
-        .execution_options(synchronize_session=False)
+    await db.update_one(
+        AiInferenceRequest,
+        {"_id": request_id, "status": {"$in": OPEN}},
+        {"$set": {"status": "CANCELLED", "payload": None, "completed_at": utcnow()}},
     )
 
 
@@ -111,12 +100,12 @@ def node_can_serve(node: AiInferenceNode, now: datetime | None = None) -> bool:
     )
 
 
-async def health(db: AsyncSession) -> Health:
+async def health(db: Session) -> Health:
     now = utcnow()
     queued = await depth(db)
     if not settings.AI_INFERENCE_TOKEN:
         return Health("not_configured", settings.OLLAMA_MODEL, queued, "No AI inference machine is configured.")
-    nodes = list((await db.execute(select(AiInferenceNode).order_by(AiInferenceNode.id))).scalars().all())
+    nodes = await db.find(AiInferenceNode, sort=[("_id", 1)])
     fresh = [n for n in nodes if node_is_fresh(n, now)]
     if any(node_can_serve(n, now) for n in fresh):
         return Health("available", settings.OLLAMA_MODEL, queued, "The AI service is available.", nodes)
@@ -132,7 +121,7 @@ async def health(db: AsyncSession) -> Health:
     )
 
 
-async def heartbeat(db: AsyncSession, node_id: str, report: dict[str, Any]) -> AiInferenceNode:
+async def heartbeat(db: Session, node_id: str, report: dict[str, Any]) -> AiInferenceNode:
     now = utcnow()
     node = await db.get(AiInferenceNode, node_id)
     if node is None:
@@ -157,58 +146,43 @@ async def heartbeat(db: AsyncSession, node_id: str, report: dict[str, Any]) -> A
 # --- Leases --------------------------------------------------------------------------------------------
 
 
-async def lease(db: AsyncSession, node: AiInferenceNode, max_requests: int) -> list[AiInferenceRequest]:
+async def lease(db: Session, node: AiInferenceNode, max_requests: int) -> list[AiInferenceRequest]:
     """Hand out up to ``max_requests`` queued requests, within the global AI_MAX_CONCURRENT_REQUESTS limit."""
     now = utcnow()
     if not node_can_serve(node, now):
         return []
-    in_flight = (
-        await db.execute(
-            select(func.count())
-            .select_from(AiInferenceRequest)
-            .where(AiInferenceRequest.status == "LEASED", AiInferenceRequest.lease_expires_at >= now)
-        )
-    ).scalar() or 0
-    room = min(max_requests, settings.AI_MAX_CONCURRENT_REQUESTS - int(in_flight))
+    in_flight = await db.count(AiInferenceRequest, {"status": "LEASED", "lease_expires_at": {"$gte": now}})
+    room = min(max_requests, settings.AI_MAX_CONCURRENT_REQUESTS - in_flight)
     if room <= 0:
         return []
-    candidates = (
-        (
-            await db.execute(
-                select(AiInferenceRequest)
-                .where(
-                    AiInferenceRequest.status == "PENDING",
-                    AiInferenceRequest.expires_at > now,
-                    AiInferenceRequest.model == node.model,
-                )
-                .order_by(AiInferenceRequest.created_at)
-                .limit(room)
-            )
-        )
-        .scalars()
-        .all()
+    candidates = await db.find(
+        AiInferenceRequest,
+        {"status": "PENDING", "expires_at": {"$gt": now}, "model": node.model},
+        sort=[("created_at", 1)],
+        limit=room,
     )
     leased = []
     for req in candidates:
-        claimed = await db.execute(
-            update(AiInferenceRequest)
-            .where(AiInferenceRequest.id == req.id, AiInferenceRequest.status == "PENDING")
-            .values(
-                status="LEASED",
-                attempts=req.attempts + 1,
-                node_id=node.id,
-                lease_expires_at=now + timedelta(seconds=settings.AI_REQUEST_TIMEOUT),
-            )
-            .execution_options(synchronize_session=False)
+        claimed = await db.update_one(
+            AiInferenceRequest,
+            {"_id": req.id, "status": "PENDING"},
+            {
+                "$set": {
+                    "status": "LEASED",
+                    "attempts": req.attempts + 1,
+                    "node_id": node.id,
+                    "lease_expires_at": now + timedelta(seconds=settings.AI_REQUEST_TIMEOUT),
+                }
+            },
         )
-        if rowcount(claimed) == 1:
+        if claimed:
             leased.append(req)
     await db.commit()
     return leased
 
 
 async def complete(
-    db: AsyncSession,
+    db: Session,
     node_id: str,
     request_id: uuid.UUID,
     *,
@@ -248,39 +222,21 @@ async def complete(
         else:
             values.update(status="FAILED", payload=None, completed_at=now)
         values.update(error_code=(error_code or "INFERENCE_ERROR")[:50], error=redact(error or "")[:500])
-    result = await db.execute(
-        update(AiInferenceRequest)
-        .where(
-            AiInferenceRequest.id == req.id,
-            AiInferenceRequest.status == "LEASED",
-            AiInferenceRequest.node_id == node_id,
-        )
-        .values(**values)
-        .execution_options(synchronize_session=False)
-    )
-    if rowcount(result) != 1:
+    if not await db.update_one(
+        AiInferenceRequest, {"_id": req.id, "status": "LEASED", "node_id": node_id}, {"$set": values}
+    ):
         return None
     for key, value in values.items():
         setattr(req, key, value)
     return req
 
 
-async def expire(db: AsyncSession, now: datetime | None = None) -> set[uuid.UUID]:
+async def expire(db: Session, now: datetime | None = None) -> set[uuid.UUID]:
     """Expire requests that waited too long and re-queue (or fail) unanswered leases. Returns the runs
     affected. Does not commit."""
     now = now or utcnow()
     runs: set[uuid.UUID] = set()
-    stale = (
-        (
-            await db.execute(
-                select(AiInferenceRequest).where(
-                    AiInferenceRequest.status == "LEASED", AiInferenceRequest.lease_expires_at < now
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    stale = await db.find(AiInferenceRequest, {"status": "LEASED", "lease_expires_at": {"$lt": now}})
     for req in stale:
         retry = req.attempts < req.max_attempts and req.expires_at > now
         values: dict[str, Any] = (
@@ -289,37 +245,23 @@ async def expire(db: AsyncSession, now: datetime | None = None) -> set[uuid.UUID
             else {"status": "FAILED", "payload": None, "completed_at": now}
         )
         values.update(error_code="TIMEOUT", error="The inference machine did not answer in time")
-        await db.execute(
-            update(AiInferenceRequest)
-            .where(AiInferenceRequest.id == req.id, AiInferenceRequest.status == "LEASED")
-            .values(**values)
-            .execution_options(synchronize_session=False)
-        )
+        await db.update_one(AiInferenceRequest, {"_id": req.id, "status": "LEASED"}, {"$set": values})
         if not retry and req.run_id:
             runs.add(req.run_id)
-    waiting = (
-        (
-            await db.execute(
-                select(AiInferenceRequest).where(
-                    AiInferenceRequest.status == "PENDING", AiInferenceRequest.expires_at <= now
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    waiting = await db.find(AiInferenceRequest, {"status": "PENDING", "expires_at": {"$lte": now}})
     for req in waiting:
-        await db.execute(
-            update(AiInferenceRequest)
-            .where(AiInferenceRequest.id == req.id, AiInferenceRequest.status == "PENDING")
-            .values(
-                status="EXPIRED",
-                payload=None,
-                completed_at=now,
-                error_code="EXPIRED",
-                error="No inference machine answered before the request expired",
-            )
-            .execution_options(synchronize_session=False)
+        await db.update_one(
+            AiInferenceRequest,
+            {"_id": req.id, "status": "PENDING"},
+            {
+                "$set": {
+                    "status": "EXPIRED",
+                    "payload": None,
+                    "completed_at": now,
+                    "error_code": "EXPIRED",
+                    "error": "No inference machine answered before the request expired",
+                }
+            },
         )
         if req.run_id:
             runs.add(req.run_id)

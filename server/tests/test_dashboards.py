@@ -2,8 +2,8 @@
 
 import uuid
 
-from app.models import Deployment
-from app.models.usage import UsageRecord
+from app.documents import Deployment
+from app.documents.usage import UsageRecord
 
 
 async def _deploy(client, headers, model):

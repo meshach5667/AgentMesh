@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
-from app.models import Deployment
+from app.documents import Deployment
 
 
 async def _deploy(client, headers, model):

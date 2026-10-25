@@ -168,9 +168,8 @@ async def test_redis_concurrency_is_shared_and_expires():
 
 async def test_gateway_streams_through_another_replica(client, db, make_user, enroll_node, ollama_model):
     """Full gateway path: the app's broker is replica A, the worker is connected to replica B."""
-    from sqlalchemy import select
 
-    from app.models import UsageRecord
+    from app.documents import UsageRecord
     from app.services.tunnel import broker as app_broker
 
     server = fakeredis.FakeServer()
@@ -199,7 +198,7 @@ async def test_gateway_streams_through_another_replica(client, db, make_user, en
         )
         assert resp.status_code == 200 and resp.text == "0\n1\n2\n"
         assert worker.received[0]["body"]["model"] == "qwen2.5:0.5b"
-        rows = (await db.execute(select(UsageRecord))).scalars().all()
+        rows = await db.find(UsageRecord)
         assert len(rows) == 1 and rows[0].outcome == "success"
         assert json.loads(json.dumps(rows[0].request_id))  # recorded under the gateway's request id
     finally:

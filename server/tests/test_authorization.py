@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
-from app.models import Deployment, Node, UsageRecord
+from app.documents import Deployment, Node, UsageRecord
 
 
 @pytest.mark.parametrize("role", ["admin", "operator"])
@@ -68,11 +68,9 @@ async def test_model_creation_requires_staff(client, make_user):
 
 
 async def _deployment_for(db, customer_user, model):
-    from sqlalchemy import select
+    from app.documents import Customer
 
-    from app.models import Customer
-
-    customer = (await db.execute(select(Customer).where(Customer.user_id == customer_user.id))).scalars().one()
+    customer = await db.find_one(Customer, {"user_id": customer_user.id})
     dep = Deployment(customer_id=customer.id, model_id=model.id, config={}, status="REQUESTED")
     db.add(dep)
     await db.commit()

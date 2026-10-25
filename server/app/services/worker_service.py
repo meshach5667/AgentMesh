@@ -7,20 +7,18 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.db_utils import rowcount as _rowcount
+from app.core.database import Session
 from app.core.ids import parse_uuid
 from app.core.security import generate_secret, hash_secret, verify_node_api_key
 from app.core.timeutil import utcnow
-from app.models.deployment import Deployment
-from app.models.deployment import DeploymentStatus as S
-from app.models.model import ModelArtifact
-from app.models.node import Node, NodeHardware, NodeStatus
-from app.models.user import Provider
-from app.models.worker import CommandStatus, NodeCommand, NodeEnrollmentToken
+from app.documents.deployment import Deployment
+from app.documents.deployment import DeploymentStatus as S
+from app.documents.model import ModelArtifact
+from app.documents.node import Node, NodeHardware, NodeStatus
+from app.documents.user import Provider
+from app.documents.worker import CommandStatus, NodeCommand, NodeEnrollmentToken
 from app.schemas.worker import (
     Allocation,
     CommandOut,
@@ -42,8 +40,8 @@ NODE_CREDENTIAL_PREFIX = "am_node_"
 # --- Enrollment -----------------------------------------------------------------------------------------
 
 
-async def create_enrollment_token(db: AsyncSession, user_id, name: str | None, region: str | None) -> dict:
-    provider = (await db.execute(select(Provider).where(Provider.user_id == user_id))).scalar_one_or_none()
+async def create_enrollment_token(db: Session, user_id, name: str | None, region: str | None) -> dict:
+    provider = await db.find_one(Provider, {"user_id": user_id})
     if not provider:
         raise HTTPException(status_code=403, detail="Provider account required")
     token = generate_secret(ENROLL_TOKEN_PREFIX)
@@ -88,29 +86,22 @@ def _apply_capabilities(node: Node, hw: HardwareReport | None, alloc: Allocation
         node.runtimes = [r.model_dump() for r in runtimes]
 
 
-async def enroll(db: AsyncSession, req: EnrollRequest) -> dict:
+async def enroll(db: Session, req: EnrollRequest) -> dict:
     if req.protocol_version not in settings.WORKER_PROTOCOL_VERSIONS:
         raise HTTPException(status_code=426, detail="Unsupported worker protocol version")
 
     now = utcnow()
     token_hash = hash_secret(req.token)
     # Claim the token atomically so it can be used exactly once.
-    claimed = await db.execute(
-        update(NodeEnrollmentToken)
-        .where(
-            NodeEnrollmentToken.token_hash == token_hash,
-            NodeEnrollmentToken.used_at.is_(None),
-            NodeEnrollmentToken.expires_at > now,
-        )
-        .values(used_at=now)
-        .execution_options(synchronize_session=False)
+    claimed = await db.update_one(
+        NodeEnrollmentToken,
+        {"token_hash": token_hash, "used_at": None, "expires_at": {"$gt": now}},
+        {"$set": {"used_at": now}},
     )
-    if _rowcount(claimed) != 1:
+    token = await db.find_one(NodeEnrollmentToken, {"token_hash": token_hash}) if claimed else None
+    if token is None:
         await db.rollback()
         raise HTTPException(status_code=401, detail="Enrollment token is invalid, expired, or already used")
-    token = (
-        await db.execute(select(NodeEnrollmentToken).where(NodeEnrollmentToken.token_hash == token_hash))
-    ).scalar_one()
 
     credential = generate_secret(NODE_CREDENTIAL_PREFIX)
     hw = req.hardware
@@ -163,9 +154,7 @@ async def enroll(db: AsyncSession, req: EnrollRequest) -> dict:
     }
 
 
-async def authenticate_worker(
-    db: AsyncSession, node_id: str | None, credential: str | None, protocol: str | None
-) -> Node:
+async def authenticate_worker(db: Session, node_id: str | None, credential: str | None, protocol: str | None) -> Node:
     if protocol is not None:
         try:
             version = int(protocol)
@@ -191,7 +180,7 @@ async def authenticate_worker(
 # --- Heartbeat and reconciliation ----------------------------------------------------------------------
 
 
-async def heartbeat(db: AsyncSession, node: Node, req: HeartbeatRequest) -> HeartbeatResponse:
+async def heartbeat(db: Session, node: Node, req: HeartbeatRequest) -> HeartbeatResponse:
     now = utcnow()
     node.last_heartbeat = now
     node.status = NodeStatus.ONLINE
@@ -204,7 +193,7 @@ async def heartbeat(db: AsyncSession, node: Node, req: HeartbeatRequest) -> Hear
     stop: list[uuid.UUID] = []
     reported = {r.deployment_id: r for r in req.deployments}
     if reported:
-        rows = (await db.execute(select(Deployment).where(Deployment.id.in_(list(reported))))).scalars().all()
+        rows = await db.find(Deployment, {"_id": {"$in": list(reported)}})
         known = {d.id: d for d in rows}
         for dep_id, report in reported.items():
             dep = known.get(dep_id)
@@ -223,19 +212,7 @@ async def heartbeat(db: AsyncSession, node: Node, req: HeartbeatRequest) -> Hear
                 dep.last_health_at = now
 
     # Deployments the control plane believes are serving on this node but the worker no longer reports.
-    missing = (
-        (
-            await db.execute(
-                select(Deployment).where(
-                    Deployment.node_id == node.id,
-                    Deployment.status == S.READY.value,
-                    Deployment.id.not_in(list(reported) or [uuid.UUID(int=0)]),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    missing = await db.find(Deployment, {"node_id": node.id, "status": S.READY.value, "_id": {"$nin": list(reported)}})
     for dep in missing:
         await lifecycle.transition(
             db, dep, S.UNHEALTHY, actor="system", message="Worker no longer reports this workload"
@@ -251,7 +228,7 @@ async def heartbeat(db: AsyncSession, node: Node, req: HeartbeatRequest) -> Hear
     )
 
 
-async def disconnect(db: AsyncSession, node: Node) -> None:
+async def disconnect(db: Session, node: Node) -> None:
     """Graceful worker shutdown: stop scheduling onto the node right away instead of waiting for the
     heartbeat timeout, and handle its deployments like any other node loss."""
     from app.background.monitors import handle_node_loss
@@ -264,41 +241,36 @@ async def disconnect(db: AsyncSession, node: Node) -> None:
 # --- Command queue -------------------------------------------------------------------------------------
 
 
-async def _lease_once(db: AsyncSession, node: Node, max_commands: int) -> list[CommandOut]:
+async def _lease_once(db: Session, node: Node, max_commands: int) -> list[CommandOut]:
     now = utcnow()
-    candidates = (
-        (
-            await db.execute(
-                select(NodeCommand)
-                .where(
-                    NodeCommand.node_id == node.id,
-                    or_(
-                        NodeCommand.status == CommandStatus.PENDING.value,
-                        (NodeCommand.status == CommandStatus.LEASED.value) & (NodeCommand.lease_expires_at < now),
-                    ),
-                    NodeCommand.attempts < NodeCommand.max_attempts,
-                )
-                .order_by(NodeCommand.created_at)
-                .limit(max_commands)
-            )
-        )
-        .scalars()
-        .all()
+    candidates = await db.find(
+        NodeCommand,
+        {
+            "node_id": node.id,
+            "$or": [
+                {"status": CommandStatus.PENDING.value},
+                {"status": CommandStatus.LEASED.value, "lease_expires_at": {"$lt": now}},
+            ],
+            "$expr": {"$lt": ["$attempts", "$max_attempts"]},
+        },
+        sort=[("created_at", 1)],
+        limit=max_commands,
     )
     leased: list[CommandOut] = []
     for cmd in candidates:
-        result = await db.execute(
-            update(NodeCommand)
-            .where(NodeCommand.id == cmd.id, NodeCommand.status == cmd.status, NodeCommand.attempts == cmd.attempts)
-            .values(
-                status=CommandStatus.LEASED.value,
-                attempts=cmd.attempts + 1,
-                lease_expires_at=now + timedelta(seconds=settings.COMMAND_LEASE_SECONDS),
-                updated_at=now,
-            )
-            .execution_options(synchronize_session=False)
+        claimed = await db.update_one(
+            NodeCommand,
+            {"_id": cmd.id, "status": cmd.status, "attempts": cmd.attempts},
+            {
+                "$set": {
+                    "status": CommandStatus.LEASED.value,
+                    "attempts": cmd.attempts + 1,
+                    "lease_expires_at": now + timedelta(seconds=settings.COMMAND_LEASE_SECONDS),
+                    "updated_at": now,
+                }
+            },
         )
-        if _rowcount(result) == 1:
+        if claimed:
             leased.append(
                 CommandOut(
                     id=cmd.id,
@@ -312,7 +284,7 @@ async def _lease_once(db: AsyncSession, node: Node, max_commands: int) -> list[C
     return leased
 
 
-async def poll_commands(db: AsyncSession, node: Node, max_commands: int, wait_seconds: int) -> list[CommandOut]:
+async def poll_commands(db: Session, node: Node, max_commands: int, wait_seconds: int) -> list[CommandOut]:
     """Long-poll: return as soon as commands exist, or after ``wait_seconds`` with an empty list."""
     deadline = asyncio.get_running_loop().time() + wait_seconds
     while True:
@@ -322,7 +294,7 @@ async def poll_commands(db: AsyncSession, node: Node, max_commands: int, wait_se
         await asyncio.sleep(1.0)
 
 
-async def ack_command(db: AsyncSession, node: Node, command_id: str, status: str, error: str | None) -> None:
+async def ack_command(db: Session, node: Node, command_id: str, status: str, error: str | None) -> None:
     cmd = await db.get(NodeCommand, parse_uuid(command_id, "Command"))
     if cmd is None or cmd.node_id != node.id:
         raise HTTPException(status_code=404, detail="Command not found")
@@ -356,9 +328,7 @@ def deployment_endpoint(dep: Deployment) -> str:
 # --- Deployment status reports -------------------------------------------------------------------------
 
 
-async def report_deployment_status(
-    db: AsyncSession, node: Node, deployment_id: str, report: DeploymentStatusReport
-) -> dict:
+async def report_deployment_status(db: Session, node: Node, deployment_id: str, report: DeploymentStatusReport) -> dict:
     dep = await db.get(Deployment, parse_uuid(deployment_id, "Deployment"))
     if dep is None or dep.node_id != node.id:
         raise HTTPException(status_code=404, detail="Deployment not found")

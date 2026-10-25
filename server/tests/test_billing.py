@@ -5,11 +5,11 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select, update
+from bson import Decimal128
 
 from app.core.timeutil import utcnow
-from app.models import Charge, Deployment, DeploymentEvent, PricingRule, UsageRecord, Wallet
-from app.models.transaction import Transaction
+from app.documents import Charge, Deployment, DeploymentEvent, PricingRule, UsageRecord, Wallet
+from app.documents.transaction import Transaction
 from app.services import billing_service, reconciliation_service
 from app.services.billing_service import Interval, ready_intervals
 
@@ -53,23 +53,18 @@ async def _ready_deployment(client, db, enroll_node, make_user, model, *, credit
 async def _set_ready_at(db, dep_id: str, when):
     """Move the deployment's history so READY began at ``when`` (tests control time)."""
     did = uuid.UUID(dep_id)
-    await db.execute(
-        update(DeploymentEvent)
-        .where(DeploymentEvent.deployment_id == did)
-        .values(created_at=when - timedelta(minutes=1))
+    await db.update_many(
+        DeploymentEvent, {"deployment_id": did}, {"$set": {"created_at": when - timedelta(minutes=1)}}
     )
-    await db.execute(
-        update(DeploymentEvent)
-        .where(DeploymentEvent.deployment_id == did, DeploymentEvent.to_status == "READY")
-        .values(created_at=when)
-    )
-    await db.execute(update(Deployment).where(Deployment.id == did).values(created_at=when - timedelta(minutes=2)))
+    await db.update_many(DeploymentEvent, {"deployment_id": did, "to_status": "READY"}, {"$set": {"created_at": when}})
+    await db.update_one(Deployment, {"_id": did}, {"$set": {"created_at": when - timedelta(minutes=2)}})
     await db.commit()
+    db.expire_all()
 
 
 async def _wallet(db, user_id) -> Decimal:
     db.expire_all()
-    w = (await db.execute(select(Wallet).where(Wallet.user_id == user_id))).scalars().first()
+    w = await db.find_one(Wallet, {"user_id": user_id})
     return Decimal(w.balance) if w else Decimal(0)
 
 
@@ -97,7 +92,7 @@ def test_ready_intervals_follow_lifecycle_events():
 async def test_no_price_means_measured_but_free(client, db, enroll_node, make_user, ollama_model):
     dep, *_ = await _ready_deployment(client, db, enroll_node, make_user, ollama_model, credit=None)
     assert await billing_service.run_billing(utcnow() + timedelta(hours=2)) == 0
-    assert (await db.execute(select(Charge))).scalars().all() == []
+    assert await db.find(Charge) == []
     pricing = (await client.get("/api/v1/billing/pricing")).json()
     assert pricing["current"] is None and pricing["currency"] == "NGN"
 
@@ -125,7 +120,7 @@ async def test_ready_time_and_tokens_are_charged_and_split(client, db, enroll_no
 
     now = start + timedelta(hours=1)
     assert await billing_service.run_billing(now) == 1
-    charge = (await db.execute(select(Charge))).scalars().one()
+    charge = await db.find_one(Charge)
     # 1 h x (1 core x 10 + 1 GB x 20) = 30; tokens 0.5M x 1000/M + 0.25M x 2000/M = 1000
     assert charge.ready_seconds == pytest.approx(3600, abs=1)
     assert (charge.cpu_cores, charge.ram_mb) == (1, 1024)
@@ -143,7 +138,7 @@ async def test_ready_time_and_tokens_are_charged_and_split(client, db, enroll_no
     # Running again for the same instant is a no-op; a later run only rates the new time.
     assert await billing_service.run_billing(now) == 0
     assert await billing_service.run_billing(now + timedelta(minutes=10)) == 1
-    second = (await db.execute(select(Charge).order_by(Charge.period_start.desc()))).scalars().first()
+    second = await db.find_one(Charge, sort=[("period_start", -1)])
     assert second.period_start == now and second.ready_seconds == pytest.approx(600, abs=1)
 
     report = await reconciliation_service.report(db)
@@ -164,7 +159,7 @@ async def test_price_change_mid_window_is_split(client, db, enroll_node, make_us
     dep, *_ = await _ready_deployment(client, db, enroll_node, make_user, ollama_model)
     await _set_ready_at(db, dep["id"], start)
     assert await billing_service.run_billing(start + timedelta(hours=2)) == 1  # the second hour is free
-    charge = (await db.execute(select(Charge))).scalars().one()
+    charge = await db.find_one(Charge)
     assert charge.period_end == cheaper.effective_from
     assert charge.resource_amount == pytest.approx(Decimal(30), abs=Decimal("0.01"))
 
@@ -185,7 +180,7 @@ async def test_unhealthy_time_is_not_charged(client, db, enroll_node, make_user,
     )
     await db.commit()
     await billing_service.run_billing(start + timedelta(hours=1))
-    charge = (await db.execute(select(Charge))).scalars().one()
+    charge = await db.find_one(Charge)
     assert charge.ready_seconds == pytest.approx(900, abs=1)
 
 
@@ -246,7 +241,7 @@ async def test_reconciliation_detects_a_tampered_balance(client, db, make_user):
     user, customer = await make_user("customer")
     await client.post("/api/v1/wallets/deposit", json={"amount": "50"}, headers=customer)
     assert (await reconciliation_service.report(db))["ok"]
-    await db.execute(update(Wallet).where(Wallet.user_id == user.id).values(balance=Decimal("75")))
+    await db.update_one(Wallet, {"user_id": user.id}, {"$set": {"balance": Decimal128("75")}})
     await db.commit()
     report = await reconciliation_service.report(db)
     assert not report["ok"]
@@ -254,7 +249,7 @@ async def test_reconciliation_detects_a_tampered_balance(client, db, make_user):
 
 
 async def test_ledger_postings_are_idempotent(db, make_user):
-    from app.models.transaction import TransactionType
+    from app.documents.transaction import TransactionType
     from app.services import ledger_service
 
     user, _ = await make_user("customer")
@@ -263,9 +258,7 @@ async def test_ledger_postings_are_idempotent(db, make_user):
         await ledger_service.post(db, key="once", type=TransactionType.DEPOSIT, amount=Decimal(5), to_wallet=wallet)
     await db.commit()
     assert await ledger_service.balance(db, wallet.id) == Decimal(5)
-    assert (
-        len((await db.execute(select(Transaction).where(Transaction.idempotency_key == "once"))).scalars().all()) == 1
-    )
+    assert await db.count(Transaction, {"idempotency_key": "once"}) == 1
 
 
 async def test_billable_output_tokens_are_bounded_by_measured_bytes(client, db, enroll_node, make_user, ollama_model):
@@ -288,5 +281,5 @@ async def test_billable_output_tokens_are_bounded_by_measured_bytes(client, db, 
     )
     await db.commit()
     await billing_service.run_billing(start + timedelta(hours=1))
-    charge = (await db.execute(select(Charge))).scalars().one()
+    charge = await db.find_one(Charge)
     assert charge.output_tokens == 2048

@@ -8,17 +8,14 @@
     any non-terminal -> FAILED
 
 Terminal states: STOPPED, FAILED, CANCELLED. Every transition goes through ``transition``, which applies a
-compare-and-set UPDATE (so two concurrent writers cannot both move the same deployment) and appends a
+compare-and-set update (so two concurrent writers cannot both move the same deployment) and appends a
 DeploymentEvent row.
 """
 
-from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.db_utils import rowcount as _rowcount
+from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.models.deployment import Deployment, DeploymentEvent
-from app.models.deployment import DeploymentStatus as S
+from app.documents.deployment import Deployment, DeploymentEvent
+from app.documents.deployment import DeploymentStatus as S
 
 TERMINAL = frozenset({S.STOPPED, S.FAILED, S.CANCELLED})
 ACTIVE = frozenset(set(S) - TERMINAL)
@@ -48,7 +45,7 @@ def can_transition(current: str, new: str) -> bool:
 
 
 async def transition(
-    db: AsyncSession,
+    db: Session,
     deployment: Deployment,
     new: S,
     *,
@@ -78,13 +75,7 @@ async def transition(
         values["error_code"] = error_code
         values["error_message"] = message
 
-    result = await db.execute(
-        update(Deployment)
-        .where(Deployment.id == deployment.id, Deployment.status == current.value)
-        .values(**values)
-        .execution_options(synchronize_session=False)
-    )
-    if _rowcount(result) != 1:
+    if not await db.update_one(Deployment, {"_id": deployment.id, "status": current.value}, {"$set": values}):
         return False
     for key, value in values.items():
         setattr(deployment, key, value)
@@ -101,6 +92,6 @@ async def transition(
     return True
 
 
-async def record_event(db: AsyncSession, deployment: Deployment, *, actor: str, message: str) -> None:
+async def record_event(db: Session, deployment: Deployment, *, actor: str, message: str) -> None:
     """Progress note without a state change (e.g. model download percentage)."""
     db.add(DeploymentEvent(deployment_id=deployment.id, from_status=None, to_status=None, actor=actor, message=message))

@@ -4,12 +4,11 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import require_roles
-from app.models.user import UserRole
+from app.documents.user import UserRole
 from app.schemas.billing import (
     PaymentOut,
     PayoutAccountOut,
@@ -33,24 +32,24 @@ async def config():
 
 
 @router.post("/topups", response_model=PaymentOut, status_code=201)
-async def create_topup(req: TopupCreate, db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def create_topup(req: TopupCreate, db: Session = Depends(get_db), user=Depends(customer_only)):
     """Start a Paystack checkout. Redirect the customer to ``authorization_url``; the wallet is credited only
     after Paystack confirms the payment (webhook or verify)."""
     return await payments_service.create_topup(db, user, req.amount)
 
 
 @router.get("/topups", response_model=list[PaymentOut])
-async def list_topups(db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def list_topups(db: Session = Depends(get_db), user=Depends(customer_only)):
     return await payments_service.list_topups(db, user)
 
 
 @router.post("/topups/{reference}/verify", response_model=PaymentOut)
-async def verify_topup(reference: str, db: AsyncSession = Depends(get_db), user=Depends(customer_only)):
+async def verify_topup(reference: str, db: Session = Depends(get_db), user=Depends(customer_only)):
     return await payments_service.verify_topup(db, user, reference[:100])
 
 
 @router.post("/paystack/webhook", include_in_schema=False)
-async def paystack_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
     if not settings.payments_enabled:
         raise HTTPException(status_code=503, detail="Payments are not configured")
     client = request.client.host if request.client else ""
@@ -78,23 +77,23 @@ async def banks(_user=Depends(provider_only)):
 
 
 @router.get("/payout-account", response_model=PayoutAccountOut | None)
-async def get_payout_account(db: AsyncSession = Depends(get_db), user=Depends(provider_only)):
+async def get_payout_account(db: Session = Depends(get_db), user=Depends(provider_only)):
     return await payments_service.get_payout_account(db, user)
 
 
 @router.put("/payout-account", response_model=PayoutAccountOut)
-async def set_payout_account(req: PayoutAccountSet, db: AsyncSession = Depends(get_db), user=Depends(provider_only)):
+async def set_payout_account(req: PayoutAccountSet, db: Session = Depends(get_db), user=Depends(provider_only)):
     """Verify the account with Paystack and register it as a transfer recipient. Only the last four digits
     are stored."""
     return await payments_service.set_payout_account(db, user, req.account_number, req.bank_code)
 
 
 @router.get("/payouts", response_model=list[PayoutOut])
-async def list_payouts(db: AsyncSession = Depends(get_db), user=Depends(provider_only)):
+async def list_payouts(db: Session = Depends(get_db), user=Depends(provider_only)):
     return await payments_service.list_payouts(db, user)
 
 
 @router.post("/payouts", response_model=PayoutOut, status_code=201)
-async def request_payout(req: PayoutCreate, db: AsyncSession = Depends(get_db), user=Depends(provider_only)):
+async def request_payout(req: PayoutCreate, db: Session = Depends(get_db), user=Depends(provider_only)):
     """Hold ``amount`` from the wallet and queue a transfer (after operator approval when required)."""
     return await payments_service.request_payout(db, user, req.amount)

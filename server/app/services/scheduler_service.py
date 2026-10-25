@@ -4,14 +4,11 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import settings
-from app.core.db_utils import rowcount as _rowcount
+from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.models.node import Node, NodeStatus
-from app.models.reservation import ResourceReservation
+from app.documents.node import Node, NodeStatus
+from app.documents.reservation import ResourceReservation
 from app.services.catalog_service import ResourceRequest
 
 # Reasons a node was rejected, reported back to the customer in aggregate (never per node).
@@ -67,9 +64,8 @@ def offers_runtime(node: Node, runtime: str) -> bool:
     return any(r.get("name") == runtime and r.get("available") for r in (node.runtimes or []) if isinstance(r, dict))
 
 
-async def evaluate_nodes(db: AsyncSession, req: ResourceRequest, exclude: set | None = None) -> Evaluation:
-    result = await db.execute(select(Node).where(Node.mode.is_not(None)))
-    nodes = list(result.scalars().all())
+async def evaluate_nodes(db: Session, req: ResourceRequest, exclude: set | None = None) -> Evaluation:
+    nodes = await db.find(Node, {"mode": {"$ne": None}})
     ev = Evaluation()
     now = utcnow()
     for node in nodes:
@@ -104,35 +100,24 @@ async def evaluate_nodes(db: AsyncSession, req: ResourceRequest, exclude: set | 
     return ev
 
 
-async def try_reserve(db: AsyncSession, node: Node, deployment_id, req: ResourceRequest) -> bool:
-    """Atomically reserve capacity on one node. The conditional UPDATE only succeeds if the node still has
+async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceRequest) -> bool:
+    """Atomically reserve capacity on one node. The conditional update only succeeds if the node still has
     room at the moment it executes, so concurrent requests cannot oversubscribe. Does not commit."""
-    conditions = [
-        Node.id == node.id,
-        Node.status == NodeStatus.ONLINE,
-        Node.accepting_workloads.is_(True),
-        Node.worker_available.is_(True),
-    ]
+    wanted = {"cpu_cores": req.cpu_cores, "ram_mb": req.ram_mb, "disk_mb": req.disk_mb, "vram_mb": req.vram_mb}
+    conditions: dict = {
+        "_id": node.id,
+        "status": NodeStatus.ONLINE.value,
+        "accepting_workloads": True,
+        "worker_available": True,
+        "$expr": {
+            "$and": [
+                {"$lte": [{"$add": [f"$reserved_{r}", amount]}, f"$allocated_{r}"]} for r, amount in wanted.items()
+            ]
+        },
+    }
     if req.community:  # re-checked here so a provider opting out cannot race a reservation
-        conditions.append(Node.accepts_community_models.is_(True))
-    result = await db.execute(
-        update(Node)
-        .where(
-            *conditions,
-            Node.reserved_cpu_cores + req.cpu_cores <= Node.allocated_cpu_cores,
-            Node.reserved_ram_mb + req.ram_mb <= Node.allocated_ram_mb,
-            Node.reserved_disk_mb + req.disk_mb <= Node.allocated_disk_mb,
-            Node.reserved_vram_mb + req.vram_mb <= Node.allocated_vram_mb,
-        )
-        .values(
-            reserved_cpu_cores=Node.reserved_cpu_cores + req.cpu_cores,
-            reserved_ram_mb=Node.reserved_ram_mb + req.ram_mb,
-            reserved_disk_mb=Node.reserved_disk_mb + req.disk_mb,
-            reserved_vram_mb=Node.reserved_vram_mb + req.vram_mb,
-        )
-        .execution_options(synchronize_session=False)
-    )
-    if _rowcount(result) != 1:
+        conditions["accepts_community_models"] = True
+    if not await db.update_one(Node, conditions, {"$inc": {f"reserved_{r}": amount for r, amount in wanted.items()}}):
         return False
     db.add(
         ResourceReservation(
@@ -147,7 +132,7 @@ async def try_reserve(db: AsyncSession, node: Node, deployment_id, req: Resource
     return True
 
 
-async def schedule(db: AsyncSession, deployment_id, req: ResourceRequest, exclude: set | None = None) -> Node:
+async def schedule(db: Session, deployment_id, req: ResourceRequest, exclude: set | None = None) -> Node:
     ev = await evaluate_nodes(db, req, exclude)
     for node in ev.eligible:
         if await try_reserve(db, node, deployment_id, req):
@@ -156,34 +141,28 @@ async def schedule(db: AsyncSession, deployment_id, req: ResourceRequest, exclud
     raise NoEligibleNode(ev)
 
 
-async def release_reservation(db: AsyncSession, deployment_id) -> bool:
+async def release_reservation(db: Session, deployment_id) -> bool:
     """Release a deployment's reservation exactly once. Safe to call repeatedly. Does not commit."""
-    reservation = (
-        await db.execute(
-            select(ResourceReservation).where(
-                ResourceReservation.deployment_id == deployment_id, ResourceReservation.status == "ACTIVE"
-            )
-        )
-    ).scalar_one_or_none()
+    reservation = await db.find_one(ResourceReservation, {"deployment_id": deployment_id, "status": "ACTIVE"})
     if reservation is None:
         return False
-    claimed = await db.execute(
-        update(ResourceReservation)
-        .where(ResourceReservation.id == reservation.id, ResourceReservation.status == "ACTIVE")
-        .values(status="RELEASED", released_at=utcnow())
-        .execution_options(synchronize_session=False)
+    claimed = await db.update_one(
+        ResourceReservation,
+        {"_id": reservation.id, "status": "ACTIVE"},
+        {"$set": {"status": "RELEASED", "released_at": utcnow()}},
     )
-    if _rowcount(claimed) != 1:
+    if not claimed:
         return False
-    await db.execute(
-        update(Node)
-        .where(Node.id == reservation.node_id)
-        .values(
-            reserved_cpu_cores=Node.reserved_cpu_cores - reservation.cpu_cores,
-            reserved_ram_mb=Node.reserved_ram_mb - reservation.ram_mb,
-            reserved_disk_mb=Node.reserved_disk_mb - reservation.disk_mb,
-            reserved_vram_mb=Node.reserved_vram_mb - reservation.vram_mb,
-        )
-        .execution_options(synchronize_session=False)
+    await db.update_one(
+        Node,
+        {"_id": reservation.node_id},
+        {
+            "$inc": {
+                "reserved_cpu_cores": -reservation.cpu_cores,
+                "reserved_ram_mb": -reservation.ram_mb,
+                "reserved_disk_mb": -reservation.disk_mb,
+                "reserved_vram_mb": -reservation.vram_mb,
+            }
+        },
     )
     return True

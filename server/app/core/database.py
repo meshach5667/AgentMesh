@@ -1,34 +1,12 @@
-from contextlib import asynccontextmanager
+"""Database access for request handlers, background jobs and scripts: MongoDB unit-of-work sessions.
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+``get_db`` is the request dependency and ``session_scope`` the context manager used outside requests (background
+jobs, streaming responses that outlive the request). See app.core.mongo for how a Session works.
+"""
 
-from app.core.config import settings
+from app.core.mongo import Session, get_mongo_db, init_mongo, mongo_session
 
-engine = create_async_engine(settings.DATABASE_URL, echo=settings.SQL_ECHO)
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+get_db = get_mongo_db
+session_scope = mongo_session
 
-
-class Base(DeclarativeBase):
-    pass
-
-
-# Session factory used outside request dependencies (background jobs, streaming responses that outlive the
-# request's dependency scope). Tests replace it via set_session_factory.
-_session_factory: async_sessionmaker = AsyncSessionLocal
-
-
-def set_session_factory(factory: async_sessionmaker) -> None:
-    global _session_factory
-    _session_factory = factory
-
-
-@asynccontextmanager
-async def session_scope():
-    async with _session_factory() as session:
-        yield session
-
-
-async def get_db():
-    async with _session_factory() as session:
-        yield session
+__all__ = ["Session", "get_db", "init_mongo", "session_scope"]

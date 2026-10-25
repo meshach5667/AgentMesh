@@ -16,6 +16,7 @@ each step is idempotent (submission uses an idempotency key derived from the run
 """
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -24,24 +25,21 @@ from enum import StrEnum
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import session_scope
-from app.core.db_utils import rowcount
+from app.core.database import Session, session_scope
 from app.core.logging import redact
 from app.core.timeutil import utcnow
-from app.models.ai import AiInferenceRequest, AiRun, AiRunEvent
-from app.models.billing import Charge
-from app.models.deployment import Deployment
-from app.models.deployment import DeploymentStatus as DepStatus
-from app.models.model import Model, ModelArtifact
-from app.models.user import Customer, User
+from app.documents.ai import AiInferenceRequest, AiRun, AiRunEvent
+from app.documents.billing import Charge
+from app.documents.deployment import Deployment
+from app.documents.deployment import DeploymentStatus as DepStatus
+from app.documents.model import Model, ModelArtifact
+from app.documents.user import Customer, User
 from app.services import audit_service, deployment_lifecycle
 from app.services.ai import agent, inference_queue, tools
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan
-from app.services.catalog_service import artifact_problem
+from app.services.catalog_service import artifact_problem, load_artifacts
 from app.services.ledger_service import money
 
 logger = logging.getLogger(__name__)
@@ -85,7 +83,7 @@ class InvalidRunTransition(Exception):  # noqa: N818
 # --- Small helpers -------------------------------------------------------------------------------------
 
 
-def event(db: AsyncSession, run: AiRun, kind: str, message: str, data: dict | None = None) -> None:
+def event(db: Session, run: AiRun, kind: str, message: str, data: dict | None = None) -> None:
     db.add(
         AiRunEvent(
             id=uuid.uuid4(),
@@ -98,9 +96,7 @@ def event(db: AsyncSession, run: AiRun, kind: str, message: str, data: dict | No
     )
 
 
-def transition(
-    db: AsyncSession, run: AiRun, new: R, message: str, *, error_code: str | None = None, **fields: Any
-) -> None:
+def transition(db: Session, run: AiRun, new: R, message: str, *, error_code: str | None = None, **fields: Any) -> None:
     current = R(run.status)
     if new == current:
         return
@@ -135,17 +131,18 @@ def limits_of(run: AiRun) -> AutonomyLimits:
     return AutonomyLimits.model_validate(run.limits)
 
 
-async def actual_cost(db: AsyncSession, run: AiRun) -> Decimal:
+async def actual_cost(db: Session, run: AiRun) -> Decimal:
     ids = [uuid.UUID(str(d)) for d in (run.deployment_ids or [])]
     if not ids:
         return Decimal(0)
-    total = (
-        await db.execute(select(func.coalesce(func.sum(Charge.amount), 0)).where(Charge.deployment_id.in_(ids)))
-    ).scalar()
-    return money(total or 0)
+    rows = await db.aggregate(
+        Charge,
+        [{"$match": {"deployment_id": {"$in": ids}}}, {"$group": {"_id": None, "amount": {"$sum": "$amount"}}}],
+    )
+    return money(rows[0]["amount"]) if rows else Decimal(0)
 
 
-async def projected_cost(db: AsyncSession, run: AiRun, dep: Deployment | None) -> Decimal:
+async def projected_cost(db: Session, run: AiRun, dep: Deployment | None) -> Decimal:
     """Rated charges plus READY time not rated yet, at the estimated hourly price."""
     cost = await actual_cost(db, run)
     if dep is not None and dep.status == DepStatus.READY.value and run.estimated_hourly:
@@ -157,9 +154,10 @@ async def projected_cost(db: AsyncSession, run: AiRun, dep: Deployment | None) -
     return cost
 
 
-async def catalog_for(db: AsyncSession, limits: AutonomyLimits) -> list[dict]:
+async def catalog_for(db: Session, limits: AutonomyLimits) -> list[dict]:
     """Approved models with at least one valid artifact the limits allow. Trusted data for the prompt."""
-    models = (await db.execute(select(Model).where(Model.is_approved.is_(True)))).scalars().all()
+    models = await db.find(Model, {"is_approved": True}, sort=[("created_at", 1), ("_id", 1)])
+    await load_artifacts(db, models)
     out = []
     for m in models:
         artifacts: list[ModelArtifact] = [
@@ -190,7 +188,7 @@ async def catalog_for(db: AsyncSession, limits: AutonomyLimits) -> list[dict]:
 
 @dataclass
 class Ctx:
-    db: AsyncSession
+    db: Session
     run: AiRun
     user: User
     customer: Customer
@@ -366,17 +364,9 @@ async def _plan(ctx: Ctx) -> None:
 
 async def _stray_deployments(ctx: Ctx) -> list[Deployment]:
     """Deployments created for this run that it never recorded (a crash right after submission)."""
-    return list(
-        (
-            await ctx.db.execute(
-                select(Deployment).where(
-                    Deployment.customer_id == ctx.customer.id,
-                    Deployment.idempotency_key.like(f"ai:{ctx.run.id}:%"),
-                )
-            )
-        )
-        .scalars()
-        .all()
+    return await ctx.db.find(
+        Deployment,
+        {"customer_id": ctx.customer.id, "idempotency_key": {"$regex": f"^{re.escape(f'ai:{ctx.run.id}:')}"}},
     )
 
 
@@ -606,16 +596,15 @@ STEPS = {
 # --- Driver --------------------------------------------------------------------------------------------
 
 
-async def _claim(db: AsyncSession, run_id: uuid.UUID, owner: str) -> bool:
+async def _claim(db: Session, run_id: uuid.UUID, owner: str) -> bool:
     now = utcnow()
-    result = await db.execute(
-        update(AiRun)
-        .where(AiRun.id == run_id, or_(AiRun.lease_until.is_(None), AiRun.lease_until < now))
-        .values(lease_owner=owner, lease_until=now + timedelta(seconds=LEASE_SECONDS))
-        .execution_options(synchronize_session=False)
+    claimed = await db.update_one(
+        AiRun,
+        {"_id": run_id, "$or": [{"lease_until": None}, {"lease_until": {"$lt": now}}]},
+        {"$set": {"lease_owner": owner, "lease_until": now + timedelta(seconds=LEASE_SECONDS)}},
     )
     await db.commit()
-    return rowcount(result) == 1
+    return claimed
 
 
 async def advance(run_id: uuid.UUID, max_steps: int = 6) -> str | None:
@@ -649,11 +638,8 @@ async def advance(run_id: uuid.UUID, max_steps: int = 6) -> str | None:
             logger.exception("AI run %s failed to advance", run_id)
             raise
         finally:
-            await db.execute(
-                update(AiRun)
-                .where(AiRun.id == run_id, AiRun.lease_owner == owner)
-                .values(lease_owner=None, lease_until=None)
-                .execution_options(synchronize_session=False)
+            await db.update_one(
+                AiRun, {"_id": run_id, "lease_owner": owner}, {"$set": {"lease_owner": None, "lease_until": None}}
             )
             await db.commit()
 
@@ -663,18 +649,12 @@ async def run_due(limit: int = 100) -> int:
     async with session_scope() as db:
         await inference_queue.expire(db)
         await db.commit()
-        ids = (
-            (
-                await db.execute(
-                    select(AiRun.id)
-                    .where(AiRun.status.not_in([s.value for s in TERMINAL]))
-                    .order_by(AiRun.updated_at)
-                    .limit(limit)
-                )
+        ids = [
+            r.id
+            for r in await db.find(
+                AiRun, {"status": {"$nin": [s.value for s in TERMINAL]}}, sort=[("updated_at", 1)], limit=limit
             )
-            .scalars()
-            .all()
-        )
+        ]
     for run_id in ids:
         try:
             await advance(run_id)
@@ -686,20 +666,20 @@ async def run_due(limit: int = 100) -> int:
 # --- Customer operations -------------------------------------------------------------------------------
 
 
-async def get_customer(db: AsyncSession, user: User) -> Customer:
-    customer = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
+async def get_customer(db: Session, user: User) -> Customer:
+    customer = await db.find_one(Customer, {"user_id": user.id})
     if customer is None:
         raise HTTPException(status_code=403, detail="Customer account required")
     return customer
 
 
-async def get_run_for_user(db: AsyncSession, run_id: str, user: User) -> AiRun:
+async def get_run_for_user(db: Session, run_id: str, user: User) -> AiRun:
     from app.core.dependencies import is_staff
     from app.core.ids import parse_uuid
 
     run = await db.get(AiRun, parse_uuid(run_id, "AI deployment"))
     if run is not None and not is_staff(user):
-        customer = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
+        customer = await db.find_one(Customer, {"user_id": user.id})
         if customer is None or run.customer_id != customer.id:
             run = None
     if run is None:
@@ -709,15 +689,11 @@ async def get_run_for_user(db: AsyncSession, run_id: str, user: User) -> AiRun:
 
 
 async def create_run(
-    db: AsyncSession, user: User, request_text: str, limits: AutonomyLimits, idempotency_key: str | None
+    db: Session, user: User, request_text: str, limits: AutonomyLimits, idempotency_key: str | None
 ) -> AiRun:
     customer = await get_customer(db, user)
     if idempotency_key:
-        existing = (
-            await db.execute(
-                select(AiRun).where(AiRun.customer_id == customer.id, AiRun.idempotency_key == idempotency_key)
-            )
-        ).scalar_one_or_none()
+        existing = await db.find_one(AiRun, {"customer_id": customer.id, "idempotency_key": idempotency_key})
         if existing is not None:
             return existing
     health = await inference_queue.health(db)
@@ -751,11 +727,7 @@ async def create_run(
     except Exception:
         await db.rollback()
         if idempotency_key:
-            existing = (
-                await db.execute(
-                    select(AiRun).where(AiRun.customer_id == customer.id, AiRun.idempotency_key == idempotency_key)
-                )
-            ).scalar_one_or_none()
+            existing = await db.find_one(AiRun, {"customer_id": customer.id, "idempotency_key": idempotency_key})
             if existing is not None:
                 return existing
         raise
@@ -781,22 +753,17 @@ async def create_run(
     return run
 
 
-async def request_cancel(db: AsyncSession, run: AiRun, user: User) -> None:
+async def request_cancel(db: Session, run: AiRun, user: User) -> None:
     if R(run.status) in TERMINAL:
         raise HTTPException(status_code=409, detail=f"AI deployment is already {run.status}")
-    await db.execute(
-        update(AiRun)
-        .where(AiRun.id == run.id)
-        .values(cancel_requested=True)
-        .execution_options(synchronize_session=False)
-    )
+    await db.update_one(AiRun, {"_id": run.id}, {"$set": {"cancel_requested": True}})
     audit_service.record(
         db, actor_id=user.id, action="ai_deployment.cancel_requested", resource_type="ai_run", resource_id=run.id
     )
     await db.commit()
 
 
-async def view(db: AsyncSession, run: AiRun) -> dict:
+async def view(db: Session, run: AiRun) -> dict:
     dep = await db.get(Deployment, run.deployment_id) if run.deployment_id else None
     if dep is not None:
         await db.refresh(dep)

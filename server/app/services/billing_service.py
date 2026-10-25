@@ -21,21 +21,18 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import session_scope
-from app.core.db_utils import rowcount
+from app.core.database import Session, session_scope
 from app.core.timeutil import utcnow
-from app.models.billing import Charge, PricingRule
-from app.models.deployment import Deployment, DeploymentEvent
-from app.models.deployment import DeploymentStatus as S
-from app.models.node import Node
-from app.models.reservation import ResourceReservation
-from app.models.transaction import TransactionType
-from app.models.usage import UsageRecord
-from app.models.user import Customer, Provider, User
+from app.documents.billing import Charge, PricingRule
+from app.documents.deployment import Deployment, DeploymentEvent
+from app.documents.deployment import DeploymentStatus as S
+from app.documents.node import Node
+from app.documents.reservation import ResourceReservation
+from app.documents.transaction import TransactionType
+from app.documents.usage import UsageRecord
+from app.documents.user import Customer, Provider, User
 from app.services import audit_service, ledger_service
 from app.services.ledger_service import money
 
@@ -49,22 +46,18 @@ MILLION = Decimal(1_000_000)
 # --- Pricing rules -----------------------------------------------------------------------------------------
 
 
-async def active_rule(db: AsyncSession, at: datetime | None = None) -> PricingRule | None:
+async def active_rule(db: Session, at: datetime | None = None) -> PricingRule | None:
     at = at or utcnow()
-    query = (
-        select(PricingRule)
-        .where(PricingRule.effective_from <= at)
-        .order_by(PricingRule.effective_from.desc(), PricingRule.version.desc())
-        .limit(1)
+    return await db.find_one(
+        PricingRule, {"effective_from": {"$lte": at}}, sort=[("effective_from", -1), ("version", -1)]
     )
-    return (await db.execute(query)).scalars().first()
 
 
-async def list_rules(db: AsyncSession) -> list[PricingRule]:
-    return list((await db.execute(select(PricingRule).order_by(PricingRule.version.desc()))).scalars().all())
+async def list_rules(db: Session) -> list[PricingRule]:
+    return await db.find(PricingRule, sort=[("version", -1)])
 
 
-async def create_rule(db: AsyncSession, data: dict, actor: User) -> PricingRule:
+async def create_rule(db: Session, data: dict, actor: User) -> PricingRule:
     """Add a new pricing version. Versions are immutable and cannot take effect in the past, so charges
     already rated are never re-priced."""
     now = utcnow()
@@ -73,7 +66,8 @@ async def create_rule(db: AsyncSession, data: dict, actor: User) -> PricingRule:
         effective = effective.astimezone(UTC).replace(tzinfo=None)
     if effective < now - timedelta(seconds=60):
         raise HTTPException(status_code=422, detail="effective_from cannot be in the past")
-    latest = (await db.execute(select(func.max(PricingRule.version)))).scalar() or 0
+    newest = await db.find_one(PricingRule, sort=[("version", -1)])
+    latest = newest.version if newest else 0
     rule = PricingRule(
         id=uuid.uuid4(),
         version=latest + 1,
@@ -117,7 +111,7 @@ def is_free(rule: PricingRule | None) -> bool:
     )
 
 
-async def require_prepaid(db: AsyncSession, user_id: uuid.UUID, cpu_cores: int, ram_mb: int, vram_mb: int) -> None:
+async def require_prepaid(db: Session, user_id: uuid.UUID, cpu_cores: int, ram_mb: int, vram_mb: int) -> None:
     """Refuse a deployment the customer cannot afford for BILLING_MIN_PREPAID_HOURS of its reservation."""
     rule = await active_rule(db)
     if is_free(rule):
@@ -177,64 +171,59 @@ def _clip(intervals: list[Interval], start: datetime, end: datetime) -> dict[uui
     return seconds
 
 
-async def _tokens(db: AsyncSession, dep_id: uuid.UUID, start: datetime, end: datetime) -> dict:
-    rows = (
-        await db.execute(
-            select(
-                UsageRecord.node_id,
-                func.coalesce(func.sum(UsageRecord.input_tokens), 0),
-                # Output tokens are reported by the provider's runtime. Bound them by the response bytes the
-                # gateway itself counted (every token costs at least one byte), so they cannot be inflated freely.
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (
-                                UsageRecord.response_bytes.is_not(None)
-                                & (UsageRecord.output_tokens > UsageRecord.response_bytes),
-                                UsageRecord.response_bytes,
-                            ),
-                            else_=UsageRecord.output_tokens,
-                        )
-                    ),
-                    0,
-                ),
-            )
-            .where(
-                UsageRecord.deployment_id == dep_id,
-                UsageRecord.kind == "inference",
-                UsageRecord.created_at >= start,
-                UsageRecord.created_at < end,
-            )
-            .group_by(UsageRecord.node_id)
-        )
-    ).all()
-    return {node: (int(i), int(o)) for node, i, o in rows}
+async def _tokens(db: Session, dep_id: uuid.UUID, start: datetime, end: datetime) -> dict:
+    rows = await db.aggregate(
+        UsageRecord,
+        [
+            {
+                "$match": {
+                    "deployment_id": dep_id,
+                    "kind": "inference",
+                    "created_at": {"$gte": start, "$lt": end},
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$node_id",
+                    "input": {"$sum": "$input_tokens"},
+                    # Output tokens are reported by the provider's runtime. Bound them by the response bytes the
+                    # gateway itself counted (every token costs at least one byte), so they cannot be inflated.
+                    "output": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$ne": [{"$ifNull": ["$response_bytes", None]}, None]},
+                                        {"$gt": ["$output_tokens", "$response_bytes"]},
+                                    ]
+                                },
+                                "$response_bytes",
+                                "$output_tokens",
+                            ]
+                        }
+                    },
+                }
+            },
+        ],
+    )
+    return {r["_id"]: (int(r["input"] or 0), int(r["output"] or 0)) for r in rows}
 
 
-async def _reservation(db: AsyncSession, dep_id: uuid.UUID, node_id: uuid.UUID | None) -> tuple[int, int, int]:
+async def _reservation(db: Session, dep_id: uuid.UUID, node_id: uuid.UUID | None) -> tuple[int, int, int]:
     if node_id is None:
         return 0, 0, 0
-    res = (
-        (
-            await db.execute(
-                select(ResourceReservation)
-                .where(ResourceReservation.deployment_id == dep_id, ResourceReservation.node_id == node_id)
-                .order_by(ResourceReservation.created_at.desc())
-                .limit(1)
-            )
-        )
-        .scalars()
-        .first()
+    res = await db.find_one(
+        ResourceReservation, {"deployment_id": dep_id, "node_id": node_id}, sort=[("created_at", -1)]
     )
     return (res.cpu_cores, res.ram_mb, res.vram_mb) if res else (0, 0, 0)
 
 
-async def _provider_user(db: AsyncSession, node_id: uuid.UUID | None) -> uuid.UUID | None:
+async def _provider_user(db: Session, node_id: uuid.UUID | None) -> uuid.UUID | None:
     if node_id is None:
         return None
-    return (
-        await db.execute(select(Provider.user_id).join(Node, Node.owner_id == Provider.id).where(Node.id == node_id))
-    ).scalar()
+    node = await db.get(Node, node_id)
+    provider = await db.get(Provider, node.owner_id) if node else None
+    return provider.user_id if provider else None
 
 
 # --- Rating ------------------------------------------------------------------------------------------------
@@ -251,40 +240,25 @@ def price(rule: PricingRule, ready_seconds: float, cpu: int, ram_mb: int, vram_m
     return resource, tokens, amount, amount - fee, fee
 
 
-async def _rules_in(db: AsyncSession, start: datetime, end: datetime) -> list[tuple[datetime, PricingRule | None]]:
+async def _rules_in(db: Session, start: datetime, end: datetime) -> list[tuple[datetime, PricingRule | None]]:
     """(segment start, rule) for each pricing segment of [start, end)."""
-    later = (
-        (
-            await db.execute(
-                select(PricingRule)
-                .where(PricingRule.effective_from > start, PricingRule.effective_from < end)
-                .order_by(PricingRule.effective_from)
-            )
-        )
-        .scalars()
-        .all()
+    later = await db.find(
+        PricingRule, {"effective_from": {"$gt": start, "$lt": end}}, sort=[("effective_from", 1), ("version", 1)]
     )
     segments: list[tuple[datetime, PricingRule | None]] = [(start, await active_rule(db, start))]
     segments += [(r.effective_from, r) for r in later]
     return segments
 
 
-async def rate_deployment(db: AsyncSession, dep: Deployment, now: datetime) -> list[Charge]:
+async def rate_deployment(db: Session, dep: Deployment, now: datetime) -> list[Charge]:
     """Rate [metered_until, now) for one deployment and settle it. Does not commit; raises on a lost race."""
     start = dep.metered_until or dep.created_at
-    events = list(
-        (
-            await db.execute(
-                select(DeploymentEvent)
-                .where(DeploymentEvent.deployment_id == dep.id, DeploymentEvent.to_status.is_not(None))
-                .order_by(DeploymentEvent.created_at)
-            )
-        )
-        .scalars()
-        .all()
+    events = await db.find(
+        DeploymentEvent, {"deployment_id": dep.id, "to_status": {"$ne": None}}, sort=[("created_at", 1)]
     )
     intervals = ready_intervals(events, now, dep.node_id)
-    customer_user = (await db.execute(select(Customer.user_id).where(Customer.id == dep.customer_id))).scalar()
+    customer = await db.get(Customer, dep.customer_id)
+    customer_user = customer.user_id if customer else None
     charges: list[Charge] = []
     segments = await _rules_in(db, start, now)
     for i, (seg_start, rule) in enumerate(segments):
@@ -329,22 +303,16 @@ async def rate_deployment(db: AsyncSession, dep: Deployment, now: datetime) -> l
             await db.flush()
             await _settle_charge(db, charge, customer_wallet, provider_wallet)
             charges.append(charge)
-    moved = await db.execute(
-        update(Deployment)
-        .where(
-            Deployment.id == dep.id,
-            Deployment.metered_until.is_(None) if dep.metered_until is None else Deployment.metered_until == start,
-        )
-        .values(metered_until=now)
-        .execution_options(synchronize_session=False)
+    moved = await db.update_one(
+        Deployment, {"_id": dep.id, "metered_until": dep.metered_until}, {"$set": {"metered_until": now}}
     )
-    if rowcount(moved) != 1:
+    if not moved:
         raise RuntimeError(f"Billing watermark for deployment {dep.id} moved concurrently")
     dep.metered_until = now
     return charges
 
 
-async def _settle_charge(db: AsyncSession, charge: Charge, customer_wallet, provider_wallet) -> None:
+async def _settle_charge(db: Session, charge: Charge, customer_wallet, provider_wallet) -> None:
     key = f"charge:{charge.id}"
     period = f"{charge.period_start:%Y-%m-%d %H:%M}-{charge.period_end:%H:%M} UTC"
     await ledger_service.post(
@@ -379,29 +347,22 @@ async def _settle_charge(db: AsyncSession, charge: Charge, customer_wallet, prov
     )
 
 
-async def _stop_if_exhausted(db: AsyncSession, customer_wallet_id: uuid.UUID) -> int:
+async def _stop_if_exhausted(db: Session, customer_wallet_id: uuid.UUID) -> int:
     """Stop a customer's running deployments once their prepaid balance is used up."""
-    from app.models.wallet import Wallet
+    from app.documents.wallet import Wallet
     from app.services import deployment_lifecycle as lifecycle
     from app.services.deployment_service import _stop
 
     wallet = await db.get(Wallet, customer_wallet_id)
-    remaining = await ledger_service.balance(db, customer_wallet_id)  # balances move in SQL, not on the ORM object
+    remaining = await ledger_service.balance(db, customer_wallet_id)  # balances move atomically, not in memory
     if wallet is None or remaining > 0:
         return 0
-    deps = (
-        (
-            await db.execute(
-                select(Deployment)
-                .join(Customer, Deployment.customer_id == Customer.id)
-                .where(
-                    Customer.user_id == wallet.user_id,
-                    Deployment.status.in_([s.value for s in lifecycle.ACTIVE if s != S.STOPPING]),
-                )
-            )
-        )
-        .scalars()
-        .all()
+    customer = await db.find_one(Customer, {"user_id": wallet.user_id})
+    if customer is None:
+        return 0
+    deps = await db.find(
+        Deployment,
+        {"customer_id": customer.id, "status": {"$in": [s.value for s in lifecycle.ACTIVE if s != S.STOPPING]}},
     )
     for dep in deps:
         await _stop(db, dep, actor="system", message="Stopped: the wallet balance is used up. Top up to deploy again.")
@@ -418,22 +379,17 @@ async def _stop_if_exhausted(db: AsyncSession, customer_wallet_id: uuid.UUID) ->
     return len(deps)
 
 
-async def due_deployments(db: AsyncSession, now: datetime) -> list[Deployment]:
-    rows = (
-        (
-            await db.execute(
-                select(Deployment).where(
-                    Deployment.was_ready.is_(True),
-                    or_(
-                        Deployment.metered_until.is_(None),
-                        Deployment.ended_at.is_(None),
-                        Deployment.metered_until < Deployment.ended_at,
-                    ),
-                )
-            )
-        )
-        .scalars()
-        .all()
+async def due_deployments(db: Session, now: datetime) -> list[Deployment]:
+    rows = await db.find(
+        Deployment,
+        {
+            "was_ready": True,
+            "$or": [
+                {"metered_until": None},
+                {"ended_at": None},
+                {"$expr": {"$lt": ["$metered_until", "$ended_at"]}},
+            ],
+        },
     )
     interval = timedelta(seconds=settings.BILLING_INTERVAL_SECONDS)
     return [d for d in rows if d.ended_at is not None or now - (d.metered_until or d.created_at) >= interval]

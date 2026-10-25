@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models.user import UserRole
+from app.documents.user import UserRole
 
 SELF_REGISTRATION_ROLES = (UserRole.customer, UserRole.provider)
 

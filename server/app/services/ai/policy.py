@@ -12,10 +12,10 @@ from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.model import Model, ModelArtifact
+from app.core.database import Session
+from app.documents.model import Model, ModelArtifact
 from app.services import billing_service, ledger_service
 from app.services.catalog_service import (
     MAX_NUM_CTX,
@@ -123,7 +123,7 @@ def resource_violations(req: ResourceRequest, limits: AutonomyLimits) -> list[st
     return out
 
 
-async def hourly_cost(db: AsyncSession, req: ResourceRequest) -> tuple[bool, str, Decimal]:
+async def hourly_cost(db: Session, req: ResourceRequest) -> tuple[bool, str, Decimal]:
     """(priced, currency, hourly price) for a reservation at the pricing version in force now."""
     rule = await billing_service.active_rule(db)
     if billing_service.is_free(rule):
@@ -137,7 +137,7 @@ async def hourly_cost(db: AsyncSession, req: ResourceRequest) -> tuple[bool, str
 
 
 async def check_plan(
-    db: AsyncSession, plan: DeploymentPlan, limits: AutonomyLimits, user_id: uuid.UUID, *, check_balance: bool = True
+    db: Session, plan: DeploymentPlan, limits: AutonomyLimits, user_id: uuid.UUID, *, check_balance: bool = True
 ) -> PlanCheck:
     """Validate a proposed plan. Candidates are the runtimes that satisfy every limit, in preference order."""
     check = PlanCheck(ok=False)
@@ -196,7 +196,7 @@ async def check_plan(
     return check
 
 
-async def _approved_model(db: AsyncSession, model_id: uuid.UUID) -> Model:
+async def _approved_model(db: Session, model_id: uuid.UUID) -> Model:
     model = await db.get(Model, model_id)
     if model is None or not model.is_approved:
         raise HTTPException(status_code=404, detail="model is not in the approved catalog")

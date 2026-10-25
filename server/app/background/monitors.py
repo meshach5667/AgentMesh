@@ -8,15 +8,13 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
-
 from app.core.config import settings
 from app.core.database import session_scope
 from app.core.timeutil import utcnow
-from app.models.deployment import Deployment
-from app.models.deployment import DeploymentStatus as S
-from app.models.node import Node, NodeStatus
-from app.models.worker import CommandStatus, CommandType, NodeCommand
+from app.documents.deployment import Deployment
+from app.documents.deployment import DeploymentStatus as S
+from app.documents.node import Node, NodeStatus
+from app.documents.worker import CommandStatus, CommandType, NodeCommand
 from app.services import deployment_lifecycle as lifecycle
 from app.services import placement_service
 from app.services.scheduler_service import release_reservation
@@ -36,18 +34,7 @@ async def _fail(db, dep: Deployment, code: str, message: str, *, cleanup: bool) 
 async def handle_node_loss(db, node: Node, reason: str) -> None:
     """A node went away. Deployments still provisioning there move immediately; serving deployments become
     UNHEALTHY and move only if the node does not come back within UNHEALTHY_GRACE_SECONDS. Does not commit."""
-    deps = (
-        (
-            await db.execute(
-                select(Deployment).where(
-                    Deployment.node_id == node.id,
-                    Deployment.status.in_([*PROVISIONING_STATES, S.READY.value]),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    deps = await db.find(Deployment, {"node_id": node.id, "status": {"$in": [*PROVISIONING_STATES, S.READY.value]}})
     for dep in deps:
         if dep.status == S.READY.value:
             await lifecycle.transition(db, dep, S.UNHEALTHY, actor="system", message=reason)
@@ -61,18 +48,8 @@ async def run_stale_nodes(now: datetime | None = None) -> int:
     now = now or utcnow()
     cutoff = now - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
     async with session_scope() as db:
-        nodes = (
-            (
-                await db.execute(
-                    select(Node).where(
-                        Node.status == NodeStatus.ONLINE.value,
-                        Node.mode.is_not(None),
-                        Node.last_heartbeat < cutoff,
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        nodes = await db.find(
+            Node, {"status": NodeStatus.ONLINE.value, "mode": {"$ne": None}, "last_heartbeat": {"$lt": cutoff}}
         )
         for node in nodes:
             node.status = NodeStatus.OFFLINE.value
@@ -85,7 +62,7 @@ async def run_deployment_timeouts(now: datetime | None = None) -> int:
     now = now or utcnow()
     changed = 0
     async with session_scope() as db:
-        deps = (await db.execute(select(Deployment).where(Deployment.status.in_(PROVISIONING_STATES)))).scalars().all()
+        deps = await db.find(Deployment, {"status": {"$in": list(PROVISIONING_STATES)}})
         for dep in deps:
             last_progress = dep.updated_at or dep.created_at
             if now - dep.created_at > timedelta(seconds=settings.PROVISION_MAX_SECONDS):
@@ -97,7 +74,7 @@ async def run_deployment_timeouts(now: datetime | None = None) -> int:
                 await _fail(db, dep, "PROVISION_STALLED", "No provisioning progress reported by the node", cleanup=True)
                 changed += 1
 
-        stopping = (await db.execute(select(Deployment).where(Deployment.status == S.STOPPING.value))).scalars().all()
+        stopping = await db.find(Deployment, {"status": S.STOPPING.value})
         for dep in stopping:
             if now - (dep.updated_at or dep.created_at) > timedelta(seconds=settings.STOP_TIMEOUT_SECONDS):
                 final = S.STOPPED if dep.was_ready else S.CANCELLED
@@ -107,7 +84,7 @@ async def run_deployment_timeouts(now: datetime | None = None) -> int:
                     await release_reservation(db, dep.id)
                     changed += 1
 
-        unhealthy = (await db.execute(select(Deployment).where(Deployment.status == S.UNHEALTHY.value))).scalars().all()
+        unhealthy = await db.find(Deployment, {"status": S.UNHEALTHY.value})
         for dep in unhealthy:
             if now - (dep.updated_at or dep.created_at) > timedelta(seconds=settings.UNHEALTHY_GRACE_SECONDS):
                 await _fail(db, dep, "UNHEALTHY_TIMEOUT", "Deployment stayed unhealthy", cleanup=True)
@@ -121,18 +98,13 @@ async def run_command_leases(now: datetime | None = None) -> int:
     deployment; a STOP that was never acknowledged is left to the stop timeout above."""
     now = now or utcnow()
     async with session_scope() as db:
-        cmds = (
-            (
-                await db.execute(
-                    select(NodeCommand).where(
-                        NodeCommand.status == CommandStatus.LEASED.value,
-                        NodeCommand.lease_expires_at < now,
-                        NodeCommand.attempts >= NodeCommand.max_attempts,
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        cmds = await db.find(
+            NodeCommand,
+            {
+                "status": CommandStatus.LEASED.value,
+                "lease_expires_at": {"$lt": now},
+                "$expr": {"$gte": ["$attempts", "$max_attempts"]},
+            },
         )
         for cmd in cmds:
             cmd.status = CommandStatus.FAILED.value

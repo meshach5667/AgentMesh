@@ -6,10 +6,9 @@ import uuid
 
 import httpx
 import pytest
-from sqlalchemy import select
 
 from app.core.config import settings
-from app.models import Model, NodeCommand
+from app.documents import Model, NodeCommand
 from app.services import huggingface
 from app.services.huggingface import license_problem, parse_reference, quantization_of
 
@@ -132,7 +131,7 @@ async def test_import_pins_commit_and_hash_from_hugging_face(client, db, make_us
     # Importing the same pinned file again returns the existing model instead of a duplicate.
     again = await _import(client, customer)
     assert again.json()["id"] == model["id"]
-    assert len((await db.execute(select(Model))).scalars().all()) == 1
+    assert await db.count(Model) == 1
 
 
 async def test_import_requires_customer_and_terms(client, make_user, hf):
@@ -249,9 +248,7 @@ async def test_only_opted_in_nodes_serve_community_models(client, db, make_user,
     assert (await _opt_in(client, node)).json()["accepts_community_models"] is True
     resp = await client.post("/api/v1/deployments", json={"model_id": model_id}, headers=customer)
     assert resp.status_code == 201, resp.text
-    cmd = (
-        await db.execute(select(NodeCommand).where(NodeCommand.deployment_id == uuid.UUID(resp.json()["id"])))
-    ).scalar_one()
+    cmd = await db.find_one(NodeCommand, {"deployment_id": uuid.UUID(resp.json()["id"])})
     assert cmd.payload["source"] == {
         "type": "huggingface",
         "repo": REPO,

@@ -137,13 +137,17 @@ async def test_flush_surfaces_duplicates_before_commit(mdb):
     await mdb.rollback()
 
 
-async def test_refresh_discards_local_changes(mdb):
+async def test_refresh_reloads_but_keeps_local_changes(mdb):
     node = _node(region="us")
     mdb.add(node)
     await mdb.commit()
-    node.region = "local-only"
+    node.region = "local"
+    await mdb.update_one(Node, {"_id": node.id}, {"$set": {"name": "renamed"}})
     await mdb.refresh(node)
-    assert node.region == "us" and not node.get_changes()
+    assert node.name == "renamed" and node.region == "local"
+    await mdb.commit()
+    fresh = await Session().get(Node, node.id)
+    assert fresh is not None and (fresh.name, fresh.region) == ("renamed", "local")
 
 
 async def test_transient_conflict_is_replayed(mdb, monkeypatch):
@@ -183,3 +187,14 @@ async def test_find_sort_skip_limit_and_count(mdb):
     assert [n.name for n in page] == ["n3", "n2"]
     assert await mdb.count(Node, {"allocated_ram_mb": {"$gte": 1000}}) == 4
     assert (await mdb.find_one(Node, sort=[("allocated_ram_mb", 1)])).name == "n0"
+
+
+async def test_queries_and_updates_autoflush_pending_changes(mdb):
+    node = _node(region="eu")
+    mdb.add(node)
+    assert await mdb.count(Node, {"region": "eu"}) == 1
+    node.region = "us"
+    assert [n.id for n in await mdb.find(Node, {"region": "us"})] == [node.id]
+    assert await mdb.update_one(Node, {"_id": node.id, "region": "us"}, {"$set": {"name": "n1"}})
+    await mdb.rollback()
+    assert await Session().count(Node) == 0

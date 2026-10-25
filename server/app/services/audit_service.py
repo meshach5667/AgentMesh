@@ -7,15 +7,13 @@ together or not at all. Secrets and prompt contents never go into ``details``.
 import uuid
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.core.database import Session
 from app.core.logging import client_ip_var, redact, request_id_var
-from app.models.audit import AuditLog
+from app.documents.audit import AuditLog
 
 
 def record(
-    db: AsyncSession,
+    db: Session,
     *,
     actor_id: uuid.UUID | None,
     action: str,
@@ -39,7 +37,7 @@ def record(
 
 
 async def search(
-    db: AsyncSession,
+    db: Session,
     *,
     action: str | None = None,
     resource_type: str | None = None,
@@ -47,13 +45,13 @@ async def search(
     actor_id: uuid.UUID | None = None,
     limit: int = 100,
 ) -> list[AuditLog]:
-    query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(min(max(limit, 1), 500))
+    filter: dict[str, Any] = {}
     if action:
-        query = query.where(AuditLog.action == action)
+        filter["action"] = action
     if resource_type:
-        query = query.where(AuditLog.resource_type == resource_type)
+        filter["resource_type"] = resource_type
     if resource_id:
-        query = query.where(AuditLog.resource_id == resource_id)
+        filter["resource_id"] = resource_id
     if actor_id:
-        query = query.where(AuditLog.user_id == actor_id)
-    return list((await db.execute(query)).scalars().all())
+        filter["user_id"] = actor_id
+    return await db.find(AuditLog, filter, sort=[("created_at", -1)], limit=min(max(limit, 1), 500))

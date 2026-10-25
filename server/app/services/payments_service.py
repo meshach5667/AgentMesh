@@ -16,24 +16,22 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
-from app.core.db_utils import rowcount
+from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.models.billing import Payment, PaymentEvent, PaymentStatus, Payout, PayoutAccount, PayoutStatus
-from app.models.transaction import Transaction, TransactionStatus, TransactionType
-from app.models.user import User
+from app.documents.billing import Payment, PaymentEvent, PaymentStatus, Payout, PayoutAccount, PayoutStatus
+from app.documents.transaction import Transaction, TransactionStatus, TransactionType
+from app.documents.user import User
 from app.services import audit_service, ledger_service, paystack
 from app.services.ledger_service import money
 from app.services.paystack import PaystackError, from_subunits
 
 logger = logging.getLogger(__name__)
 
-OPEN_PAYMENT = (PaymentStatus.INITIALIZED.value,)
-OPEN_PAYOUT = (PayoutStatus.REQUESTED.value, PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value)
+OPEN_PAYMENT = [PaymentStatus.INITIALIZED.value]
+OPEN_PAYOUT = [PayoutStatus.REQUESTED.value, PayoutStatus.PENDING.value, PayoutStatus.OTP_REQUIRED.value]
 
 
 def _require_payments() -> None:
@@ -62,7 +60,7 @@ def payments_config() -> dict[str, Any]:
 # --- Top-ups -----------------------------------------------------------------------------------------------
 
 
-async def create_topup(db: AsyncSession, user: User, amount: Decimal) -> Payment:
+async def create_topup(db: Session, user: User, amount: Decimal) -> Payment:
     _require_payments()
     amount = money(amount)
     if amount != amount.quantize(Decimal("0.01")):
@@ -113,7 +111,7 @@ async def create_topup(db: AsyncSession, user: User, amount: Decimal) -> Payment
     return payment
 
 
-async def apply_paystack_result(db: AsyncSession, payment: Payment, data: dict[str, Any], source: str) -> str:
+async def apply_paystack_result(db: Session, payment: Payment, data: dict[str, Any], source: str) -> str:
     """Apply a Paystack transaction record (from verify or a signed webhook) to a payment. Does not commit.
     Returns an outcome label."""
     status = str(data.get("status") or "")
@@ -142,30 +140,30 @@ async def apply_paystack_result(db: AsyncSession, payment: Payment, data: dict[s
             return "amount_mismatch"
         return await _credit(db, payment, data, source)
     if status in ("failed", "abandoned", "reversed"):
-        moved = await db.execute(
-            update(Payment)
-            .where(Payment.id == payment.id, Payment.status.in_(OPEN_PAYMENT))
-            .values(
-                status=PaymentStatus.ABANDONED.value if status == "abandoned" else PaymentStatus.FAILED.value,
-                failure_reason=str(data.get("gateway_response") or status)[:300],
-                verified_at=utcnow(),
-            )
-            .execution_options(synchronize_session=False)
+        moved = await db.update_one(
+            Payment,
+            {"_id": payment.id, "status": {"$in": OPEN_PAYMENT}},
+            {
+                "$set": {
+                    "status": PaymentStatus.ABANDONED.value if status == "abandoned" else PaymentStatus.FAILED.value,
+                    "failure_reason": str(data.get("gateway_response") or status)[:300],
+                    "verified_at": utcnow(),
+                }
+            },
         )
         await db.refresh(payment)
-        return status if rowcount(moved) else "already_closed"
+        return status if moved else "already_closed"
     return f"still_{status or 'unknown'}"
 
 
-async def _credit(db: AsyncSession, payment: Payment, data: dict[str, Any], source: str) -> str:
+async def _credit(db: Session, payment: Payment, data: dict[str, Any], source: str) -> str:
     now = utcnow()
-    moved = await db.execute(
-        update(Payment)
-        .where(Payment.id == payment.id, Payment.status.in_(OPEN_PAYMENT))
-        .values(status=PaymentStatus.SUCCEEDED.value, verified_at=now, paid_at=now)
-        .execution_options(synchronize_session=False)
+    moved = await db.update_one(
+        Payment,
+        {"_id": payment.id, "status": {"$in": OPEN_PAYMENT}},
+        {"$set": {"status": PaymentStatus.SUCCEEDED.value, "verified_at": now, "paid_at": now}},
     )
-    if rowcount(moved) != 1:
+    if not moved:
         return "already_credited"
     wallet = await ledger_service.wallet_for_user(db, payment.user_id)
     tx = await ledger_service.post(
@@ -177,11 +175,10 @@ async def _credit(db: AsyncSession, payment: Payment, data: dict[str, Any], sour
         reference=payment.reference,
         description=f"Paystack top-up ({settings.payments_mode} mode)",
     )
-    await db.execute(
-        update(Payment)
-        .where(Payment.id == payment.id)
-        .values(transaction_id=tx.id, channel=str(data.get("channel") or "")[:30] or None)
-        .execution_options(synchronize_session=False)
+    await db.update_one(
+        Payment,
+        {"_id": payment.id},
+        {"$set": {"transaction_id": tx.id, "channel": str(data.get("channel") or "")[:30] or None}},
     )
     audit_service.record(
         db,
@@ -195,14 +192,10 @@ async def _credit(db: AsyncSession, payment: Payment, data: dict[str, Any], sour
     return "credited"
 
 
-async def verify_topup(db: AsyncSession, user: User, reference: str) -> Payment:
+async def verify_topup(db: Session, user: User, reference: str) -> Payment:
     """Called when the customer returns from checkout: asks Paystack for the outcome."""
     _require_payments()
-    payment = (
-        (await db.execute(select(Payment).where(Payment.reference == reference, Payment.user_id == user.id)))
-        .scalars()
-        .first()
-    )
+    payment = await db.find_one(Payment, {"reference": reference, "user_id": user.id})
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
     if payment.status == PaymentStatus.INITIALIZED.value:
@@ -216,15 +209,14 @@ async def verify_topup(db: AsyncSession, user: User, reference: str) -> Payment:
     return payment
 
 
-async def list_topups(db: AsyncSession, user: User) -> list[Payment]:
-    q = select(Payment).where(Payment.user_id == user.id).order_by(Payment.created_at.desc()).limit(100)
-    return list((await db.execute(q)).scalars().all())
+async def list_topups(db: Session, user: User) -> list[Payment]:
+    return await db.find(Payment, {"user_id": user.id}, sort=[("created_at", -1)], limit=100)
 
 
 # --- Webhooks ----------------------------------------------------------------------------------------------
 
 
-async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> str:
+async def handle_webhook(db: Session, payload: dict[str, Any]) -> str:
     """Process one signature-verified Paystack event. Idempotent per event."""
     event = str(payload.get("event") or "")[:60]
     data = payload.get("data") or {}
@@ -236,15 +228,15 @@ async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> str:
     db.add(inbox)
     try:
         await db.flush()
-    except IntegrityError:
+    except DuplicateKeyError:
         await db.rollback()
         return "duplicate"
 
     if event == "charge.success" and reference:
-        payment = (await db.execute(select(Payment).where(Payment.reference == reference))).scalars().first()
+        payment = await db.find_one(Payment, {"reference": reference})
         outcome = await apply_paystack_result(db, payment, data, source="webhook") if payment else "unknown_reference"
     elif event.startswith("transfer.") and reference:
-        payout = (await db.execute(select(Payout).where(Payout.reference == reference))).scalars().first()
+        payout = await db.find_one(Payout, {"reference": reference})
         outcome = await apply_transfer_result(db, payout, data) if payout else "unknown_reference"
     else:
         outcome = "ignored"
@@ -266,11 +258,11 @@ async def list_banks() -> list[dict[str, Any]]:
     return [{"name": b.get("name"), "code": b.get("code")} for b in banks if b.get("active", True) and b.get("code")]
 
 
-async def get_payout_account(db: AsyncSession, user: User) -> PayoutAccount | None:
-    return (await db.execute(select(PayoutAccount).where(PayoutAccount.user_id == user.id))).scalars().first()
+async def get_payout_account(db: Session, user: User) -> PayoutAccount | None:
+    return await db.find_one(PayoutAccount, {"user_id": user.id})
 
 
-async def set_payout_account(db: AsyncSession, user: User, account_number: str, bank_code: str) -> PayoutAccount:
+async def set_payout_account(db: Session, user: User, account_number: str, bank_code: str) -> PayoutAccount:
     _require_payments()
     try:
         resolved = await paystack.resolve_account(account_number, bank_code)
@@ -310,7 +302,7 @@ async def set_payout_account(db: AsyncSession, user: User, account_number: str, 
     return account
 
 
-async def request_payout(db: AsyncSession, user: User, amount: Decimal) -> Payout:
+async def request_payout(db: Session, user: User, amount: Decimal) -> Payout:
     _require_payments()
     amount = money(amount)
     if amount != amount.quantize(Decimal("0.01")):
@@ -322,7 +314,7 @@ async def request_payout(db: AsyncSession, user: User, amount: Decimal) -> Payou
     account = await get_payout_account(db, user)
     if account is None:
         raise HTTPException(status_code=409, detail="Add a payout bank account first")
-    wallet = await ledger_service.wallet_for_user(db, user.id, lock=True)
+    wallet = await ledger_service.wallet_for_user(db, user.id)
     available = await ledger_service.balance(db, wallet.id)
     if amount > available:
         raise HTTPException(status_code=409, detail=f"Only {money(available)} {wallet.currency} is available")
@@ -367,28 +359,27 @@ async def request_payout(db: AsyncSession, user: User, amount: Decimal) -> Payou
     return payout
 
 
-async def list_payouts(db: AsyncSession, user: User | None, status: str | None = None) -> list[Payout]:
-    q = select(Payout).order_by(Payout.created_at.desc()).limit(200)
+async def list_payouts(db: Session, user: User | None, status: str | None = None) -> list[Payout]:
+    filter: dict[str, Any] = {}
     if user is not None:
-        q = q.where(Payout.user_id == user.id)
+        filter["user_id"] = user.id
     if status:
-        q = q.where(Payout.status == status)
-    return list((await db.execute(q)).scalars().all())
+        filter["status"] = status
+    return await db.find(Payout, filter, sort=[("created_at", -1)], limit=200)
 
 
-async def _hold(db: AsyncSession, payout: Payout) -> Transaction | None:
+async def _hold(db: Session, payout: Payout) -> Transaction | None:
     return await db.get(Transaction, payout.transaction_id) if payout.transaction_id else None
 
 
-async def _close(db: AsyncSession, payout: Payout, status: PayoutStatus, reason: str | None) -> bool:
+async def _close(db: Session, payout: Payout, status: PayoutStatus, reason: str | None) -> bool:
     """Move an open payout to a final state, settling or releasing the held funds. Does not commit."""
-    moved = await db.execute(
-        update(Payout)
-        .where(Payout.id == payout.id, Payout.status.in_(OPEN_PAYOUT))
-        .values(status=status.value, failure_reason=reason, completed_at=utcnow())
-        .execution_options(synchronize_session=False)
+    moved = await db.update_one(
+        Payout,
+        {"_id": payout.id, "status": {"$in": OPEN_PAYOUT}},
+        {"$set": {"status": status.value, "failure_reason": reason, "completed_at": utcnow()}},
     )
-    if rowcount(moved) != 1:
+    if not moved:
         return False
     hold = await _hold(db, payout)
     if hold is not None:
@@ -400,7 +391,7 @@ async def _close(db: AsyncSession, payout: Payout, status: PayoutStatus, reason:
     return True
 
 
-async def decide_payout(db: AsyncSession, payout_id: str, operator: User, approve: bool, reason: str | None) -> Payout:
+async def decide_payout(db: Session, payout_id: str, operator: User, approve: bool, reason: str | None) -> Payout:
     payout = await db.get(Payout, uuid.UUID(payout_id))
     if payout is None:
         raise HTTPException(status_code=404, detail="Payout not found")
@@ -424,17 +415,16 @@ async def decide_payout(db: AsyncSession, payout_id: str, operator: User, approv
     return await _send(db, payout, actor=operator)
 
 
-async def _send(db: AsyncSession, payout: Payout, actor: User | None) -> Payout:
+async def _send(db: Session, payout: Payout, actor: User | None) -> Payout:
     """Initiate the Paystack transfer. Commits."""
     account = await db.get(PayoutAccount, payout.payout_account_id)
-    moved = await db.execute(
-        update(Payout)
-        .where(Payout.id == payout.id, Payout.status == PayoutStatus.REQUESTED.value)
-        .values(status=PayoutStatus.PENDING.value)
-        .execution_options(synchronize_session=False)
+    moved = await db.update_one(
+        Payout,
+        {"_id": payout.id, "status": PayoutStatus.REQUESTED.value},
+        {"$set": {"status": PayoutStatus.PENDING.value}},
     )
     await db.commit()  # PENDING before calling Paystack: never send the same payout twice
-    if rowcount(moved) != 1 or account is None:
+    if not moved or account is None:
         await db.refresh(payout)
         return payout
     try:
@@ -459,7 +449,7 @@ async def _send(db: AsyncSession, payout: Payout, actor: User | None) -> Payout:
     return payout
 
 
-async def apply_transfer_result(db: AsyncSession, payout: Payout, data: dict[str, Any]) -> str:
+async def apply_transfer_result(db: Session, payout: Payout, data: dict[str, Any]) -> str:
     """Apply a Paystack transfer record (initiate response, verify, or webhook). Does not commit."""
     status = str(data.get("status") or "")
     if payout.status not in OPEN_PAYOUT:
@@ -475,14 +465,15 @@ async def apply_transfer_result(db: AsyncSession, payout: Payout, data: dict[str
         await _close(db, payout, final, str(data.get("reason") or data.get("gateway_response") or status)[:300])
         return status
     if status == "otp":
-        await db.execute(
-            update(Payout)
-            .where(Payout.id == payout.id, Payout.status.in_(OPEN_PAYOUT))
-            .values(
-                status=PayoutStatus.OTP_REQUIRED.value,
-                failure_reason="Paystack requires an OTP for transfers; disable transfer OTP for API use",
-            )
-            .execution_options(synchronize_session=False)
+        await db.update_one(
+            Payout,
+            {"_id": payout.id, "status": {"$in": OPEN_PAYOUT}},
+            {
+                "$set": {
+                    "status": PayoutStatus.OTP_REQUIRED.value,
+                    "failure_reason": "Paystack requires an OTP for transfers; disable transfer OTP for API use",
+                }
+            },
         )
         await db.refresh(payout)
         return "otp_required"

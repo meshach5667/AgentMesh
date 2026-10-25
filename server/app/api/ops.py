@@ -5,13 +5,10 @@ import time
 from collections import Counter
 
 from fastapi import APIRouter, Header, HTTPException, Response
-from sqlalchemy import func, select, text
 
 from app.core.config import settings
 from app.core.database import session_scope
-from app.models.billing import Payment, Payout
-from app.models.deployment import Deployment
-from app.models.node import Node
+from app.documents import Deployment, Node, Payment, Payout
 
 router = APIRouter()
 STARTED = time.time()
@@ -31,7 +28,7 @@ async def readiness():
     checks: dict[str, str] = {}
     try:
         async with session_scope() as db:
-            await db.execute(text("SELECT 1"))
+            await db.ping()
         checks["database"] = "ok"
     except Exception as exc:  # noqa: BLE001
         checks["database"] = f"error: {type(exc).__name__}"
@@ -73,15 +70,15 @@ async def metrics(authorization: str = Header(default="")):
         _line("agentmesh_http_requests_total", n, method=m, status=s) for (m, s), n in sorted(http_requests.items())
     ]
     async with session_scope() as db:
-        for metric, column in (
-            ("agentmesh_nodes", Node.status),
-            ("agentmesh_deployments", Deployment.status),
-            ("agentmesh_payments", Payment.status),
-            ("agentmesh_payouts", Payout.status),
+        for metric, doc in (
+            ("agentmesh_nodes", Node),
+            ("agentmesh_deployments", Deployment),
+            ("agentmesh_payments", Payment),
+            ("agentmesh_payouts", Payout),
         ):
             out.append(f"# TYPE {metric} gauge")
-            rows = (await db.execute(select(column, func.count()).group_by(column))).all()
-            out += [_line(metric, n, status=str(getattr(k, "value", k))) for k, n in rows if k is not None]
+            rows = await db.aggregate(doc, [{"$group": {"_id": "$status", "n": {"$sum": 1}}}, {"$sort": {"_id": 1}}])
+            out += [_line(metric, r["n"], status=str(r["_id"])) for r in rows if r["_id"] is not None]
     return Response("\n".join(out) + "\n", media_type="text/plain; version=0.0.4")
 
 

@@ -3,10 +3,9 @@
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import select
 
 from app.core.timeutil import utcnow
-from app.models import Node, NodeCommand, NodeEnrollmentToken
+from app.documents import Node, NodeCommand, NodeEnrollmentToken
 from tests.conftest import HARDWARE
 
 
@@ -47,7 +46,7 @@ async def test_enrollment_token_is_single_use(client, make_user):
 async def test_expired_or_unknown_token_rejected(client, db, make_user):
     _, provider = await make_user("provider")
     token = await _token(client, provider)
-    row = (await db.execute(select(NodeEnrollmentToken))).scalars().one()
+    row = await db.find_one(NodeEnrollmentToken)
     row.expires_at = utcnow() - timedelta(seconds=1)
     await db.commit()
     assert (await client.post("/api/v1/worker/enroll", json=_enroll_body(token))).status_code == 401

@@ -20,16 +20,14 @@ import re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import Session, get_db
 from app.core.dependencies import get_current_user, is_staff, require_roles
 from app.core.ids import parse_uuid
 from app.core.ratelimit import limiters
-from app.models.ai import AiInferenceNode, AiRun, AiRunEvent
-from app.models.user import Customer, User, UserRole
+from app.documents.ai import AiInferenceNode, AiRun, AiRunEvent
+from app.documents.user import Customer, User, UserRole
 from app.schemas.ai import (
     AiDeploymentCreate,
     AiHealthOut,
@@ -61,7 +59,7 @@ async def _advance_quietly(run_id: uuid.UUID) -> None:
 async def create_ai_deployment(
     body: AiDeploymentCreate,
     background: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     user: User = Depends(require_roles(UserRole.customer)),
 ):
     allowed, retry_after = await limiters.requests.allow(f"ai-run:{user.id}", settings.AI_RATE_LIMIT_PER_MINUTE)
@@ -77,29 +75,21 @@ async def create_ai_deployment(
 
 
 @router.get("/deployments", response_model=list[AiRunOut])
-async def list_ai_deployments(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    customer = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
+async def list_ai_deployments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    customer = await db.find_one(Customer, {"user_id": user.id})
     if customer is None:
         return []
-    runs = (
-        (
-            await db.execute(
-                select(AiRun).where(AiRun.customer_id == customer.id).order_by(AiRun.created_at.desc()).limit(100)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    runs = await db.find(AiRun, {"customer_id": customer.id}, sort=[("created_at", -1)], limit=100)
     return [await workflow.view(db, r) for r in runs]
 
 
 @router.get("/deployments/{run_id}", response_model=AiRunOut)
-async def get_ai_deployment(run_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def get_ai_deployment(run_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return await workflow.view(db, await workflow.get_run_for_user(db, run_id, user))
 
 
 @router.post("/deployments/{run_id}/cancel", response_model=AiRunOut)
-async def cancel_ai_deployment(run_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def cancel_ai_deployment(run_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     run = await workflow.get_run_for_user(db, run_id, user)
     await workflow.request_cancel(db, run, user)
     await workflow.advance(run.id)
@@ -107,22 +97,14 @@ async def cancel_ai_deployment(run_id: str, db: AsyncSession = Depends(get_db), 
 
 
 @router.get("/deployments/{run_id}/events", response_model=list[AiRunEventOut])
-async def ai_deployment_events(run_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def ai_deployment_events(run_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     run = await workflow.get_run_for_user(db, run_id, user)
-    rows = (
-        (
-            await db.execute(
-                select(AiRunEvent).where(AiRunEvent.run_id == run.id).order_by(AiRunEvent.created_at, AiRunEvent.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return rows[-500:]
+    rows = await db.find(AiRunEvent, {"run_id": run.id}, sort=[("created_at", -1), ("_id", -1)], limit=500)
+    return rows[::-1]
 
 
 @router.get("/health", response_model=AiHealthOut)
-async def ai_health(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def ai_health(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     h = await inference_queue.health(db)
     nodes = None
     if is_staff(user):
@@ -152,7 +134,7 @@ async def ai_health(db: AsyncSession = Depends(get_db), user: User = Depends(get
 
 async def inference_node(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     node_id: str | None = Header(None, alias="X-AgentMesh-Inference-Node"),
 ) -> str:
     """Authenticate an inference machine. Disabled entirely unless AI_INFERENCE_TOKEN is set."""
@@ -168,7 +150,7 @@ async def inference_node(
 
 @router.post("/inference/heartbeat")
 async def inference_heartbeat(
-    body: InferenceHeartbeat, db: AsyncSession = Depends(get_db), node_id: str = Depends(inference_node)
+    body: InferenceHeartbeat, db: Session = Depends(get_db), node_id: str = Depends(inference_node)
 ):
     report = body.model_dump()
     metrics = body.metrics.model_dump() if body.metrics else {}
@@ -184,7 +166,7 @@ async def inference_heartbeat(
 
 @router.post("/inference/lease", response_model=list[InferenceJob])
 async def inference_lease(
-    body: InferenceLeaseRequest, db: AsyncSession = Depends(get_db), node_id: str = Depends(inference_node)
+    body: InferenceLeaseRequest, db: Session = Depends(get_db), node_id: str = Depends(inference_node)
 ):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + body.wait_seconds
@@ -215,7 +197,7 @@ async def inference_result(
     request_id: str,
     body: InferenceResult,
     background: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     node_id: str = Depends(inference_node),
 ):
     req = await inference_queue.complete(
