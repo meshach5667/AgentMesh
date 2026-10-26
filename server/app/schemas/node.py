@@ -31,6 +31,8 @@ class NodeOut(BaseModel):
     reserved_disk_mb: int = 0
     reserved_vram_mb: int = 0
     last_metrics: dict[str, float] | None = None
+    quarantined_at: datetime | None = None
+    quarantine_reason: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -7,7 +7,7 @@ from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
 from app.core.security import hash_secret, verify_node_api_key
 from app.core.timeutil import utcnow
-from app.documents.node import Node, NodeHardware, NodeStatus
+from app.documents.node import BLOCKED_NODE_STATUSES, Node, NodeHardware, NodeStatus
 from app.documents.user import Provider, User
 from app.schemas.node import NodeCreate
 from app.services import audit_service
@@ -63,7 +63,7 @@ async def get_node_for_user(db: Session, node_id: str, user: User) -> Node:
 
 
 async def process_heartbeat(db: Session, node: Node):
-    if node.status == NodeStatus.SUSPENDED:
+    if node.status in BLOCKED_NODE_STATUSES:
         raise HTTPException(status_code=403, detail="Node suspended")
     node.last_heartbeat = utcnow()
     node.status = NodeStatus.ONLINE
@@ -116,13 +116,32 @@ async def set_accepts_community_models(db: Session, node_id: str, user: User, ac
     return node
 
 
-async def revoke_node(db: Session, node_id: str, user: User) -> Node:
-    """Revoke a node's credential (disconnect or compromise). Its active deployments fail immediately and
-    their reservations are released; the worker can no longer authenticate."""
+async def _evacuate(db: Session, node: Node, code: str, message: str, actor: str) -> None:
+    """Take every active deployment off ``node`` now: fail it or move it to another node. The node is assumed
+    unreachable or untrusted, so no cleanup command is queued for it (a revoked or quarantined worker stops its
+    workloads itself when its connection is refused)."""
     from app.documents.deployment import Deployment
     from app.services import deployment_lifecycle as lifecycle
     from app.services import placement_service
     from app.services.scheduler_service import release_reservation
+
+    active = await db.find(Deployment, {"node_id": node.id, "status": {"$in": [s.value for s in lifecycle.ACTIVE]}})
+    for dep in active:
+        if lifecycle.S(dep.status) == lifecycle.S.STOPPING:
+            # Was already being stopped; the node can no longer confirm, so finish it here.
+            final = lifecycle.S.STOPPED if dep.was_ready else lifecycle.S.CANCELLED
+            await lifecycle.transition(db, dep, final, actor=actor, message=message)
+            dep.cleanup_status = "pending_node"
+            await release_reservation(db, dep.id)
+            continue
+        await placement_service.fail_or_reschedule(
+            db, dep, code=code, message=message, actor=actor, cleanup_old_node=False
+        )
+
+
+async def revoke_node(db: Session, node_id: str, user: User) -> Node:
+    """Revoke a node's credential (disconnect or compromise). Its active deployments fail immediately and
+    their reservations are released; the worker can no longer authenticate."""
     from app.services.tunnel import broker
 
     node = await get_node_for_user(db, node_id, user)
@@ -137,21 +156,50 @@ async def revoke_node(db: Session, node_id: str, user: User) -> Node:
     node.api_key_hash = None
     node.status = NodeStatus.REVOKED
     node.accepting_workloads = False
-    active = await db.find(Deployment, {"node_id": node.id, "status": {"$in": [s.value for s in lifecycle.ACTIVE]}})
     actor = "operator" if is_staff(user) else "provider"
-    for dep in active:
-        if lifecycle.S(dep.status) == lifecycle.S.STOPPING:
-            # Was already being stopped; the node can no longer confirm, so finish it here.
-            final = lifecycle.S.STOPPED if dep.was_ready else lifecycle.S.CANCELLED
-            await lifecycle.transition(db, dep, final, actor=actor, message="Node credential revoked")
-            dep.cleanup_status = "pending_node"
-            await release_reservation(db, dep.id)
-            continue
-        # A revoked worker stops all of its workloads itself, so no cleanup command is queued.
-        await placement_service.fail_or_reschedule(
-            db, dep, code="NODE_REVOKED", message="Node credential revoked", actor=actor, cleanup_old_node=False
+    await _evacuate(db, node, "NODE_REVOKED", "Node credential revoked", actor)
+    await db.commit()
+    await broker.close_node(node.id)
+    await db.refresh(node)
+    return node
+
+
+async def quarantine_node(db: Session, node_id: str, user: User, reason: str) -> Node:
+    """Cut a node off at once pending investigation (operators only). It can no longer authenticate, its tunnel is
+    closed, and its deployments move elsewhere. Unlike revocation it is reversible: releasing it lets the same
+    worker reconnect."""
+    from app.services.tunnel import broker
+
+    node = await get_node(db, node_id)
+    if node.status == NodeStatus.REVOKED:
+        raise HTTPException(status_code=409, detail="Node is revoked")
+    if node.status != NodeStatus.QUARANTINED:
+        node.status = NodeStatus.QUARANTINED
+        node.quarantined_at = utcnow()
+        node.quarantine_reason = reason
+        await _evacuate(db, node, "NODE_QUARANTINED", "Node quarantined by an operator", "operator")
+        audit_service.record(
+            db,
+            actor_id=user.id,
+            action="node.quarantined",
+            resource_type="node",
+            resource_id=node.id,
+            details={"reason": reason},
         )
     await db.commit()
     await broker.close_node(node.id)
+    await db.refresh(node)
+    return node
+
+
+async def release_node(db: Session, node_id: str, user: User) -> Node:
+    """End a quarantine. The node comes back OFFLINE and becomes ONLINE at its next authenticated heartbeat."""
+    node = await get_node(db, node_id)
+    if node.status != NodeStatus.QUARANTINED:
+        raise HTTPException(status_code=409, detail="Node is not quarantined")
+    node.status = NodeStatus.OFFLINE
+    node.quarantined_at = node.quarantine_reason = None
+    audit_service.record(db, actor_id=user.id, action="node.released", resource_type="node", resource_id=node.id)
+    await db.commit()
     await db.refresh(node)
     return node

@@ -40,6 +40,7 @@ RESCHEDULABLE_CODES = frozenset(
         "NODE_UNRESPONSIVE",  # never picked up the deploy command
         "NODE_OFFLINE",  # stopped heartbeating while provisioning
         "NODE_REVOKED",
+        "NODE_QUARANTINED",
         "PROVISION_STALLED",
         "UNHEALTHY_TIMEOUT",
         "INSUFFICIENT_MEMORY",

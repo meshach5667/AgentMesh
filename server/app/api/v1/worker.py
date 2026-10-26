@@ -4,11 +4,14 @@ All calls are outbound from the worker. Authentication: ``Authorization: Bearer 
 ``X-AgentMesh-Node-Id`` and ``X-AgentMesh-Protocol`` headers (enrollment uses a one-time token instead).
 """
 
+import asyncio
+import contextlib
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
+from app.core.config import settings
 from app.core.database import Session, get_db, retry_transient, session_scope
 from app.documents.node import Node
 from app.schemas.worker import (
@@ -130,7 +133,7 @@ async def tunnel(websocket: WebSocket):
             node = await worker_service.authenticate_worker(
                 db, headers.get("x-agentmesh-node-id"), credential, headers.get("x-agentmesh-protocol") or "1"
             )
-            node_id = node.id
+            node_id, credential_hash = node.id, node.api_key_hash
     except Exception:  # noqa: BLE001
         await websocket.close(code=4401)
         return
@@ -138,10 +141,30 @@ async def tunnel(websocket: WebSocket):
     conn = WorkerConnection(node_id=node_id, send_json=websocket.send_json, close=websocket.close)
     await broker.register(conn)
     logger.info("Worker tunnel connected for node %s", node_id)
+    watchdog = asyncio.create_task(_revalidate(websocket, conn, credential_hash))
     try:
         await broker.handle_messages(conn, websocket.receive_text)
     except WebSocketDisconnect:
         pass
     finally:
+        watchdog.cancel()
         broker.unregister(conn)
         logger.info("Worker tunnel closed for node %s", node_id)
+
+
+async def _revalidate(websocket: WebSocket, conn: WorkerConnection, credential_hash: str | None) -> None:
+    """Close the tunnel once its node is revoked, quarantined or re-keyed, even if the disconnect message sent at
+    that moment was lost (e.g. a Redis hiccup between replicas). Doubt counts as revoked."""
+    while True:
+        await asyncio.sleep(settings.TUNNEL_REVALIDATE_SECONDS)
+        try:
+            allowed = await worker_service.still_authorized(conn.node_id, credential_hash)
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not re-check node %s; closing its tunnel", conn.node_id)
+            allowed = False
+        if not allowed:
+            logger.warning("Closing tunnel of node %s: no longer authorized", conn.node_id)
+            broker.unregister(conn)
+            with contextlib.suppress(Exception):
+                await websocket.close(code=4401)
+            return

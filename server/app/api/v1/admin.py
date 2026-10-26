@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1.transactions import ledger_filter
 from app.core.database import Session, get_db
@@ -34,6 +34,7 @@ from app.schemas.transaction import TransactionResponse, TransactionStatusEnum, 
 from app.services import (
     audit_service,
     billing_service,
+    node_service,
     payments_service,
     reconciliation_service,
     refund_service,
@@ -98,6 +99,23 @@ async def all_nodes(
 ):
     rows = await reporting_service.list_nodes_with_owner(db, status, limit)
     return [AdminNodeOut(**NodeOut.model_validate(n).model_dump(), owner_email=email) for n, email in rows]
+
+
+class QuarantineIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+
+
+@router.post("/nodes/{node_id}/quarantine", response_model=NodeOut)
+async def quarantine_node(
+    node_id: str, body: QuarantineIn, db: Session = Depends(get_db), user: User = Depends(staff_only)
+):
+    """Cut a node off immediately pending investigation: no authentication, no tunnel, no work. Reversible."""
+    return await node_service.quarantine_node(db, node_id, user, body.reason)
+
+
+@router.post("/nodes/{node_id}/release", response_model=NodeOut)
+async def release_node(node_id: str, db: Session = Depends(get_db), user: User = Depends(staff_only)):
+    return await node_service.release_node(db, node_id, user)
 
 
 @router.get("/deployments", response_model=list[AdminDeploymentOut])

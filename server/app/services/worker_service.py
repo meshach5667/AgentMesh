@@ -16,7 +16,7 @@ from app.core.timeutil import utcnow
 from app.documents.deployment import Deployment
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.model import ModelArtifact
-from app.documents.node import Node, NodeHardware, NodeStatus
+from app.documents.node import BLOCKED_NODE_STATUSES, Node, NodeHardware, NodeStatus
 from app.documents.user import Provider
 from app.documents.worker import CommandStatus, NodeCommand, NodeEnrollmentToken
 from app.schemas.worker import (
@@ -172,9 +172,19 @@ async def authenticate_worker(db: Session, node_id: str | None, credential: str 
         raise HTTPException(status_code=401, detail="Invalid node credentials")
     if node.status == NodeStatus.REVOKED:
         raise HTTPException(status_code=401, detail="Node credential revoked")
-    if node.status == NodeStatus.SUSPENDED:
+    if node.status in BLOCKED_NODE_STATUSES:
         raise HTTPException(status_code=403, detail="Node suspended")
     return node
+
+
+async def still_authorized(node_id: uuid.UUID, credential_hash: str | None) -> bool:
+    """Whether a node authenticated earlier may keep its connection: it still exists, is not blocked, and its
+    credential has not been revoked or replaced since. Used to re-check long-lived tunnels and long polls."""
+    from app.core.database import session_scope
+
+    async with session_scope() as db:
+        node = await db.get(Node, node_id)
+    return node is not None and node.status not in BLOCKED_NODE_STATUSES and node.api_key_hash == credential_hash
 
 
 # --- Heartbeat and reconciliation ----------------------------------------------------------------------
@@ -287,7 +297,12 @@ async def _lease_once(db: Session, node: Node, max_commands: int) -> list[Comman
 async def poll_commands(db: Session, node: Node, max_commands: int, wait_seconds: int) -> list[CommandOut]:
     """Long-poll: return as soon as commands exist, or after ``wait_seconds`` with an empty list."""
     deadline = asyncio.get_running_loop().time() + wait_seconds
+    first = True
     while True:
+        # A node revoked or quarantined during the wait must not lease work at the end of it.
+        if not first and not await still_authorized(node.id, node.api_key_hash):
+            raise HTTPException(status_code=401, detail="Node credential revoked")
+        first = False
         leased = await _lease_once(db, node, max_commands)
         if leased or asyncio.get_running_loop().time() >= deadline:
             return leased

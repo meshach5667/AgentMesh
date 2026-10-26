@@ -18,7 +18,12 @@ class NodeStatus(str, enum.Enum):  # noqa: UP042
     DEGRADED = "DEGRADED"
     OFFLINE = "OFFLINE"
     SUSPENDED = "SUSPENDED"
+    QUARANTINED = "QUARANTINED"  # cut off by an operator pending investigation; reversible
     REVOKED = "REVOKED"
+
+
+# A node in one of these states cannot authenticate, keep a tunnel open, or receive work.
+BLOCKED_NODE_STATUSES = frozenset({NodeStatus.SUSPENDED.value, NodeStatus.QUARANTINED.value, NodeStatus.REVOKED.value})
 
 
 class NodeMode(str, enum.Enum):  # noqa: UP042
@@ -51,6 +56,8 @@ class Node(Doc):
     worker_available: bool = True
     worker_unavailable_reason: str | None = None
     last_metrics: Any = None
+    quarantined_at: datetime | None = None
+    quarantine_reason: str | None = None
 
     # Capacity the provider has explicitly allocated to AgentMesh (never the whole machine by default),
     # and capacity currently reserved by deployments. Reservations are changed only with atomic

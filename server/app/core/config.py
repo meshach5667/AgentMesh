@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     WORKER_HEARTBEAT_INTERVAL_SECONDS: int = 15
     ENROLLMENT_TOKEN_TTL_MINUTES: int = 60
     COMMAND_LEASE_SECONDS: int = 60
+    # Open worker tunnels re-check that their node is still allowed this often, so a revocation or quarantine whose
+    # disconnect message was lost still takes effect: maximum revocation latency for a tunnel is this interval.
+    TUNNEL_REVALIDATE_SECONDS: int = 15
     COMMAND_MAX_ATTEMPTS: int = 3
     WORKER_MAX_BODY_BYTES: int = 256 * 1024
     # Directory holding manifest.json, manifest.sig and the release wheel (see scripts/sign_worker_release.py).
@@ -207,6 +210,12 @@ class Settings(BaseSettings):
                 raise ValueError("PUBLIC_BASE_URL must use https outside dev/test (API keys travel in headers)")
             if self.AI_INFERENCE_TOKEN and len(self.AI_INFERENCE_TOKEN) < 32:
                 raise ValueError("AI_INFERENCE_TOKEN must be a random value of at least 32 characters outside dev/test")
+        return self
+
+    @model_validator(mode="after")
+    def _check_worker(self) -> "Settings":
+        if not 1 <= self.TUNNEL_REVALIDATE_SECONDS <= 30:
+            raise ValueError("TUNNEL_REVALIDATE_SECONDS must be between 1 and 30 (it bounds revocation latency)")
         return self
 
     @model_validator(mode="after")
