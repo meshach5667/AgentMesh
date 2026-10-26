@@ -18,22 +18,25 @@ services:
       retries: 10
       start_period: 10s
 
+  # Not published on the host, and password-protected: replicas trust Redis messages for tunnel routing.
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD to a random value}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
 
   api:
     build:
       context: .
       dockerfile: Dockerfile.server
+    # Loopback only: your TLS-terminating proxy on this host forwards to it.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       mongo:
         condition: service_healthy
@@ -42,7 +45,7 @@ services:
     environment:
       - MONGODB_URL=mongodb://mongo:27017/?replicaSet=rs0
       - MONGODB_DB=agentmesh
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY to a random value of at least 32 characters}
       - ENVIRONMENT=production
       - ALLOW_TEST_CREDITS=false
@@ -54,8 +57,10 @@ services:
       - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
       - BILLING_CURRENCY=${BILLING_CURRENCY:-NGN}
       - METRICS_TOKEN=${METRICS_TOKEN:-}
-    # --proxy-headers: client addresses (rate limits, audit log, webhook IP checks) come from the TLS proxy.
-    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+      # Client addresses (rate limits, audit log, webhook IP checks) come from X-Forwarded-For only when the
+      # connection comes from these proxy addresses (IPs or CIDRs), e.g. the compose network gateway your proxy
+      # connects from. Never '*': anyone reaching the API directly could then spoof their address.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:?Set FORWARDED_ALLOW_IPS to your TLS proxy address as the API sees it}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 30s
@@ -67,7 +72,7 @@ services:
       context: .
       dockerfile: Dockerfile.client
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       api:
         condition: service_healthy

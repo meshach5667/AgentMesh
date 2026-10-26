@@ -17,7 +17,12 @@ USER agentmesh
 
 EXPOSE 8000
 
+# X-Forwarded-For is honoured only from these proxy addresses (IPs or CIDRs). Set it to your platform's proxy
+# range; leaving 127.0.0.1 behind a remote proxy makes every client share the proxy's address.
+ENV FORWARDED_ALLOW_IPS=127.0.0.1
+
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Worker tunnel frames are capped at 1 MiB by the application; reject larger WebSocket messages early.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--ws-max-size", "2097152"]
