@@ -101,6 +101,14 @@ async def all_nodes(
     return [AdminNodeOut(**NodeOut.model_validate(n).model_dump(), owner_email=email) for n, email in rows]
 
 
+@router.get("/anomalies")
+async def anomalies(
+    hours: int = Query(24, ge=1, le=24 * 30), db: Session = Depends(get_db), _staff=Depends(staff_only)
+):
+    """Provider signals worth investigating (token over-claims, failure rates), from metering metadata only."""
+    return await reporting_service.provider_anomalies(db, hours)
+
+
 class QuarantineIn(BaseModel):
     reason: str = Field(min_length=3, max_length=300)
 

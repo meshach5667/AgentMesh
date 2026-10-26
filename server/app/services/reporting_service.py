@@ -191,3 +191,53 @@ async def list_deployments_with_owner(
     deps = await db.find(Deployment, match, sort=[("created_at", -1)], limit=limit)
     emails = await emails_by_profile(db, Customer, {d.customer_id for d in deps})
     return [(d, emails.get(d.customer_id)) for d in deps]
+
+
+async def provider_anomalies(db: Session, hours: int = 24, min_requests: int = 20) -> list[dict[str, Any]]:
+    """Per-node signals for investigating providers, from metering metadata only (no prompts or outputs): request
+    volume, failure rate, and how often runtime-reported token counts exceeded what the server-observed request and
+    response sizes allow (those claims are capped for billing). Nodes over a threshold are flagged."""
+    from app.documents.usage import UsageRecord
+    from app.services.billing_service import TEMPLATE_TOKENS
+
+    since = utcnow() - timedelta(hours=hours)
+    input_cap = {"$add": [{"$ifNull": ["$request_bytes", 1e18]}, TEMPLATE_TOKENS]}
+    rows = await db.aggregate(
+        UsageRecord,
+        [
+            {"$match": {"kind": "inference", "created_at": {"$gte": since}, "node_id": {"$ne": None}}},
+            {
+                "$group": {
+                    "_id": "$node_id",
+                    "requests": {"$sum": 1},
+                    "failed": {"$sum": {"$cond": [{"$eq": ["$outcome", "success"]}, 0, 1]}},
+                    "output_overclaims": {
+                        "$sum": {"$cond": [{"$gt": ["$output_tokens", {"$ifNull": ["$response_bytes", 1e18]}]}, 1, 0]}
+                    },
+                    "input_overclaims": {"$sum": {"$cond": [{"$gt": ["$input_tokens", input_cap]}, 1, 0]}},
+                    "output_tokens": {"$sum": {"$ifNull": ["$output_tokens", 0]}},
+                }
+            },
+        ],
+    )
+    out = []
+    for r in rows:
+        requests = int(r["requests"])
+        overclaims = int(r["output_overclaims"]) + int(r["input_overclaims"])
+        reasons = []
+        if overclaims:
+            reasons.append("token counts above what request/response sizes allow")
+        if requests >= min_requests and r["failed"] / requests > 0.5:
+            reasons.append("more than half of requests failed")
+        out.append(
+            {
+                "node_id": r["_id"],
+                "requests": requests,
+                "failure_rate": round(r["failed"] / requests, 3),
+                "token_overclaims": overclaims,
+                "avg_output_tokens": round(r["output_tokens"] / requests, 1),
+                "flagged": bool(reasons),
+                "reasons": reasons,
+            }
+        )
+    return sorted(out, key=lambda x: (not x["flagged"], -x["requests"]))

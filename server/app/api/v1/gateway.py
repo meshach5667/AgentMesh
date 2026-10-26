@@ -282,6 +282,7 @@ async def _gateway_post(deployment_id: str, path: str, request: Request, db: Ses
         "api_key_id": api_key.id if api_key else None,
         "endpoint": path,
         "started": started,
+        "request_bytes": len(json.dumps(body)),
     }
     frame = {
         "type": "request",

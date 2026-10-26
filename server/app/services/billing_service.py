@@ -212,6 +212,10 @@ def _clip(intervals: list[Interval], start: datetime, end: datetime) -> dict[uui
     return seconds
 
 
+# Tokens a runtime may add to a request for its chat template and default system prompt.
+TEMPLATE_TOKENS = 1024
+
+
 async def _tokens(db: Session, dep_id: uuid.UUID, start: datetime, end: datetime) -> dict:
     rows = await db.aggregate(
         UsageRecord,
@@ -227,7 +231,21 @@ async def _tokens(db: Session, dep_id: uuid.UUID, start: datetime, end: datetime
             {
                 "$group": {
                     "_id": "$node_id",
-                    "input": {"$sum": "$input_tokens"},
+                    # Input tokens likewise: at most the forwarded request's bytes plus the runtime's chat template.
+                    "input": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$ne": [{"$ifNull": ["$request_bytes", None]}, None]},
+                                        {"$gt": ["$input_tokens", {"$add": ["$request_bytes", TEMPLATE_TOKENS]}]},
+                                    ]
+                                },
+                                {"$add": ["$request_bytes", TEMPLATE_TOKENS]},
+                                "$input_tokens",
+                            ]
+                        }
+                    },
                     # Output tokens are reported by the provider's runtime. Bound them by the response bytes the
                     # gateway itself counted (every token costs at least one byte), so they cannot be inflated.
                     "output": {

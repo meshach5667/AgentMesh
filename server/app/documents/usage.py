@@ -36,6 +36,7 @@ class UsageRecord(Doc):
     # verified. None means the runtime did not report them; they are never estimated.
     token_source: str | None = None
     response_bytes: int | None = None
+    request_bytes: int | None = None  # size of the request the gateway forwarded (server-observed)
 
     class Settings(Doc.Settings):
         name = "usage_records"
