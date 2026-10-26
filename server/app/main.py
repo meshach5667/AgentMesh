@@ -68,9 +68,11 @@ app = FastAPI(
     title="AgentMesh API",
     description="AgentMesh control plane: deployments, inference gateway, worker protocol, billing",
     version="0.1.0",
-    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
-    docs_url=f"{settings.API_V1_PREFIX}/docs",
-    redoc_url=f"{settings.API_V1_PREFIX}/redoc",
+    # Production does not advertise its routes unless API_DOCS_ENABLED (the public docs live on the dashboard).
+    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json" if settings.api_docs_enabled else None,
+    docs_url=f"{settings.API_V1_PREFIX}/docs" if settings.api_docs_enabled else None,
+    redoc_url=f"{settings.API_V1_PREFIX}/redoc" if settings.api_docs_enabled else None,
+    debug=False,
     lifespan=lifespan,
 )
 
@@ -89,6 +91,13 @@ app.add_middleware(
 )
 app.add_middleware(RequestIdMiddleware)
 app.add_exception_handler(AgentMeshException, agentmesh_exception_handler)  # type: ignore[arg-type]
+
+
+@app.exception_handler(RecursionError)
+async def nesting_error_handler(request: Request, exc: RecursionError):
+    # A small body nested thousands of levels deep (e.g. [[[[...]]]]) exhausts the parser's or validator's stack.
+    # Refuse it as a client error instead of a 500, without echoing it back.
+    return JSONResponse(status_code=400, content={"detail": "Request body is nested too deeply"})
 
 
 @app.exception_handler(PyMongoError)

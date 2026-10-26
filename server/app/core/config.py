@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     # Unpaid "test credits" for local development. Never honoured outside dev/test environments.
     ALLOW_TEST_CREDITS: bool = True
     LOG_JSON: bool = True
+    # Interactive API docs (Swagger, ReDoc, OpenAPI JSON) are served in dev/test only unless this is set.
+    API_DOCS_ENABLED: bool = False
 
     # Public base URL customers use to reach the gateway (used to build deployment endpoints).
     PUBLIC_BASE_URL: str = "http://localhost:8000"
@@ -183,6 +185,10 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.ENVIRONMENT.lower() in DEV_ENVIRONMENTS
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        return self.is_dev or self.API_DOCS_ENABLED
 
     @property
     def test_credits_enabled(self) -> bool:
