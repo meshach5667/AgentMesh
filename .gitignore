@@ -14,7 +14,10 @@ venv/
 coverage.xml
 htmlcov/
 *.db
-/docs
+/docs/*
+# Security documentation and the privacy notice are versioned with the code they describe.
+!/docs/security/
+!/docs/PRIVACY_NOTICE.md
 # Node
 node_modules/
 .next/
