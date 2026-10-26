@@ -51,3 +51,13 @@ def test_heartbeat_timeout_must_cover_several_intervals():
     with pytest.raises(ValidationError, match="HEARTBEAT_TIMEOUT_SECONDS"):
         Settings(HEARTBEAT_TIMEOUT_SECONDS=15, WORKER_HEARTBEAT_INTERVAL_SECONDS=15, _env_file=None)
     Settings(HEARTBEAT_TIMEOUT_SECONDS=15, WORKER_HEARTBEAT_INTERVAL_SECONDS=3, _env_file=None)
+
+
+def test_unset_environment_fails_closed(monkeypatch):
+    """A deployment that forgets ENVIRONMENT must not run with the public default SECRET_KEY (forgeable tokens)."""
+    for name in ("ENVIRONMENT", "SECRET_KEY", "MONGODB_URL", "PUBLIC_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ValidationError, match="SECRET_KEY"):
+        Settings(_env_file=None)
+    configured = Settings(**{k: v for k, v in PROD.items() if k != "ENVIRONMENT"})
+    assert configured.is_dev is False and configured.test_credits_enabled is False

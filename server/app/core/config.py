@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
     API_V1_PREFIX: str = "/api/v1"
-    ENVIRONMENT: str = "dev"
+    # Fail closed: an unset ENVIRONMENT means production, so the safety checks below (random SECRET_KEY, explicit
+    # MongoDB URL, https, no test credits) apply unless a developer explicitly opts in with dev/test.
+    ENVIRONMENT: str = "production"
     LOG_LEVEL: str = "INFO"
     # Explicit origins only: credentials are allowed, so a wildcard would be unsafe.
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000", "http://127.0.0.1:3000"]
