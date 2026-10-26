@@ -23,6 +23,20 @@ LABEL = "io.agentmesh.managed"
 LABEL_DEPLOYMENT = "io.agentmesh.deployment"
 
 
+def workload_limits(ram_mb: int, cpu_cores: float) -> dict:
+    """Isolation and resource limits applied to every workload container (also exercised against a real Docker
+    daemon by tests/test_worker_isolation_docker.py): memory without swap, CPU, a PID cap, every capability dropped
+    and no privilege escalation."""
+    return {
+        "mem_limit": f"{ram_mb}m",
+        "memswap_limit": f"{ram_mb}m",
+        "nano_cpus": int(cpu_cores * 1e9),
+        "pids_limit": 512,
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
+    }
+
+
 class OllamaDockerRuntime(WorkloadRuntime):
     name = "ollama"
     backend = "docker"
@@ -129,13 +143,8 @@ class OllamaDockerRuntime(WorkloadRuntime):
             name=name,
             detach=True,
             labels={LABEL: "true", LABEL_DEPLOYMENT: spec.deployment_id},
-            mem_limit=f"{spec.ram_mb}m",
-            memswap_limit=f"{spec.ram_mb}m",
-            nano_cpus=int(spec.cpu_cores * 1e9),
-            pids_limit=512,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
             restart_policy={"Name": "no"},
+            **workload_limits(spec.ram_mb, spec.cpu_cores),
             **self._container_config(spec),
         )
         if spec.gpu and self.allow_gpu:
