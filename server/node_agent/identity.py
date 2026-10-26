@@ -1,5 +1,5 @@
-"""Node keypair. The public key is registered at enrollment for future signed messages and attestation;
-protocol v1 authenticates with the node credential only."""
+"""Node keypair. The private key is generated on the node and never leaves it; the public key is registered at
+enrollment. The worker proves possession by signing session challenges (see protocol.ControlPlaneClient)."""
 
 import os
 from pathlib import Path
@@ -56,3 +56,8 @@ def sign_message(private_key, message: bytes) -> bytes:
     return private_key.sign(
         message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
     )
+
+
+def sign_session_challenge(private_key, node_id: str, challenge: str) -> bytes:
+    """Signature over the session challenge, in the format the control plane verifies."""
+    return sign_message(private_key, f"agentmesh-node-session-v1.{node_id}.{challenge}".encode())

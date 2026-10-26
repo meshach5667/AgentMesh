@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from node_agent import schedule, service, updater
 from node_agent.config import WORKER_VERSION, WorkerSettings, load_settings
 from node_agent.protocol import ControlPlaneClient
-from tests.test_node_agent.test_worker import DEP, FakeClient, FakeRuntime, _settle, deploy_cmd
+from tests.test_node_agent.test_worker import DEP, FakeClient, FakeRuntime, _settle, deploy_cmd, pinned
 
 # --- schedules ----------------------------------------------------------------------------------------
 
@@ -64,7 +64,7 @@ def worker(tmp_path):
 
     def _make(**settings):
         s = WorkerSettings(DATA_DIR=str(tmp_path), CONTROL_PLANE_URL="http://localhost:1", **settings)
-        return Worker(s, runtime=FakeRuntime(), client=FakeClient())
+        return pinned(Worker(s, runtime=FakeRuntime(), client=FakeClient()))
 
     return _make
 

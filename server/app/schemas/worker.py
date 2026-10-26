@@ -63,11 +63,38 @@ class EnrollRequest(BaseModel):
     public_key: str | None = Field(None, max_length=4096)
 
 
+class SigningKey(BaseModel):
+    """The control plane's command-signing public key (Ed25519, raw, base64url), as workers pin it."""
+
+    kid: str
+    public_key: str
+    endorsed_by: str | None = None  # during a rotation: the previous key's id ...
+    endorsement: str | None = None  # ... and its signature over this key
+
+
 class EnrollResponse(BaseModel):
     node_id: uuid.UUID
     node_credential: str
     protocol_version: int
     heartbeat_interval_seconds: int
+    command_signing_key: SigningKey
+
+
+class ChallengeResponse(BaseModel):
+    challenge: str
+    expires_in: int
+
+
+class SessionRequest(BaseModel):
+    model_config = _STRICT
+    challenge: str = Field(min_length=20, max_length=200)
+    signature: str = Field(min_length=20, max_length=2000)  # base64 signature by the node key
+
+
+class SessionResponse(BaseModel):
+    session_token: str
+    expires_in: int
+    command_signing_key: SigningKey
 
 
 class ReportedDeployment(BaseModel):
@@ -105,6 +132,7 @@ class HeartbeatResponse(BaseModel):
     stop_deployments: list[uuid.UUID]
     # Newest worker version announced by the operator, if any (see WORKER_RELEASE_MANIFEST).
     latest_worker_version: str | None = None
+    command_signing_key: SigningKey | None = None
 
 
 class PollRequest(BaseModel):
@@ -119,6 +147,8 @@ class CommandOut(BaseModel):
     deployment_id: uuid.UUID | None
     payload: dict
     attempt: int
+    # Signed authorization of this delivery (app.core.signing). Workers verify it before acting.
+    authorization: str
 
 
 class PollResponse(BaseModel):
@@ -129,6 +159,7 @@ class CommandAck(BaseModel):
     model_config = _STRICT
     status: Literal["accepted", "succeeded", "failed"]
     error: str | None = Field(None, max_length=1000)
+    nonce: str | None = Field(None, max_length=100)  # from the authorization the worker acted on
 
 
 class DeploymentStatusReport(BaseModel):

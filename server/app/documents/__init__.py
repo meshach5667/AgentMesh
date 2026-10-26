@@ -9,6 +9,7 @@ from app.documents.billing import Charge, Payment, PaymentEvent, Payout, PayoutA
 from app.documents.deployment import Deployment, DeploymentEvent
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeHardware, NodePricing
+from app.documents.node_session import NodeChallenge, NodeSession
 from app.documents.reservation import ResourceReservation
 from app.documents.session import AuthSession, RefreshToken
 from app.documents.sponsorship import AdSettings, SponsorCampaign, SponsorStat, SponsorView
@@ -38,10 +39,12 @@ DOCUMENTS: list[type[Doc]] = [
     Model,
     ModelArtifact,
     Node,
+    NodeChallenge,
     NodeCommand,
     NodeEnrollmentToken,
     NodeHardware,
     NodePricing,
+    NodeSession,
     Payment,
     PaymentEvent,
     Payout,

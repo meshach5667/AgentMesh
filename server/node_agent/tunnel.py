@@ -86,17 +86,26 @@ async def _try_send(send, frame: dict) -> None:
         pass
 
 
-async def run_tunnel(url: str, headers: dict, handler: TunnelHandler, stop: asyncio.Event) -> None:
-    """Keep the tunnel connected, reconnecting with backoff, until ``stop`` is set."""
+# Close codes from the control plane: 4401 revoked, 4403 blocked by an operator (quarantine), 4408 session expired.
+BLOCKED_RETRY_SECONDS = 60
+
+
+async def run_tunnel(url: str, headers, handler: TunnelHandler, stop: asyncio.Event) -> None:
+    """Keep the tunnel connected, reconnecting with backoff, until ``stop`` is set. ``headers`` is a dict, or an
+    async callable returning fresh headers (with a renewed session when called with ``renew=True``)."""
     from websockets.asyncio.client import connect
     from websockets.exceptions import InvalidStatus
 
     from .protocol import CredentialRevoked, backoff
 
     attempt = 0
+    renew = False
     while not stop.is_set():
+        wait: float | None = None
         try:
-            async with connect(url, additional_headers=headers, max_size=2 * 1024 * 1024, ping_interval=20) as ws:
+            current = await headers(renew=renew) if callable(headers) else headers
+            renew = False
+            async with connect(url, additional_headers=current, max_size=2 * 1024 * 1024, ping_interval=20) as ws:
                 attempt = 0
                 logger.info("Inference tunnel connected")
                 lock = asyncio.Lock()
@@ -113,19 +122,30 @@ async def run_tunnel(url: str, headers: dict, handler: TunnelHandler, stop: asyn
                     if isinstance(frame, dict):
                         await handler.on_frame(frame, send)
         except InvalidStatus as exc:
-            if exc.response.status_code in (401, 403):
+            if exc.response.status_code == 401:
                 raise CredentialRevoked("Tunnel rejected credentials") from None
-        except asyncio.CancelledError:
+            if exc.response.status_code == 403:
+                logger.warning("Inference tunnel refused: node blocked by an operator; retrying later")
+                wait = BLOCKED_RETRY_SECONDS
+        except (asyncio.CancelledError, CredentialRevoked):
             raise
         except Exception as exc:  # noqa: BLE001
-            if getattr(exc, "rcvd", None) is not None and exc.rcvd.code == 4401:
+            code = exc.rcvd.code if getattr(exc, "rcvd", None) is not None else None
+            if code == 4401:
                 raise CredentialRevoked("Tunnel rejected credentials") from None
-            logger.warning("Inference tunnel disconnected: %s", type(exc).__name__)
+            if code == 4403:
+                logger.warning("Inference tunnel closed: node blocked by an operator; retrying later")
+                wait = BLOCKED_RETRY_SECONDS
+            elif code == 4408:
+                logger.info("Inference tunnel closed: node session expired; renewing")
+                renew, wait = True, 0
+            else:
+                logger.warning("Inference tunnel disconnected: %s", type(exc).__name__)
         handler.cancel_all()
         if stop.is_set():
             break
         try:
-            await asyncio.wait_for(stop.wait(), timeout=backoff(attempt, cap=30))
+            await asyncio.wait_for(stop.wait(), timeout=backoff(attempt, cap=30) if wait is None else wait)
         except TimeoutError:
             pass
         attempt += 1

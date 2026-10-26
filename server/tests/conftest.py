@@ -107,7 +107,16 @@ def enroll_node(client, make_user):
     """Enroll a worker through the real API. Returns {node_id, credential, headers, provider_headers}."""
 
     async def _enroll(
-        *, cpu=4, ram_mb=4096, disk_mb=10000, vram_mb=0, hardware=None, provider=None, region=None, runtimes=None
+        *,
+        cpu=4,
+        ram_mb=4096,
+        disk_mb=10000,
+        vram_mb=0,
+        hardware=None,
+        provider=None,
+        region=None,
+        runtimes=None,
+        public_key=None,
     ):
         if provider is None:
             _, provider = await make_user("provider")
@@ -126,10 +135,15 @@ def enroll_node(client, make_user):
                 "runtimes": runtimes
                 if runtimes is not None
                 else [{"name": "ollama", "version": "0.0.0", "backend": "docker", "available": True}],
+                "public_key": public_key,
             },
         )
         assert resp.status_code == 200, resp.text
-        node = {"node_id": resp.json()["node_id"], "credential": resp.json()["node_credential"]}
+        node = {
+            "node_id": resp.json()["node_id"],
+            "credential": resp.json()["node_credential"],
+            "signing_key": resp.json()["command_signing_key"],
+        }
         node["headers"] = worker_headers(node)
         node["provider_headers"] = provider
         return node

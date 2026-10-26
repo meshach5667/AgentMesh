@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     # Open worker tunnels re-check that their node is still allowed this often, so a revocation or quarantine whose
     # disconnect message was lost still takes effect: maximum revocation latency for a tunnel is this interval.
     TUNNEL_REVALIDATE_SECONDS: int = 15
+    # Node sessions: workers sign a server challenge with their enrolled key to get a token this short-lived.
+    NODE_SESSION_TTL_MINUTES: int = 60
+    # Accept the long-lived enrollment credential directly (workers older than node sessions). Turn off once every
+    # worker is upgraded; the credential is then only good for obtaining a session together with the node key.
+    ALLOW_LEGACY_NODE_CREDENTIALS: bool = True
+    # Command authorizations (Ed25519, app.core.signing): lifetime, and optional explicit keys (base64 32-byte seeds).
+    COMMAND_AUTH_TTL_SECONDS: int = 600
+    COMMAND_SIGNING_KEY: str = ""
+    COMMAND_SIGNING_PREVIOUS_KEY: str = ""
     COMMAND_MAX_ATTEMPTS: int = 3
     WORKER_MAX_BODY_BYTES: int = 256 * 1024
     # Directory holding manifest.json, manifest.sig and the release wheel (see scripts/sign_worker_release.py).
@@ -216,6 +225,19 @@ class Settings(BaseSettings):
     def _check_worker(self) -> "Settings":
         if not 1 <= self.TUNNEL_REVALIDATE_SECONDS <= 30:
             raise ValueError("TUNNEL_REVALIDATE_SECONDS must be between 1 and 30 (it bounds revocation latency)")
+        if not 5 <= self.NODE_SESSION_TTL_MINUTES <= 240:
+            raise ValueError("NODE_SESSION_TTL_MINUTES must be between 5 and 240")
+        if not 60 <= self.COMMAND_AUTH_TTL_SECONDS <= 3600:
+            raise ValueError("COMMAND_AUTH_TTL_SECONDS must be between 60 and 3600")
+        for name in ("COMMAND_SIGNING_KEY", "COMMAND_SIGNING_PREVIOUS_KEY"):
+            value = getattr(self, name)
+            if value:
+                try:
+                    ok = len(base64.b64decode(value, validate=True)) == 32
+                except ValueError:
+                    ok = False
+                if not ok:
+                    raise ValueError(f"{name} must be base64 of a 32-byte Ed25519 seed (openssl rand -base64 32)")
         return self
 
     @model_validator(mode="after")

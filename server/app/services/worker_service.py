@@ -2,12 +2,19 @@
 and deployment status reports."""
 
 import asyncio
+import base64
+import hmac
+import secrets
 import uuid
 from datetime import timedelta
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa
 from fastapi import HTTPException
 
+from app.core import security_events, signing
 from app.core.config import settings
 from app.core.database import Session
 from app.core.ids import parse_uuid
@@ -17,6 +24,7 @@ from app.documents.deployment import Deployment
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.model import ModelArtifact
 from app.documents.node import BLOCKED_NODE_STATUSES, Node, NodeHardware, NodeStatus
+from app.documents.node_session import NodeChallenge, NodeSession
 from app.documents.user import Provider
 from app.documents.worker import CommandStatus, NodeCommand, NodeEnrollmentToken
 from app.schemas.worker import (
@@ -27,6 +35,7 @@ from app.schemas.worker import (
     HardwareReport,
     HeartbeatRequest,
     HeartbeatResponse,
+    SigningKey,
 )
 from app.services import audit_service, placement_service, release_service
 from app.services import deployment_lifecycle as lifecycle
@@ -35,6 +44,8 @@ from app.services.scheduler_service import release_reservation
 
 ENROLL_TOKEN_PREFIX = "am_enroll_"
 NODE_CREDENTIAL_PREFIX = "am_node_"
+NODE_SESSION_PREFIX = "am_ns_"
+CHALLENGE_TTL_SECONDS = 60
 
 
 # --- Enrollment -----------------------------------------------------------------------------------------
@@ -151,10 +162,21 @@ async def enroll(db: Session, req: EnrollRequest) -> dict:
         "node_credential": credential,
         "protocol_version": req.protocol_version,
         "heartbeat_interval_seconds": settings.WORKER_HEARTBEAT_INTERVAL_SECONDS,
+        "command_signing_key": signing.signing_key_info(),
     }
 
 
-async def authenticate_worker(db: Session, node_id: str | None, credential: str | None, protocol: str | None) -> Node:
+async def authenticate_worker(
+    db: Session,
+    node_id: str | None,
+    credential: str | None,
+    protocol: str | None,
+    *,
+    enrollment_credential: bool = False,
+) -> Node:
+    """Authenticate a worker by node id plus a node session token, or (legacy, while ALLOW_LEGACY_NODE_CREDENTIALS)
+    its long-lived enrollment credential. ``enrollment_credential`` requires the long-lived credential itself: only
+    the session endpoints use it, together with a signature by the node key."""
     if protocol is not None:
         try:
             version = int(protocol)
@@ -168,8 +190,20 @@ async def authenticate_worker(db: Session, node_id: str | None, credential: str 
         node = await db.get(Node, parse_uuid(node_id, "Node"))
     except HTTPException:
         node = None
-    if node is None or not verify_node_api_key(credential, node.api_key_hash):
-        raise HTTPException(status_code=401, detail="Invalid node credentials")
+    invalid = HTTPException(status_code=401, detail="Invalid node credentials")
+    if node is None:
+        raise invalid
+    if credential.startswith(NODE_SESSION_PREFIX) and not enrollment_credential:
+        session = await db.find_one(NodeSession, {"token_hash": hash_secret(credential)})
+        if session is None or session.node_id != node.id or session.revoked_at is not None:
+            raise invalid
+        if session.expires_at <= utcnow():
+            raise HTTPException(status_code=401, detail="Node session expired")
+    else:
+        if not verify_node_api_key(credential, node.api_key_hash):
+            raise invalid
+        if not (enrollment_credential or settings.ALLOW_LEGACY_NODE_CREDENTIALS):
+            raise HTTPException(status_code=401, detail="Node session required")
     if node.status == NodeStatus.REVOKED:
         raise HTTPException(status_code=401, detail="Node credential revoked")
     if node.status in BLOCKED_NODE_STATUSES:
@@ -177,14 +211,104 @@ async def authenticate_worker(db: Session, node_id: str | None, credential: str 
     return node
 
 
-async def still_authorized(node_id: uuid.UUID, credential_hash: str | None) -> bool:
-    """Whether a node authenticated earlier may keep its connection: it still exists, is not blocked, and its
-    credential has not been revoked or replaced since. Used to re-check long-lived tunnels and long polls."""
+async def still_authorized(node_id: uuid.UUID, credential_hash: str | None) -> str | None:
+    """Why a node authenticated earlier must drop its connection, or None if it may keep it. Reasons: "revoked"
+    (gone, revoked, or its credential replaced), "blocked" (quarantined or suspended), "session_expired" (renew
+    and reconnect). A renewed session keeps a tunnel opened with an earlier session of the same node valid."""
     from app.core.database import session_scope
 
     async with session_scope() as db:
         node = await db.get(Node, node_id)
-    return node is not None and node.status not in BLOCKED_NODE_STATUSES and node.api_key_hash == credential_hash
+        if node is None or node.status == NodeStatus.REVOKED:
+            return "revoked"
+        if node.status in BLOCKED_NODE_STATUSES:
+            return "blocked"
+        if credential_hash is not None and credential_hash == node.api_key_hash:
+            return None if settings.ALLOW_LEGACY_NODE_CREDENTIALS else "session_expired"
+        session = await db.find_one(NodeSession, {"token_hash": credential_hash})
+        if session is None or session.node_id != node.id or session.revoked_at is not None:
+            return "revoked"
+        live = await db.count(NodeSession, {"node_id": node.id, "revoked_at": None, "expires_at": {"$gt": utcnow()}})
+        return None if live else "session_expired"
+
+
+# --- Node sessions (proof of possession) --------------------------------------------------------------
+
+
+def _verify_node_signature(public_key_pem: str | None, message: bytes, signature: bytes) -> bool:
+    """Verify with the key the node registered at enrollment: RSA (2048+ bits, PSS/SHA-256) or Ed25519."""
+    if not public_key_pem:
+        return False
+    try:
+        key = serialization.load_pem_public_key(public_key_pem.encode())
+        if isinstance(key, rsa.RSAPublicKey):
+            if key.key_size < 2048:
+                return False
+            key.verify(
+                signature,
+                message,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.AUTO),
+                hashes.SHA256(),
+            )
+        elif isinstance(key, ed25519.Ed25519PublicKey):
+            key.verify(signature, message)
+        else:
+            return False
+    except (InvalidSignature, ValueError, TypeError):
+        return False
+    return True
+
+
+def session_message(node_id: Any, challenge: str) -> bytes:
+    return f"agentmesh-node-session-v1.{node_id}.{challenge}".encode()
+
+
+async def issue_challenge(db: Session, node: Node) -> dict:
+    challenge = secrets.token_urlsafe(32)
+    db.add(
+        NodeChallenge(
+            node_id=node.id,
+            challenge_hash=hash_secret(challenge),
+            expires_at=utcnow() + timedelta(seconds=CHALLENGE_TTL_SECONDS),
+        )
+    )
+    await db.commit()
+    return {"challenge": challenge, "expires_in": CHALLENGE_TTL_SECONDS}
+
+
+async def create_session(db: Session, node: Node, challenge: str, signature_b64: str) -> dict:
+    """Exchange a signed challenge for a short-lived session token. Each challenge works once."""
+    now = utcnow()
+    refused = HTTPException(status_code=401, detail="Challenge or signature invalid")
+    claimed = await db.update_one(
+        NodeChallenge,
+        {"challenge_hash": hash_secret(challenge), "node_id": node.id, "used_at": None, "expires_at": {"$gt": now}},
+        {"$set": {"used_at": now}},
+    )
+    try:
+        signature = base64.b64decode(signature_b64, validate=True)
+    except ValueError:
+        signature = b""
+    if not claimed or not _verify_node_signature(node.public_key, session_message(node.id, challenge), signature):
+        await db.commit()  # a used challenge stays used
+        security_events.emit("node.session_refused", node_id=node.id)
+        raise refused
+    token = generate_secret(NODE_SESSION_PREFIX)
+    expires = now + timedelta(minutes=settings.NODE_SESSION_TTL_MINUTES)
+    db.add(NodeSession(node_id=node.id, token_hash=hash_secret(token), expires_at=expires))
+    await db.commit()
+    security_events.emit("node.session_issued", node_id=node.id)
+    return {
+        "session_token": token,
+        "expires_in": settings.NODE_SESSION_TTL_MINUTES * 60,
+        "command_signing_key": signing.signing_key_info(),
+    }
+
+
+async def revoke_sessions(db: Session, node_id: uuid.UUID) -> int:
+    return await db.update_many(
+        NodeSession, {"node_id": node_id, "revoked_at": None}, {"$set": {"revoked_at": utcnow()}}
+    )
 
 
 # --- Heartbeat and reconciliation ----------------------------------------------------------------------
@@ -235,6 +359,7 @@ async def heartbeat(db: Session, node: Node, req: HeartbeatRequest) -> Heartbeat
         heartbeat_interval_seconds=settings.WORKER_HEARTBEAT_INTERVAL_SECONDS,
         stop_deployments=stop,
         latest_worker_version=release_service.latest_version(),
+        command_signing_key=SigningKey(**signing.signing_key_info()),
     )
 
 
@@ -281,6 +406,17 @@ async def _lease_once(db: Session, node: Node, max_commands: int) -> list[Comman
             },
         )
         if claimed:
+            # Each delivery gets its own signed authorization; only its nonce is accepted in the ack.
+            authorization, nonce, expires = signing.authorize_command(
+                command_id=cmd.id,
+                node_id=node.id,
+                command_type=cmd.type,
+                deployment_id=cmd.deployment_id,
+                payload=cmd.payload or {},
+            )
+            await db.update_one(
+                NodeCommand, {"_id": cmd.id}, {"$set": {"auth_nonce": nonce, "auth_expires_at": expires}}
+            )
             leased.append(
                 CommandOut(
                     id=cmd.id,
@@ -288,6 +424,7 @@ async def _lease_once(db: Session, node: Node, max_commands: int) -> list[Comman
                     deployment_id=cmd.deployment_id,
                     payload=cmd.payload,
                     attempt=cmd.attempts + 1,
+                    authorization=authorization,
                 )
             )
     await db.commit()
@@ -309,12 +446,20 @@ async def poll_commands(db: Session, node: Node, max_commands: int, wait_seconds
         await asyncio.sleep(1.0)
 
 
-async def ack_command(db: Session, node: Node, command_id: str, status: str, error: str | None) -> None:
+async def ack_command(
+    db: Session, node: Node, command_id: str, status: str, error: str | None, nonce: str | None = None
+) -> None:
     cmd = await db.get(NodeCommand, parse_uuid(command_id, "Command"))
     if cmd is None or cmd.node_id != node.id:
         raise HTTPException(status_code=404, detail="Command not found")
     if cmd.status in (CommandStatus.SUCCEEDED.value, CommandStatus.FAILED.value, CommandStatus.CANCELLED.value):
         return  # duplicate ack: idempotent
+    # Workers that verify authorizations echo the nonce of the delivery they acted on; an ack carrying the nonce of
+    # an earlier, superseded delivery is a replay. (Older workers send none, accepted while legacy mode is on.)
+    if nonce is not None and not hmac.compare_digest(nonce, cmd.auth_nonce or ""):
+        raise HTTPException(status_code=409, detail="Command authorization superseded")
+    if nonce is None and not settings.ALLOW_LEGACY_NODE_CREDENTIALS:
+        raise HTTPException(status_code=422, detail="Command acknowledgement needs the authorization nonce")
     now = utcnow()
     cmd.status = CommandStatus.FAILED.value if status == "failed" else CommandStatus.SUCCEEDED.value
     cmd.error = error

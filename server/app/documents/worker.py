@@ -53,6 +53,9 @@ class NodeCommand(Doc):
     max_attempts: int = 3
     lease_expires_at: datetime | None = None
     error: str | None = None
+    # Signed authorization of the current lease (app.core.signing): its nonce must accompany the ack.
+    auth_nonce: str | None = None
+    auth_expires_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime | None = Field(default_factory=utcnow)
     completed_at: datetime | None = None

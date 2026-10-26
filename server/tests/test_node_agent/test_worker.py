@@ -5,15 +5,33 @@ import json
 
 import pytest
 
+from app.core import signing
 from node_agent.config import WorkerSettings
 from node_agent.protocol import CredentialRevoked
 from node_agent.runtime.base import RuntimeCapabilities, WorkloadError, WorkloadHandle
 from node_agent.worker import Worker
 
 DEP = "11111111-2222-3333-4444-555555555555"
+NODE = "node-1"
+
+
+def signed(cmd: dict, node: str = NODE) -> dict:
+    """Attach a control-plane authorization, as a poll response would."""
+    authorization, _, _ = signing.authorize_command(
+        command_id=cmd["id"],
+        node_id=node,
+        command_type=cmd["type"],
+        deployment_id=cmd.get("deployment_id"),
+        payload=cmd.get("payload") or {},
+    )
+    return {**cmd, "authorization": authorization}
 
 
 def deploy_cmd(cmd_id="c1", dep=DEP, tag="qwen2.5:0.5b"):
+    return signed(_deploy(cmd_id, dep, tag))
+
+
+def _deploy(cmd_id, dep, tag):
     return {
         "id": cmd_id,
         "type": "DEPLOY",
@@ -72,6 +90,7 @@ class FakeRuntime:
 
 class FakeClient:
     headers: dict = {}
+    node_id = NODE
 
     def tunnel_url(self):
         return "ws://localhost:1/tunnel"
@@ -84,8 +103,9 @@ class FakeClient:
     async def report(self, dep, state, message=None, error_code=None, model_digest=None):
         self.reports.append((dep, state, error_code))
 
-    async def ack(self, cmd_id, status, error=None):
+    async def ack(self, cmd_id, status, error=None, nonce=None):
         self.acks.append((cmd_id, status))
+        self.ack_errors = getattr(self, "ack_errors", []) + [error]
 
     async def heartbeat(self, payload):
         if self.revoked:
@@ -104,9 +124,15 @@ class FakeClient:
 def make_worker(tmp_path):
     def _make(runtime=None):
         settings = WorkerSettings(DATA_DIR=str(tmp_path), CONTROL_PLANE_URL="http://localhost:1")
-        return Worker(settings, runtime=runtime or FakeRuntime(), client=FakeClient())
+        return pinned(Worker(settings, runtime=runtime or FakeRuntime(), client=FakeClient()))
 
     return _make
+
+
+def pinned(worker):
+    """A worker that pinned the control plane's signing key at enrollment."""
+    worker.keys.accept(signing.signing_key_info())
+    return worker
 
 
 async def _settle(worker):
@@ -171,7 +197,9 @@ async def test_stop_during_download_cancels_and_cleans_up(make_worker):
     w = make_worker(rt)
     await w.handle_command(deploy_cmd())
     await asyncio.sleep(0.05)
-    await w.handle_command({"id": "s1", "type": "STOP", "deployment_id": DEP, "payload": {"deployment_id": DEP}})
+    await w.handle_command(
+        signed({"id": "s1", "type": "STOP", "deployment_id": DEP, "payload": {"deployment_id": DEP}})
+    )
     assert rt.removed == [DEP]
     assert w.client.reports[-1] == (DEP, "STOPPED", None)
     assert ("s1", "succeeded") in w.client.acks
@@ -320,7 +348,7 @@ async def test_restart_command_redeploys_without_reporting_stopped(make_worker):
     await w.handle_command(deploy_cmd())
     await _settle(w)
     w.client.reports.clear()
-    restart = {**deploy_cmd("r1"), "type": "RESTART"}
+    restart = signed({**_deploy("r1", DEP, "qwen2.5:0.5b"), "type": "RESTART"})
     await w.handle_command(restart)
     await _settle(w)
     assert w.runtime.removed == [DEP] and w.runtime.started == [DEP, DEP]

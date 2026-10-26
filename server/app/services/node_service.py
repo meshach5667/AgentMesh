@@ -10,7 +10,7 @@ from app.core.timeutil import utcnow
 from app.documents.node import BLOCKED_NODE_STATUSES, Node, NodeHardware, NodeStatus
 from app.documents.user import Provider, User
 from app.schemas.node import NodeCreate
-from app.services import audit_service
+from app.services import audit_service, worker_service
 
 
 async def register_node(db: Session, node_data: NodeCreate, user_id: uuid.UUID):
@@ -156,6 +156,7 @@ async def revoke_node(db: Session, node_id: str, user: User) -> Node:
     node.api_key_hash = None
     node.status = NodeStatus.REVOKED
     node.accepting_workloads = False
+    await worker_service.revoke_sessions(db, node.id)
     actor = "operator" if is_staff(user) else "provider"
     await _evacuate(db, node, "NODE_REVOKED", "Node credential revoked", actor)
     await db.commit()
@@ -177,6 +178,7 @@ async def quarantine_node(db: Session, node_id: str, user: User, reason: str) ->
         node.status = NodeStatus.QUARANTINED
         node.quarantined_at = utcnow()
         node.quarantine_reason = reason
+        await worker_service.revoke_sessions(db, node.id)
         await _evacuate(db, node, "NODE_QUARANTINED", "Node quarantined by an operator", "operator")
         audit_service.record(
             db,

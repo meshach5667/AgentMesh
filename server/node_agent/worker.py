@@ -9,6 +9,7 @@ Loops, all outbound:
 
 import asyncio
 import contextlib
+import functools
 import logging
 import re
 from dataclasses import asdict
@@ -17,6 +18,7 @@ from datetime import datetime
 import psutil
 
 from . import schedule as availability_schedule
+from .command_auth import CommandRejected, KeyRing
 from .config import PROTOCOL_VERSION, WORKER_VERSION, WorkerSettings
 from .hardware.discovery import default_allocation, hardware_report
 from .metrics.collector import MetricsCollector
@@ -146,11 +148,22 @@ class Worker:
         self.runtimes: dict[str, WorkloadRuntime] = runtimes
         self.runtime = next(iter(runtimes.values()))  # primary runtime (kept for callers that expect one)
         creds = self.state.load_credentials()
+        self.keys = KeyRing(settings.data_path)
         if client is None:
             if not creds:
                 raise SystemExit("This machine is not enrolled. Run: python -m node_agent enroll --token <token>")
-            client = ControlPlaneClient(settings.CONTROL_PLANE_URL, creds["node_id"], creds["node_credential"])
+            from .identity import load_identity
+
+            private_key, _ = load_identity(settings.data_path)
+            client = ControlPlaneClient(
+                settings.CONTROL_PLANE_URL,
+                creds["node_id"],
+                creds["node_credential"],
+                private_key=private_key,
+                on_signing_key=self.keys.accept,
+            )
         self.client = client
+        self.node_id = str(creds["node_id"]) if creds else str(getattr(client, "node_id", ""))
         self.metrics = MetricsCollector()
         self.stop_event = asyncio.Event()
         self.revoked = False
@@ -352,19 +365,28 @@ class Worker:
     async def handle_command(self, cmd: dict) -> None:
         cmd_id, ctype = str(cmd.get("id")), cmd.get("type")
         logger.info("command=%s type=%s deployment=%s", cmd_id, ctype, cmd.get("deployment_id"))
+        try:
+            claims = self.keys.verify(cmd, self.node_id)
+        except CommandRejected as exc:
+            # Never act on a command the control plane did not sign for this node, this command and this payload.
+            logger.error("security_event=command_rejected command=%s reason=%s", cmd_id, exc)
+            with contextlib.suppress(ProtocolError):
+                await self.client.ack(cmd_id, "failed", f"COMMAND_AUTH_INVALID: {exc}")
+            return
+        ack = functools.partial(self.client.ack, nonce=claims["nonce"])
         if self.state.seen(cmd_id):
-            await self.client.ack(cmd_id, "accepted")  # redelivery of a command we already handled
+            await ack(cmd_id, "accepted")  # redelivery of a command we already handled
             return
         if ctype == "DEPLOY":
             try:
                 spec = parse_deploy_payload(cmd.get("payload") or {})
             except WorkloadError as exc:
                 self.state.mark_processed(cmd_id)
-                await self.client.ack(cmd_id, "failed", f"{exc.code}: {exc.message}")
+                await ack(cmd_id, "failed", f"{exc.code}: {exc.message}")
                 return
             if spec.runtime not in self.runtimes:
                 self.state.mark_processed(cmd_id)
-                await self.client.ack(cmd_id, "accepted")
+                await ack(cmd_id, "accepted")
                 await self.client.report(
                     spec.deployment_id,
                     "FAILED",
@@ -376,7 +398,7 @@ class Worker:
             if not available:
                 # Raced with a local pause/drain or the end of the schedule: hand it back for placement elsewhere.
                 self.state.mark_processed(cmd_id)
-                await self.client.ack(cmd_id, "accepted")
+                await ack(cmd_id, "accepted")
                 await self.client.report(
                     spec.deployment_id, "FAILED", f"Node unavailable ({reason})", error_code="NODE_UNAVAILABLE"
                 )
@@ -391,13 +413,13 @@ class Worker:
                 self._persist(spec.deployment_id)
                 self.deploy_tasks[spec.deployment_id] = asyncio.create_task(self._deploy(spec))
             self.state.mark_processed(cmd_id)
-            await self.client.ack(cmd_id, "accepted")
+            await ack(cmd_id, "accepted")
         elif ctype == "RESTART":
             try:
                 spec = parse_deploy_payload(cmd.get("payload") or {})
             except WorkloadError as exc:
                 self.state.mark_processed(cmd_id)
-                await self.client.ack(cmd_id, "failed", f"{exc.code}: {exc.message}")
+                await ack(cmd_id, "failed", f"{exc.code}: {exc.message}")
                 return
             # Tear down the current runtime without reporting STOPPED, then deploy again (model is cached).
             await self.stop_workload(spec.deployment_id, report=False)
@@ -410,15 +432,15 @@ class Worker:
             self._persist(spec.deployment_id)
             self.deploy_tasks[spec.deployment_id] = asyncio.create_task(self._deploy(spec, restart=True))
             self.state.mark_processed(cmd_id)
-            await self.client.ack(cmd_id, "accepted")
+            await ack(cmd_id, "accepted")
         elif ctype == "STOP":
             dep_id = str((cmd.get("payload") or {}).get("deployment_id") or cmd.get("deployment_id"))
             await self.stop_workload(dep_id)
             self.state.mark_processed(cmd_id)
-            await self.client.ack(cmd_id, "succeeded")
+            await ack(cmd_id, "succeeded")
         else:
             self.state.mark_processed(cmd_id)
-            await self.client.ack(cmd_id, "failed", "Unsupported command type")
+            await ack(cmd_id, "failed", "Unsupported command type")
 
     # --- loops -------------------------------------------------------------------------------------
 
@@ -442,6 +464,7 @@ class Worker:
         }
         resp = await self.client.heartbeat(payload)
         self.state.record_heartbeat()
+        self.keys.accept(resp.get("command_signing_key"))
         await self._maybe_auto_update(resp.get("latest_worker_version"))
         for dep_id in resp.get("stop_deployments", []):
             logger.info("Control plane asked to stop workload %s", dep_id)
@@ -480,6 +503,16 @@ class Worker:
 
     async def _command_loop(self) -> None:
         attempt = 0
+        # Commands are verified against the pinned signing key; pin it (first heartbeat) before taking any.
+        while not self.keys.pinned and not self.stop_event.is_set():
+            try:
+                await self.heartbeat_once()
+            except ProtocolError as exc:
+                logger.warning("Heartbeat failed: %s", exc)
+            if not self.keys.pinned:
+                await self._sleep(backoff(attempt, cap=30))
+                attempt += 1
+        attempt = 0
         while not self.stop_event.is_set():
             try:
                 for cmd in await self.client.poll(wait_seconds=20):
@@ -496,6 +529,12 @@ class Worker:
             for w in list(self.workloads.values()):
                 if w["state"] == "running" and w["handle"] is not None:
                     w["healthy"] = await self._rt(w["spec"]).health(w["handle"], w["spec"])
+
+    async def _tunnel_headers(self, renew: bool = False) -> dict:
+        ensure = getattr(self.client, "ensure_session", None)
+        if ensure is not None:
+            await ensure(force=renew)
+        return dict(self.client.headers)
 
     async def _sleep(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
@@ -520,7 +559,7 @@ class Worker:
             asyncio.create_task(self._command_loop()),
             asyncio.create_task(self._health_loop()),
             asyncio.create_task(
-                run_tunnel(self.client.tunnel_url(), self.client.headers, self.tunnel, self.stop_event)
+                run_tunnel(self.client.tunnel_url(), self._tunnel_headers, self.tunnel, self.stop_event)
             ),
         ]
         stopper = asyncio.create_task(self.stop_event.wait())
@@ -594,6 +633,7 @@ async def enroll(
     finally:
         await client.close()
     state.save_credentials(str(result["node_id"]), result["node_credential"], settings.CONTROL_PLANE_URL)
+    KeyRing(settings.data_path).accept(result.get("command_signing_key"))
     return {
         "node_id": result["node_id"],
         "allocation": payload["allocation"],

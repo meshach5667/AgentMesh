@@ -11,10 +11,13 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
+from app.core import security_events
 from app.core.config import settings
 from app.core.database import Session, get_db, retry_transient, session_scope
+from app.core.security import hash_secret
 from app.documents.node import Node
 from app.schemas.worker import (
+    ChallengeResponse,
     CommandAck,
     DeploymentStatusReport,
     EnrollRequest,
@@ -23,6 +26,8 @@ from app.schemas.worker import (
     HeartbeatResponse,
     PollRequest,
     PollResponse,
+    SessionRequest,
+    SessionResponse,
 )
 from app.services import release_service, worker_service
 from app.services.tunnel import WorkerConnection, broker
@@ -51,6 +56,32 @@ async def _reload(db: Session, node: Node) -> Node:
 @router.post("/enroll", response_model=EnrollResponse)
 async def enroll(req: EnrollRequest, db: Session = Depends(get_db)):
     return await worker_service.enroll(db, req)
+
+
+async def enrolled_node(
+    db: Session = Depends(get_db),
+    authorization: str = Header(default=""),
+    x_agentmesh_node_id: str | None = Header(default=None),
+    x_agentmesh_protocol: str | None = Header(default=None),
+) -> Node:
+    """The long-lived enrollment credential itself (never a session token): needed, with a signature by the node
+    key, to obtain a session."""
+    credential = authorization[7:] if authorization.lower().startswith("bearer ") else None
+    return await worker_service.authenticate_worker(
+        db, x_agentmesh_node_id, credential, x_agentmesh_protocol or "1", enrollment_credential=True
+    )
+
+
+@router.post("/session/challenge", response_model=ChallengeResponse)
+async def session_challenge(node: Node = Depends(enrolled_node), db: Session = Depends(get_db)):
+    """A single-use challenge (60 s) for the worker to sign with its node key."""
+    return await worker_service.issue_challenge(db, node)
+
+
+@router.post("/session", response_model=SessionResponse)
+async def session(req: SessionRequest, node: Node = Depends(enrolled_node), db: Session = Depends(get_db)):
+    """Exchange a signed challenge for a short-lived session token (proof of possession of the node key)."""
+    return await worker_service.create_session(db, node, req.challenge, req.signature)
 
 
 @router.get("/releases/latest")
@@ -104,7 +135,7 @@ async def poll(req: PollRequest, node: Node = Depends(current_node), db: Session
 @router.post("/commands/{command_id}/ack")
 async def ack(command_id: str, req: CommandAck, node: Node = Depends(current_node), db: Session = Depends(get_db)):
     async def attempt():
-        await worker_service.ack_command(db, await _reload(db, node), command_id, req.status, req.error)
+        await worker_service.ack_command(db, await _reload(db, node), command_id, req.status, req.error, req.nonce)
 
     await retry_transient(db, attempt)
     return {"ok": True}
@@ -133,7 +164,7 @@ async def tunnel(websocket: WebSocket):
             node = await worker_service.authenticate_worker(
                 db, headers.get("x-agentmesh-node-id"), credential, headers.get("x-agentmesh-protocol") or "1"
             )
-            node_id, credential_hash = node.id, node.api_key_hash
+            node_id, credential_hash = node.id, hash_secret(credential or "")
     except Exception:  # noqa: BLE001
         await websocket.close(code=4401)
         return
@@ -152,19 +183,24 @@ async def tunnel(websocket: WebSocket):
         logger.info("Worker tunnel closed for node %s", node_id)
 
 
+# Tunnel close codes the worker acts on: 4401 revoked (stop and forget the credential), 4403 blocked by an operator
+# (keep the credential, retry later), 4408 session expired (renew the session and reconnect).
+CLOSE_CODES = {"revoked": 4401, "blocked": 4403, "session_expired": 4408, "unverifiable": 4408}
+
+
 async def _revalidate(websocket: WebSocket, conn: WorkerConnection, credential_hash: str | None) -> None:
     """Close the tunnel once its node is revoked, quarantined or re-keyed, even if the disconnect message sent at
     that moment was lost (e.g. a Redis hiccup between replicas). Doubt counts as revoked."""
     while True:
         await asyncio.sleep(settings.TUNNEL_REVALIDATE_SECONDS)
         try:
-            allowed = await worker_service.still_authorized(conn.node_id, credential_hash)
+            reason = await worker_service.still_authorized(conn.node_id, credential_hash)
         except Exception:  # noqa: BLE001
             logger.exception("Could not re-check node %s; closing its tunnel", conn.node_id)
-            allowed = False
-        if not allowed:
-            logger.warning("Closing tunnel of node %s: no longer authorized", conn.node_id)
+            reason = "unverifiable"
+        if reason is not None:
+            security_events.emit("node.tunnel_closed", node_id=conn.node_id, reason=reason)
             broker.unregister(conn)
             with contextlib.suppress(Exception):
-                await websocket.close(code=4401)
+                await websocket.close(code=CLOSE_CODES.get(reason, 4401))
             return
