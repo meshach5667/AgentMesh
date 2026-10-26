@@ -30,6 +30,9 @@ export default function ProviderGuide() {
             'It only uses the CPU, memory, disk and GPU you allocate. Defaults are half your CPU cores and RAM, at most 20 GB of disk, and no GPU.',
             'It never touches your own Ollama install: not port 11434, not ~/.ollama, not your models. Workloads get their own port, model directory and process.',
             'It never runs commands from customers. The control plane can only ask it to deploy an approved model with set limits, or to stop one.',
+            'Every command is signed by the control plane and bound to your node, that command and its exact payload; the worker refuses anything unsigned, altered, expired or replayed. It pins the signing key when it enrolls.',
+            'The worker signs a fresh challenge with a private key generated on your machine to get one-hour sessions, so a copied enrollment credential alone cannot impersonate your node. The key never leaves the machine (it is kept with 0600 permissions next to the credential).',
+            'If an operator quarantines your node while investigating a problem, the worker keeps its credential and retries every minute; it resumes when released. If the node is revoked, it stops its workloads and deletes its credential.',
             'Hardware reports contain CPU model, cores, RAM, free disk, OS, architecture, and GPU model and VRAM. Nothing else is uploaded.',
           ]}
         />

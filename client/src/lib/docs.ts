@@ -123,9 +123,10 @@ export const DOC_PAGES: DocPageEntry[] = [
     summary: 'Trust model, data visibility, controls, residual risks and what is not verified.',
     sections: [
       { id: 'trust-model', title: 'Trust model', keywords: 'provider sees prompts confidential' },
-      { id: 'data', title: 'What data is stored', keywords: 'usage logs prompts not stored' },
+      { id: 'data', title: 'What data is stored', keywords: 'usage logs prompts not stored argon2 sessions' },
+      { id: 'retention', title: 'Retention and deletion', keywords: 'retention delete days backups ai runs audit' },
       { id: 'worker-safety', title: 'Worker safety for providers', keywords: 'isolation ollama limits commands' },
-      { id: 'controls', title: 'Platform controls', keywords: 'rate limit headers redaction webhooks' },
+      { id: 'controls', title: 'Platform controls', keywords: 'rate limit headers redaction webhooks mfa totp sessions refresh quarantine csp signed commands' },
       { id: 'risks', title: 'Known risks', keywords: 'residual risks localStorage mfa' },
       { id: 'not-verified', title: 'Not yet verified', keywords: 'paystack live gpu vllm docker macos' },
       { id: 'reporting', title: 'Reporting a vulnerability', keywords: 'security disclosure' },

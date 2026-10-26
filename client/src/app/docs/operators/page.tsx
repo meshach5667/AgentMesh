@@ -26,7 +26,8 @@ export default function OperatorGuide() {
       <Section id="configuration" title="Configuration">
         <P>
           The API reads environment variables (or a <C>.env</C> file in the repository root). Anything other than{' '}
-          <C>ENVIRONMENT=dev|development|test|testing</C> counts as production, and then the API refuses to start unless:
+          <C>ENVIRONMENT=dev|development|test|testing</C>, including leaving it unset, counts as production, and then the API refuses to start
+          unless:
         </P>
         <List
           items={[
@@ -40,10 +41,15 @@ export default function OperatorGuide() {
           head={['Variable', 'Purpose']}
           rows={[
             [<><C>MONGODB_URL</C>, <C>MONGODB_DB</C></>, <>MongoDB connection string (for example from MongoDB Atlas) and database name (default <C>agentmesh</C>). It must be a replica set, which Atlas always is: ledger postings are saved in multi-document transactions. Required outside development.</>],
-            [<C key="2">SECRET_KEY</C>, 'Signs session tokens. Changing it signs everyone out.'],
+            [<C key="2">SECRET_KEY</C>, 'Root of the purpose-specific keys (session tokens, MFA challenges, sponsored-view tokens, command signing unless set separately, MFA-secret encryption unless set separately). Changing it signs everyone out and rotates the command-signing key; see docs/security/INCIDENT_RESPONSE.md before rotating.'],
+            [<C key="2b">FORWARDED_ALLOW_IPS</C>, 'Proxy addresses (IPs or CIDRs) whose X-Forwarded-For is trusted for client addresses. Set it to your platform’s proxy range; never * when the API port is reachable directly.'],
+            [<><C>STAFF_MFA_REQUIRED</C>, <C>DATA_ENCRYPTION_KEY</C></>, 'Operators and admins must use TOTP (default on). Optional dedicated base64 32-byte key for MFA secrets at rest.'],
+            [<><C>ALLOW_LEGACY_NODE_CREDENTIALS</C></>, 'Accept workers older than node sessions (default on). Turn off once every worker is upgraded.'],
+            [<><C>COMMAND_SIGNING_KEY</C>, <C>COMMAND_SIGNING_PREVIOUS_KEY</C></>, 'Optional explicit Ed25519 seeds for signed commands; rotate by moving the current one to PREVIOUS.'],
+            [<><C>AI_RUN_RETENTION_DAYS</C>, <C>USAGE_RECORD_RETENTION_DAYS</C>, <C>AUDIT_LOG_RETENTION_DAYS</C> and others</>, 'Retention per data class (see Security & limitations).'],
             [<><C>PUBLIC_BASE_URL</C>, <C>FRONTEND_URL</C></>, 'Public https URLs of the API and the dashboard. Paystack returns customers to $FRONTEND_URL/customer/wallet.'],
             [<C key="4">CORS_ORIGINS</C>, 'Dashboard origins allowed to call the API.'],
-            [<><C>COORDINATION_BACKEND=redis</C>, <C>REDIS_URL</C></>, 'Needed only for more than one API replica.'],
+            [<><C>COORDINATION_BACKEND=redis</C>, <C>REDIS_URL</C></>, 'Needed only for more than one API replica. Use a password-protected Redis that is not reachable from the internet: replicas trust its messages.'],
             [<C key="6">BILLING_CURRENCY</C>, 'One platform currency (default NGN). Choose it before taking payments.'],
             [<><C>PAYSTACK_SECRET_KEY</C>, <C>PAYSTACK_WEBHOOK_IPS</C></>, 'Payments; empty key disables them.'],
             [<C key="8">METRICS_TOKEN</C>, 'Bearer token for GET /metrics; empty disables it.'],
@@ -185,10 +191,13 @@ python scripts/create_operator.py lead@example.com --role admin`}
             [<C key="3">GET /metrics</C>, <>Prometheus, with <C>Authorization: Bearer $METRICS_TOKEN</C>.</>],
             [<C key="4">GET /api/v1/admin/overview</C>, 'Operator dashboard figures, including nodes with overdue heartbeats.'],
             [<C key="5">GET /api/v1/admin/reconciliation</C>, 'Ledger invariants and open payment items.'],
+            [<C key="6">GET /api/v1/admin/anomalies</C>, 'Providers whose token claims exceed the request and response sizes the gateway observed, or whose requests mostly fail.'],
+            [<C key="7">POST /api/v1/admin/nodes/&#123;id&#125;/quarantine</C>, 'Cut a node off at once (no authentication, tunnel closed, deployments moved); release with /release. See docs/security/INCIDENT_RESPONSE.md.'],
           ]}
         />
         <P>
-          Logs are JSON lines with a request id; API keys, node credentials, bearer tokens and Paystack keys are redacted. Alert on readiness
+          Logs are JSON lines with a request id; API keys, node credentials, bearer tokens and Paystack keys are redacted, and security events
+          (session refusals, closed tunnels, rejected commands) are logged with an allowlist of fields under <C>agentmesh.security</C>. Alert on readiness
           failing, rising 5xx, payouts stuck <C>PENDING</C> or <C>OTP_REQUIRED</C>, reconciliation reporting <C>ok: false</C>, and{' '}
           <C>Background job … failed</C> in the logs.
         </P>

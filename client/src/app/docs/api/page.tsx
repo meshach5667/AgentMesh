@@ -34,9 +34,17 @@ export default function ApiGuide() {
         />
         <P>
           Register with <C>POST /auth/register</C> and <C>{'{"email", "password", "role"}'}</C>, where <C>role</C> is <C>customer</C> or{' '}
-          <C>provider</C> and the password has at least 8 characters. Both endpoints return <C>access_token</C> and the <C>user</C>. Send the token
-          as <C>Authorization: Bearer $JWT</C>. <C>GET /auth/me</C> returns the signed-in user. Login and registration are rate limited (429 with{' '}
-          <C>Retry-After</C>).
+          <C>provider</C> and the password has at least 8 characters. Both endpoints return <C>access_token</C>, <C>refresh_token</C>,{' '}
+          <C>expires_in</C> and the <C>user</C>. Send the access token as <C>Authorization: Bearer $JWT</C>; it lasts 15 minutes. Exchange the
+          refresh token for a new pair with <C>POST /auth/refresh</C> <C>{'{"refresh_token"}'}</C>: each refresh token works once, and presenting a
+          used one ends the session. <C>POST /auth/logout</C> ends the current session and <C>POST /auth/logout-all</C> every session.{' '}
+          <C>GET /auth/me</C> returns the signed-in user. Login, registration and refresh are rate limited (429 with <C>Retry-After</C>).
+        </P>
+        <P>
+          Accounts with two-factor authentication get <C>{'{"mfa_required": true, "mfa_token"}'}</C> from login instead of tokens; send{' '}
+          <C>{'{"mfa_token", "code"}'}</C> to <C>POST /auth/mfa/verify</C> within 5 minutes. Turn it on with <C>POST /auth/mfa/setup</C> (returns the
+          secret for your authenticator app) and <C>POST /auth/mfa/enable</C> <C>{'{"code"}'}</C>. Operator and admin accounts must use it: until
+          they do, other endpoints answer 403 with <C>mfa_required</C>. For scripts and integrations, prefer API keys.
         </P>
       </Section>
 
