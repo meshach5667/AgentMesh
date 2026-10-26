@@ -1,6 +1,7 @@
 import type { User } from '../types/user';
 
 const TOKEN_KEY = 'token';
+const REFRESH_KEY = 'refresh_token';
 const USER_KEY = 'user';
 
 export function getToken(): string | null {
@@ -12,9 +13,22 @@ export function setToken(token: string): void {
   window.localStorage.setItem(TOKEN_KEY, token);
 }
 
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(REFRESH_KEY);
+}
+
+/** Store a token pair from /auth/login, /auth/register or /auth/refresh. Refresh tokens work once, so the new
+ * one always replaces the old. */
+export function setTokens(tokens: { access_token: string; refresh_token: string }): void {
+  window.localStorage.setItem(TOKEN_KEY, tokens.access_token);
+  window.localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+}
+
 export function removeToken(): void {
   if (typeof window === 'undefined') return;
   window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(REFRESH_KEY);
   window.localStorage.removeItem(USER_KEY);
 }
 
@@ -44,8 +58,9 @@ export function isTokenExpired(token: string, now = Date.now()): boolean {
   }
 }
 
-/** A stored, unexpired token: what the UI treats as "signed in" before the API confirms it. */
+/** A stored session the UI treats as "signed in" before the API confirms it: an unexpired access token, or a
+ * refresh token that can get a new one (access tokens last only minutes). */
 export function hasSession(): boolean {
   const token = getToken();
-  return !!token && !isTokenExpired(token);
+  return (!!token && !isTokenExpired(token)) || !!getRefreshToken();
 }

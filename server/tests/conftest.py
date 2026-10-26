@@ -17,6 +17,7 @@ from app.core.ratelimit import limiters
 from app.core.security import create_access_token, get_password_hash
 from app.documents import Customer, Model, ModelArtifact, Provider, User
 from app.main import app
+from app.services import auth_service
 
 pytest_plugins = ["tests.mongo_support"]
 
@@ -43,7 +44,7 @@ async def client(mongo):
 @pytest.fixture
 def auth_headers():
     """A syntactically valid token for a user that does not exist."""
-    token = create_access_token(str(uuid.uuid4()))
+    token = create_access_token(str(uuid.uuid4()), str(uuid.uuid4()))
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -64,8 +65,9 @@ def make_user(db):
             db.add(Provider(user_id=user.id))
         elif role == "customer":
             db.add(Customer(user_id=user.id))
+        tokens = await auth_service.start_session(db, user)
         await db.commit()
-        return user, {"Authorization": f"Bearer {create_access_token(user.id)}"}
+        return user, {"Authorization": f"Bearer {tokens['access_token']}"}
 
     return _make
 

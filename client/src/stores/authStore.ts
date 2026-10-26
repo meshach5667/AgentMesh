@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import type { User, UserRole } from '../types/user';
-import api from '../lib/api';
+import api, { refreshSession } from '../lib/api';
 import { errorMessage } from '../lib/errors';
-import { setToken, removeToken, getToken, getCachedUser, setCachedUser, isTokenExpired } from '../lib/auth';
+import { setTokens, removeToken, getToken, getRefreshToken, getCachedUser, setCachedUser, isTokenExpired } from '../lib/auth';
 
 interface AuthState {
   user: User | null;
@@ -33,7 +33,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const { data } = await api.post('/auth/login', { email, password });
-      setToken(data.access_token);
+      setTokens(data);
       setCachedUser(data.user);
       set({
         token: data.access_token,
@@ -52,7 +52,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const { data } = await api.post('/auth/register', { email, password, role });
-      setToken(data.access_token);
+      setTokens(data);
       setCachedUser(data.user);
       set({
         token: data.access_token,
@@ -67,7 +67,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
+  /** Ends the session on the server too, so the tokens stop working everywhere, not just in this browser. */
   logout: () => {
+    const token = getToken();
+    if (token) api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined);
     removeToken();
     set({ ...signedOut, error: null });
   },
@@ -75,9 +78,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   /** Restores the stored session at once from the cached user, then confirms it with /auth/me. Only a 401/403
    * signs the user out; a network error or 5xx (for example the API waking up) keeps the session. */
   initialize: async () => {
-    const token = getToken();
+    let token = getToken();
+    if ((!token || isTokenExpired(token)) && getRefreshToken()) {
+      token = await refreshSession();
+    }
     if (!token || isTokenExpired(token)) {
-      removeToken();
+      if (!getRefreshToken()) removeToken();
       set(signedOut);
       return;
     }

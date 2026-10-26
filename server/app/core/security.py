@@ -1,7 +1,8 @@
 import hashlib
 import hmac
 import secrets
-from datetime import timedelta
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
@@ -10,7 +11,6 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from passlib.context import CryptContext
 
 from app.core.config import settings
-from app.core.timeutil import utcnow
 
 # Passwords: Argon2id with argon2-cffi's defaults (RFC 9106 low-memory profile). Hashes made before Argon2 (PBKDF2
 # or bcrypt through passlib) still verify and are replaced with Argon2id at the next successful login.
@@ -84,10 +84,36 @@ def verify_node_api_key(plain_key: str, stored_hash: str | None) -> bool:
         return False
 
 
-def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
-    if expires_delta:
-        expire = utcnow() + expires_delta
-    else:
-        expire = utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode = {"exp": expire, "sub": str(subject)}
-    return str(jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM))
+TOKEN_AUDIENCE = "agentmesh-api"
+TOKEN_CLOCK_LEEWAY_SECONDS = 30  # replicas' clocks may differ slightly
+REFRESH_TOKEN_PREFIX = "am_rt_"
+
+
+def _access_key() -> bytes:
+    from app.core.keys import derive_key
+
+    return derive_key("access-token")
+
+
+def create_access_token(subject: str | Any, session_id: str | Any, expires_delta: timedelta | None = None) -> str:
+    """A short-lived access token for ``subject`` (a user id), valid only while session ``session_id`` is."""
+    # Wall-clock time, not utcnow(): that helper keeps timestamps strictly increasing and can run slightly ahead.
+    now = datetime.now(UTC)
+    expire = now + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    claims = {"sub": str(subject), "sid": str(session_id), "typ": "access", "aud": TOKEN_AUDIENCE, "iat": now}
+    return str(jwt.encode(claims | {"exp": expire}, _access_key(), algorithm=ALGORITHM))
+
+
+def decode_access_token(token: str) -> tuple[uuid.UUID, uuid.UUID]:
+    """Return (user id, session id) from a valid access token. Raises ``jwt.PyJWTError`` or ``ValueError``."""
+    payload = jwt.decode(
+        token,
+        _access_key(),
+        algorithms=[ALGORITHM],
+        audience=TOKEN_AUDIENCE,
+        leeway=TOKEN_CLOCK_LEEWAY_SECONDS,
+        options={"require": ["exp", "iat", "sub", "sid", "typ", "aud"]},
+    )
+    if payload.get("typ") != "access":
+        raise ValueError("not an access token")
+    return uuid.UUID(str(payload["sub"])), uuid.UUID(str(payload["sid"]))

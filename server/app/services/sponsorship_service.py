@@ -32,6 +32,7 @@ from pymongo.errors import DuplicateKeyError
 from app.core.config import settings
 from app.core.database import Session
 from app.core.ids import parse_uuid
+from app.core.keys import derive_key
 from app.core.timeutil import utcnow
 from app.documents.sponsorship import (
     AdSettings,
@@ -275,7 +276,7 @@ async def list_campaigns(db: Session, status: str | None = None) -> list[Sponsor
 
 
 def _sign(payload: str) -> str:
-    digest = hmac.new(f"sponsor:{settings.SECRET_KEY}".encode(), payload.encode(), hashlib.sha256).digest()
+    digest = hmac.new(derive_key("sponsored-view"), payload.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest[:18]).decode().rstrip("=")
 
 

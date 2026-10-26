@@ -17,6 +17,7 @@ from app.main import app
 PUBLIC = {
     ("POST", "/api/v1/auth/login"): "sign-in",
     ("POST", "/api/v1/auth/register"): "self-service sign-up (customer/provider only)",
+    ("POST", "/api/v1/auth/refresh"): "authenticated by the single-use refresh token in its body",
     ("GET", "/api/v1/billing/pricing"): "published price list",
     ("GET", "/api/v1/marketplace/nodes"): "public capacity listing",
     ("GET", "/api/v1/marketplace/pricing"): "public price summary",

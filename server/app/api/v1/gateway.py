@@ -18,16 +18,15 @@ import time
 import uuid
 from typing import Any
 
-import jwt
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.database import Session, get_db, retry_transient, session_scope
+from app.core.dependencies import InvalidCredentials, resolve_access_token
 from app.core.logging import current_request_id, new_request_id
 from app.core.ratelimit import limiters
-from app.core.security import ALGORITHM
 from app.core.timeutil import utcnow
 from app.documents.api_key import ApiKey
 from app.documents.deployment import Deployment
@@ -95,10 +94,9 @@ async def _authenticate(request: Request, db: Session) -> tuple[User, ApiKey | N
         user = await db.get(User, api_key.user_id)
     else:
         try:
-            user_id = uuid.UUID(str(jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM]).get("sub")))
-        except (jwt.PyJWTError, ValueError):
+            user, _session = await resolve_access_token(db, token)
+        except InvalidCredentials:
             raise GatewayError(401, "unauthorized", "Invalid credentials") from None
-        user = await db.get(User, user_id)
     if user is None or not user.is_active:
         raise GatewayError(401, "unauthorized", "Invalid credentials")
     return user, api_key

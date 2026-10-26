@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     MONGODB_DB: str = "agentmesh"
     REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = INSECURE_DEFAULT_SECRET
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    # Access tokens are short-lived and bound to a server-side session; refresh tokens rotate on every use and the
+    # session ends after REFRESH_TOKEN_TTL_DAYS however often it is refreshed.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_TTL_DAYS: int = 14
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
     API_V1_PREFIX: str = "/api/v1"
     # Fail closed: an unset ENVIRONMENT means production, so the safety checks below (random SECRET_KEY, explicit
@@ -197,6 +200,14 @@ class Settings(BaseSettings):
                 raise ValueError("PUBLIC_BASE_URL must use https outside dev/test (API keys travel in headers)")
             if self.AI_INFERENCE_TOKEN and len(self.AI_INFERENCE_TOKEN) < 32:
                 raise ValueError("AI_INFERENCE_TOKEN must be a random value of at least 32 characters outside dev/test")
+        return self
+
+    @model_validator(mode="after")
+    def _check_sessions(self) -> "Settings":
+        if not 1 <= self.ACCESS_TOKEN_EXPIRE_MINUTES <= 15:
+            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be between 1 and 15")
+        if not 1 <= self.REFRESH_TOKEN_TTL_DAYS <= 90:
+            raise ValueError("REFRESH_TOKEN_TTL_DAYS must be between 1 and 90")
         return self
 
     @model_validator(mode="after")

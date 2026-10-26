@@ -10,6 +10,7 @@ from app.documents.deployment import Deployment, DeploymentEvent
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeHardware, NodePricing
 from app.documents.reservation import ResourceReservation
+from app.documents.session import AuthSession, RefreshToken
 from app.documents.sponsorship import AdSettings, SponsorCampaign, SponsorStat, SponsorView
 from app.documents.transaction import Transaction
 from app.documents.usage import UsageRecord
@@ -28,6 +29,7 @@ DOCUMENTS: list[type[Doc]] = [
     AiRunEvent,
     ApiKey,
     AuditLog,
+    AuthSession,
     Charge,
     Customer,
     Deployment,
@@ -46,6 +48,7 @@ DOCUMENTS: list[type[Doc]] = [
     PayoutAccount,
     PricingRule,
     Provider,
+    RefreshToken,
     Refund,
     ResourceReservation,
     SponsorCampaign,
