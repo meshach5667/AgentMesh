@@ -9,10 +9,12 @@ import type { UserRole } from '@/types';
 
 /** Sends signed-out users to /login and users of another role to their own dashboard. This is navigation only;
  * the API authorizes every request. */
-export function AuthGuard({ children, roles }: { children: React.ReactNode; roles?: UserRole[] }) {
+export function AuthGuard({ children, roles, allowMfaPending = false }: { children: React.ReactNode; roles?: UserRole[]; allowMfaPending?: boolean }) {
   const { user, token, isAuthenticated, isLoading, error, initialize } = useAuth();
   const router = useRouter();
   const allowed = !roles || (!!user && roles.includes(user.role));
+  // Staff must finish two-factor setup or sign-in before their dashboard works (the API enforces it too).
+  const mfaPending = !allowMfaPending && !!user?.mfa_required && user.mfa_verified === false;
 
   useEffect(() => {
     initialize();
@@ -24,8 +26,9 @@ export function AuthGuard({ children, roles }: { children: React.ReactNode; role
   useEffect(() => {
     if (isLoading || unverified) return;
     if (!isAuthenticated) router.replace('/login');
+    else if (mfaPending) router.replace('/mfa-setup');
     else if (!allowed) router.replace(homeFor(user?.role));
-  }, [isAuthenticated, isLoading, unverified, allowed, user, router]);
+  }, [isAuthenticated, isLoading, unverified, allowed, mfaPending, user, router]);
 
   if (unverified) {
     return (
@@ -44,7 +47,7 @@ export function AuthGuard({ children, roles }: { children: React.ReactNode; role
       </div>
     );
   }
-  if (isLoading || !isAuthenticated || !allowed) {
+  if (isLoading || !isAuthenticated || !allowed || mfaPending) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">

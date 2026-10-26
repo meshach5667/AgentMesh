@@ -8,6 +8,7 @@ export const useAuth = () => {
   const isLoading = useAuthStore((state) => state.isLoading);
   const error = useAuthStore((state) => state.error);
   const loginFn = useAuthStore((state) => state.login);
+  const verifyMfa = useAuthStore((state) => state.verifyMfa);
   const registerFn = useAuthStore((state) => state.register);
   const logoutFn = useAuthStore((state) => state.logout);
   const initialize = useAuthStore((state) => state.initialize);
@@ -20,6 +21,7 @@ export const useAuth = () => {
   return {
     user, token, isAuthenticated, isLoading, error,
     login: loginFn,
+    verifyMfa,
     register: registerFn,
     logout: handleLogout,
     initialize,

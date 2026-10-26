@@ -22,6 +22,15 @@ class User(Doc):
     is_active: bool | None = True
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime | None = Field(default_factory=utcnow)
+    # TOTP second factor (app.services.mfa_service). Seeds are AES-GCM ciphertexts, never plaintext.
+    mfa_secret: str | None = None
+    mfa_pending_secret: str | None = None
+    mfa_enabled_at: datetime | None = None
+    mfa_last_step: int | None = None  # last accepted TOTP time step; older or equal steps are refused
+
+    @property
+    def mfa_enabled(self) -> bool:
+        return self.mfa_secret is not None
 
     class Settings(Doc.Settings):
         name = "users"

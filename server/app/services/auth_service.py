@@ -102,8 +102,25 @@ async def authenticate(db: Session, user_data: UserLogin) -> User:
 
 async def login(db: Session, user_data: UserLogin, user_agent: str | None = None):
     user = await authenticate(db, user_data)
+    if user.mfa_enabled:
+        from app.services import mfa_service
+
+        await db.commit()  # keep a password rehash
+        return {"mfa_required": True, "mfa_token": mfa_service.challenge_token(user)}
     audit_service.record(db, actor_id=user.id, action="auth.login", resource_type="user", resource_id=user.id)
     tokens = await start_session(db, user, user_agent=user_agent)
+    await db.commit()
+    return tokens
+
+
+async def login_with_second_factor(db: Session, mfa_token: str, code: str, user_agent: str | None = None):
+    from app.services import mfa_service
+
+    user = await mfa_service.complete_login(db, mfa_token, code)
+    audit_service.record(
+        db, actor_id=user.id, action="auth.login", resource_type="user", resource_id=user.id, details={"mfa": True}
+    )
+    tokens = await start_session(db, user, user_agent=user_agent, mfa_verified=True)
     await db.commit()
     return tokens
 

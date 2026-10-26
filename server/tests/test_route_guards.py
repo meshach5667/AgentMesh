@@ -18,6 +18,7 @@ PUBLIC = {
     ("POST", "/api/v1/auth/login"): "sign-in",
     ("POST", "/api/v1/auth/register"): "self-service sign-up (customer/provider only)",
     ("POST", "/api/v1/auth/refresh"): "authenticated by the single-use refresh token in its body",
+    ("POST", "/api/v1/auth/mfa/verify"): "authenticated by the short-lived MFA challenge token and a TOTP code",
     ("GET", "/api/v1/billing/pricing"): "published price list",
     ("GET", "/api/v1/marketplace/nodes"): "public capacity listing",
     ("GET", "/api/v1/marketplace/pricing"): "public price summary",
@@ -45,7 +46,7 @@ SELF_AUTHENTICATING = {
     ("WS", "/api/v1/worker/tunnel"): "node credential",
 }
 
-GUARDS = {"get_current_user", "current_node", "inference_node"}
+GUARDS = {"get_current_user", "get_session_user", "current_node", "inference_node"}
 
 
 def _routes():

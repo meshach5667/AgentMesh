@@ -101,6 +101,22 @@ describe('auth session', () => {
     expect(localStorage.getItem('refresh_token')).toBeNull();
   });
 
+  it('returns an MFA challenge instead of signing in when the account has a second factor', async () => {
+    post.mockResolvedValueOnce({ data: { mfa_required: true, mfa_token: 'challenge' } });
+    const result = await useAuthStore.getState().login('op@example.com', 'pw');
+    expect(result).toEqual({ mfaToken: 'challenge' });
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(getToken()).toBeNull();
+
+    const token = future();
+    post.mockResolvedValueOnce({ data: { access_token: token, refresh_token: 'am_rt_1', user } });
+    await useAuthStore.getState().verifyMfa('challenge', '123456');
+    expect(post).toHaveBeenLastCalledWith('/auth/mfa/verify', { mfa_token: 'challenge', code: '123456' });
+    expect(useAuthStore.getState()).toMatchObject({ isAuthenticated: true, user });
+    expect(getToken()).toBe(token);
+    expect(localStorage.getItem('refresh_token')).toBe('am_rt_1');
+  });
+
   it('treats undecodable tokens as not expired so the API decides', () => {
     expect(isTokenExpired('not-a-jwt')).toBe(false);
   });

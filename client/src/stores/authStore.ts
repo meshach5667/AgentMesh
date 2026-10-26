@@ -10,7 +10,9 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  /** Resolves to an MFA challenge token when the account needs a second factor; then call verifyMfa. */
+  login: (email: string, password: string) => Promise<{ mfaToken: string } | void>;
+  verifyMfa: (mfaToken: string, code: string) => Promise<void>;
   register: (email: string, password: string, role: UserRole) => Promise<void>;
   logout: () => void;
   initialize: () => Promise<void>;
@@ -18,6 +20,18 @@ interface AuthState {
 }
 
 const signedOut = { user: null, token: null, isAuthenticated: false, isLoading: false };
+
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  user: User;
+}
+
+function signIn(set: (state: Partial<AuthState>) => void, data: TokenResponse) {
+  setTokens(data);
+  setCachedUser(data.user);
+  set({ token: data.access_token, user: data.user, isAuthenticated: true, isLoading: false });
+}
 
 // One /auth/me check at a time, however many guards mount while it is in flight.
 let verifying: Promise<void> | null = null;
@@ -33,16 +47,25 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const { data } = await api.post('/auth/login', { email, password });
-      setTokens(data);
-      setCachedUser(data.user);
-      set({
-        token: data.access_token,
-        user: data.user,
-        isAuthenticated: true,
-        isLoading: false,
-      });
+      if (data.mfa_required) {
+        set({ isLoading: false });
+        return { mfaToken: data.mfa_token as string };
+      }
+      signIn(set, data);
     } catch (err) {
       const message = errorMessage(err, 'Login failed');
+      set({ error: message, isLoading: false });
+      throw new Error(message);
+    }
+  },
+
+  verifyMfa: async (mfaToken: string, code: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      const { data } = await api.post('/auth/mfa/verify', { mfa_token: mfaToken, code });
+      signIn(set, data);
+    } catch (err) {
+      const message = errorMessage(err, 'Verification failed');
       set({ error: message, isLoading: false });
       throw new Error(message);
     }
@@ -52,14 +75,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const { data } = await api.post('/auth/register', { email, password, role });
-      setTokens(data);
-      setCachedUser(data.user);
-      set({
-        token: data.access_token,
-        user: data.user,
-        isAuthenticated: true,
-        isLoading: false,
-      });
+      signIn(set, data);
     } catch (err) {
       const message = errorMessage(err, 'Registration failed');
       set({ error: message, isLoading: false });

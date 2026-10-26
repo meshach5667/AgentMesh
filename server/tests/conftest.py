@@ -65,7 +65,8 @@ def make_user(db):
             db.add(Provider(user_id=user.id))
         elif role == "customer":
             db.add(Customer(user_id=user.id))
-        tokens = await auth_service.start_session(db, user)
+        # Staff fixtures stand for operators who completed MFA; tests/test_auth_security.py covers the MFA flow.
+        tokens = await auth_service.start_session(db, user, mfa_verified=role in ("operator", "admin"))
         await db.commit()
         return user, {"Authorization": f"Bearer {tokens['access_token']}"}
 

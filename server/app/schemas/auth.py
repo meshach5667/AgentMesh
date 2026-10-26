@@ -36,8 +36,14 @@ class UserOut(BaseModel):
     email: str
     role: UserRole
     is_active: bool
+    mfa_enabled: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MeOut(UserOut):
+    mfa_required: bool = False  # this account must use a second factor
+    mfa_verified: bool = False  # this session completed it
 
 
 class AuthResponse(BaseModel):
@@ -50,3 +56,24 @@ class AuthResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=10, max_length=200)
+
+
+class MfaChallenge(BaseModel):
+    """Returned by login instead of tokens when the account has a second factor."""
+
+    mfa_required: bool = True
+    mfa_token: str
+
+
+class MfaVerify(BaseModel):
+    mfa_token: str = Field(min_length=20, max_length=2000)
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class MfaCode(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class MfaSetup(BaseModel):
+    secret: str  # base32, for typing into an authenticator app
+    otpauth_uri: str

@@ -41,10 +41,18 @@ async def resolve_access_token(db: Session, token: str) -> tuple[User, AuthSessi
     return user, session
 
 
-async def get_current_user(
+MFA_REQUIRED = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail={"code": "mfa_required", "message": "Complete two-factor authentication to use operator features."},
+)
+
+
+async def get_session_user(
     request: Request, db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
 ) -> User:
-    """Resolve the bearer token to an active user with a live session. The session is kept on ``request.state``."""
+    """Resolve the bearer token to an active user with a live session, kept on ``request.state``. Use only for the
+    few endpoints a staff member needs before finishing MFA (profile, sign-out, MFA setup); everything else uses
+    ``get_current_user``."""
     try:
         user, session = await resolve_access_token(db, token)
     except InvalidCredentials:
@@ -54,6 +62,14 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
     request.state.auth_session = session
+    return user
+
+
+async def get_current_user(request: Request, user: User = Depends(get_session_user)) -> User:
+    """The authenticated user. Staff sessions that have not completed a second factor are refused while
+    STAFF_MFA_REQUIRED, so stolen staff passwords alone never reach operator features or other tenants' data."""
+    if settings.STAFF_MFA_REQUIRED and is_staff(user) and not request.state.auth_session.mfa_verified:
+        raise MFA_REQUIRED
     return user
 
 

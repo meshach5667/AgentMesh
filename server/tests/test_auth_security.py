@@ -191,3 +191,152 @@ async def test_malformed_expired_and_foreign_tokens_are_rejected(client, db):
         assert resp.status_code == 401, name
     for bad in ("am_rt_unknown-token-value", "not-a-refresh-token", "am_rt_" + "x" * 150):
         assert (await client.post("/api/v1/auth/refresh", json={"refresh_token": bad})).status_code == 401
+
+
+# --- second factor for staff (G-05) ---------------------------------------------------------------------------
+
+
+async def _staff(client, db, role, email, password):
+    if not await db.find_one(User, {"email": email}):
+        db.add(User(email=email, hashed_password=get_password_hash(password), role=role))
+        await db.commit()
+    resp = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_staff_without_a_second_factor_reach_nothing_but_mfa_setup(client, db, make_user, approved_model):
+    from tests.test_authorization import _deployment_for
+
+    customer, _ = await make_user("customer")
+    dep = await _deployment_for(db, customer, approved_model)
+    tokens = await _staff(client, db, "admin", "admin@example.com", "admin-password-1")
+    h = _bearer(tokens)
+    me = (await client.get("/api/v1/auth/me", headers=h)).json()
+    assert me["mfa_required"] is True and me["mfa_verified"] is False and me["mfa_enabled"] is False
+    for path in ("/api/v1/admin/overview", f"/api/v1/deployments/{dep.id}", "/api/v1/admin/audit-logs"):
+        resp = await client.get(path, headers=h)
+        assert resp.status_code == 403 and resp.json()["detail"]["code"] == "mfa_required", path
+
+
+async def test_enrolment_stores_an_encrypted_seed_and_unlocks_the_session(client, db):
+    from tests.mfa_support import totp_code
+
+    h = _bearer(await _staff(client, db, "operator", "op@example.com", "op-password-1"))
+    secret = (await client.post("/api/v1/auth/mfa/setup", headers=h)).json()["secret"]
+    assert (await client.post("/api/v1/auth/mfa/enable", json={"code": "000000"}, headers=h)).status_code == 401
+    assert (
+        await client.post("/api/v1/auth/mfa/enable", json={"code": totp_code(secret)}, headers=h)
+    ).status_code == 204
+    assert (await client.get("/api/v1/admin/overview", headers=h)).status_code == 200
+    db.expire_all()
+    user = await db.find_one(User, {"email": "op@example.com"})
+    assert (
+        user.mfa_secret.startswith("aesgcm:v1:") and secret not in user.mfa_secret and user.mfa_pending_secret is None
+    )
+    assert (await client.post("/api/v1/auth/mfa/setup", headers=h)).status_code == 409
+    # Staff cannot switch it off again.
+    code = totp_code(secret, time.time() + 30)
+    assert (await client.post("/api/v1/auth/mfa/disable", json={"code": code}, headers=h)).status_code == 403
+    actions = {a.action for a in await db.find(AuditLog, {"user_id": user.id})}
+    assert "auth.mfa_enabled" in actions
+
+
+async def test_login_with_a_second_factor(client, db):
+    from tests.mfa_support import enroll_mfa, totp_code
+
+    h = _bearer(await _staff(client, db, "operator", "op2@example.com", "op-password-2"))
+    secret = await enroll_mfa(client, h)
+    first = await client.post("/api/v1/auth/login", json={"email": "op2@example.com", "password": "op-password-2"})
+    challenge = first.json()
+    assert challenge["mfa_required"] is True and "access_token" not in challenge and "refresh_token" not in challenge
+    # The challenge token is not an access token.
+    assert (
+        await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {challenge['mfa_token']}"})
+    ).status_code == 401
+
+    bad = await client.post("/api/v1/auth/mfa/verify", json={"mfa_token": challenge["mfa_token"], "code": "123456"})
+    assert bad.status_code == 401
+    code = totp_code(secret, time.time() + 30)  # next step: the enrolment code's step is already used
+    ok = await client.post("/api/v1/auth/mfa/verify", json={"mfa_token": challenge["mfa_token"], "code": code})
+    assert ok.status_code == 200, ok.text
+    assert (await client.get("/api/v1/admin/overview", headers=_bearer(ok.json()))).status_code == 200
+    # The same code cannot complete a second sign-in.
+    again = await client.post("/api/v1/auth/login", json={"email": "op2@example.com", "password": "op-password-2"})
+    replay = await client.post("/api/v1/auth/mfa/verify", json={"mfa_token": again.json()["mfa_token"], "code": code})
+    assert replay.status_code == 401
+    failed = await db.find(AuditLog, {"action": "auth.mfa_failed"})
+    assert len(failed) == 2
+
+
+async def test_expired_or_forged_challenge_tokens_are_refused(client, db):
+    from app.services import mfa_service
+
+    user = User(email="c3@example.com", hashed_password="x", role="operator", mfa_secret="aesgcm:v1:derived:AAAA")
+    db.add(user)
+    await db.commit()
+    expired = jwt.encode(
+        {"sub": str(user.id), "typ": "mfa", "aud": TOKEN_AUDIENCE, "iat": 1, "exp": 2},
+        derive_key("mfa-challenge"),
+        ALGORITHM,
+    )
+    access_key_token = jwt.encode(
+        jwt.decode(mfa_service.challenge_token(user), options={"verify_signature": False}),
+        derive_key("access-token"),
+        ALGORITHM,
+    )
+    for token in (expired, access_key_token, "x" * 40):
+        resp = await client.post("/api/v1/auth/mfa/verify", json={"mfa_token": token, "code": "123456"})
+        assert resp.status_code == 401
+
+
+async def test_customers_may_turn_a_second_factor_on_and_off(client, db):
+    from tests.mfa_support import enroll_mfa, totp_code
+
+    h = _bearer(await _login(client, db, email="cust-mfa@example.com", password="cust-password-1"))
+    me = (await client.get("/api/v1/auth/me", headers=h)).json()
+    assert me["mfa_required"] is False
+    secret = await enroll_mfa(client, h)
+    code = totp_code(secret, time.time() + 30)
+    assert (await client.post("/api/v1/auth/mfa/disable", json={"code": code}, headers=h)).status_code == 204
+    resp = await client.post(
+        "/api/v1/auth/login", json={"email": "cust-mfa@example.com", "password": "cust-password-1"}
+    )
+    assert "access_token" in resp.json()
+
+
+def test_encrypted_values_are_bound_to_their_context_and_key(monkeypatch):
+    import base64
+
+    import pytest
+
+    from app.core import crypto
+
+    sealed = crypto.encrypt(b"seed-bytes", "user:a:totp")
+    assert crypto.decrypt(sealed, "user:a:totp") == b"seed-bytes"
+    for bad in (
+        lambda: crypto.decrypt(sealed, "user:b:totp"),  # moved to another user's record
+        lambda: crypto.decrypt(sealed[:-6] + "AAAAAA", "user:a:totp"),  # tampered
+        lambda: crypto.decrypt("aesgcm:v1:unknown:AAAA", "user:a:totp"),
+        lambda: crypto.decrypt("plaintext", "user:a:totp"),
+    ):
+        with pytest.raises(ValueError):
+            bad()
+    # A dedicated key takes over for new values; old ones stay readable.
+    monkeypatch.setattr(settings, "DATA_ENCRYPTION_KEY", base64.b64encode(b"k" * 32).decode())
+    new = crypto.encrypt(b"x", "c")
+    assert (
+        ":dek1:" in new and crypto.decrypt(new, "c") == b"x" and crypto.decrypt(sealed, "user:a:totp") == b"seed-bytes"
+    )
+
+
+def test_data_encryption_key_must_be_32_bytes():
+    import base64
+
+    import pytest
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match="DATA_ENCRYPTION_KEY"):
+        Settings(DATA_ENCRYPTION_KEY=base64.b64encode(b"short").decode(), ENVIRONMENT="test", _env_file=None)

@@ -4,6 +4,7 @@ import uuid
 
 from app.documents import Deployment
 from app.documents.usage import UsageRecord
+from tests.mfa_support import enroll_mfa
 
 
 async def _deploy(client, headers, model):
@@ -177,6 +178,10 @@ async def test_create_operator_script_provisions_and_promotes(client, make_user)
     login = await client.post("/api/v1/auth/login", json={"email": "ops@example.com", "password": password})
     assert login.status_code == 200 and login.json()["user"]["role"] == "operator"
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    # A new operator must turn on two-factor authentication before operator features work.
+    blocked = await client.get("/api/v1/admin/overview", headers=headers)
+    assert blocked.status_code == 403 and blocked.json()["detail"]["code"] == "mfa_required"
+    await enroll_mfa(client, headers)
     assert (await client.get("/api/v1/admin/overview", headers=headers)).status_code == 200
 
     customer, _ = await make_user("customer")

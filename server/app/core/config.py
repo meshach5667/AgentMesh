@@ -1,3 +1,4 @@
+import base64
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -26,6 +27,12 @@ class Settings(BaseSettings):
     # session ends after REFRESH_TOKEN_TTL_DAYS however often it is refreshed.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_TTL_DAYS: int = 14
+    # Operators and admins must complete a TOTP second factor before staff features work.
+    STAFF_MFA_REQUIRED: bool = True
+    MFA_ISSUER: str = "AgentMesh"
+    # Optional dedicated key (base64 of 32 random bytes) for secrets stored encrypted in the database (MFA seeds).
+    # Unset: a key derived from SECRET_KEY for this purpose only.
+    DATA_ENCRYPTION_KEY: str = ""
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
     API_V1_PREFIX: str = "/api/v1"
     # Fail closed: an unset ENVIRONMENT means production, so the safety checks below (random SECRET_KEY, explicit
@@ -208,6 +215,13 @@ class Settings(BaseSettings):
             raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be between 1 and 15")
         if not 1 <= self.REFRESH_TOKEN_TTL_DAYS <= 90:
             raise ValueError("REFRESH_TOKEN_TTL_DAYS must be between 1 and 90")
+        if self.DATA_ENCRYPTION_KEY:
+            try:
+                key = base64.b64decode(self.DATA_ENCRYPTION_KEY, validate=True)
+            except ValueError:
+                key = b""
+            if len(key) != 32:
+                raise ValueError("DATA_ENCRYPTION_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)")
         return self
 
     @model_validator(mode="after")

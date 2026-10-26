@@ -10,23 +10,35 @@ import { useAuth } from '../../hooks/useAuth';
 import { Field, inputClass, submitClass } from './AuthShell';
 
 export function LoginForm() {
-  const { login, error, clearError } = useAuth();
+  const { login, verifyMfa, error, clearError } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [code, setCode] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
     setSubmitting(true);
     try {
-      await login(email, password);
+      if (mfaToken) {
+        await verifyMfa(mfaToken, code);
+      } else {
+        const challenge = await login(email, password);
+        if (challenge) {
+          setMfaToken(challenge.mfaToken);
+          return;
+        }
+      }
       const { useAuthStore } = await import('../../stores/authStore');
       router.push(homeFor(useAuthStore.getState().user?.role));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
+      // The challenge lasts a few minutes; after an expired one, start again from the password.
+      if (mfaToken && err instanceof Error && /expired/i.test(err.message)) setMfaToken(null);
     } finally {
       setSubmitting(false);
     }
@@ -42,36 +54,69 @@ export function LoginForm() {
           {error}
         </div>
       )}
-      <form onSubmit={handleSubmit} className="mt-9 space-y-5">
-        <Field label="Email">
-          <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" className={inputClass} />
-        </Field>
-        <Field label="Password">
-          <span className="relative block">
+      {mfaToken ? (
+        <form onSubmit={handleSubmit} className="mt-9 space-y-5">
+          <Field label="Authentication code">
             <input
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="\d{6}"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               required
-              className={`${inputClass} pr-10`}
+              autoFocus
+              placeholder="6-digit code from your authenticator app"
+              className={inputClass}
             />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-            </button>
-          </span>
-        </Field>
-        <button type="submit" disabled={submitting} className={submitClass}>
-          {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-          {submitting ? 'Signing in…' : 'Sign in'}
-          {!submitting && <ArrowRight className="size-4" />}
-        </button>
-      </form>
+          </Field>
+          <button type="submit" disabled={submitting || code.length !== 6} className={submitClass}>
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
+            {submitting ? 'Verifying…' : 'Verify'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMfaToken(null);
+              setCode('');
+            }}
+            className="w-full text-center text-sm text-muted-foreground hover:text-foreground"
+          >
+            Use a different account
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleSubmit} className="mt-9 space-y-5">
+          <Field label="Email">
+            <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" className={inputClass} />
+          </Field>
+          <Field label="Password">
+            <span className="relative block">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className={`${inputClass} pr-10`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </span>
+          </Field>
+          <button type="submit" disabled={submitting} className={submitClass}>
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
+            {submitting ? 'Signing in…' : 'Sign in'}
+            {!submitting && <ArrowRight className="size-4" />}
+          </button>
+        </form>
+      )}
       <p className="mt-8 text-center text-sm text-muted-foreground">
         New to AgentMesh?{' '}
         <Link href="/register" className="font-medium text-foreground underline underline-offset-4 decoration-border hover:decoration-foreground">

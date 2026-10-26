@@ -47,10 +47,20 @@ type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean };
 
 const AUTH_PAGES = ['/login', '/register'];
 
+/** Full navigation from outside React (an interceptor has no router), which also drops in-memory state. */
+function redirectTo(path: string) {
+  window.location.href = path;
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const config = error.config as RetriableConfig | undefined;
+    const detail = (error.response?.data as { detail?: { code?: string } } | undefined)?.detail;
+    if (error.response?.status === 403 && detail?.code === 'mfa_required' && typeof window !== 'undefined') {
+      if (window.location.pathname !== '/mfa-setup') redirectTo('/mfa-setup');
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && typeof window !== 'undefined') {
       const isAuthCall = config?.url?.startsWith('/auth/') && !config.url.startsWith('/auth/me');
       if (config && !config._retried && !isAuthCall) {
@@ -63,9 +73,7 @@ api.interceptors.response.use(
       }
       if (!isAuthCall) {
         removeToken();
-        if (!AUTH_PAGES.includes(window.location.pathname)) {
-          window.location.href = '/login';
-        }
+        if (!AUTH_PAGES.includes(window.location.pathname)) redirectTo('/login');
       }
     }
     return Promise.reject(error);
