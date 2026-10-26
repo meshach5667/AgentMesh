@@ -5,21 +5,51 @@ from datetime import timedelta
 from typing import Any
 
 import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 from passlib.context import CryptContext
 
 from app.core.config import settings
 from app.core.timeutil import utcnow
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+# Passwords: Argon2id with argon2-cffi's defaults (RFC 9106 low-memory profile). Hashes made before Argon2 (PBKDF2
+# or bcrypt through passlib) still verify and are replaced with Argon2id at the next successful login.
+password_hasher = PasswordHasher()
+legacy_pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+pwd_context = legacy_pwd_context  # legacy node API keys (see verify_node_api_key)
 ALGORITHM = "HS256"
+_dummy_hash: str | None = None
 
 
-def verify_password(plain_password, hashed_password):
-    return bool(pwd_context.verify(plain_password, hashed_password))
+def verify_password(plain_password: str, hashed_password: str | None) -> bool:
+    if not hashed_password:
+        return False
+    if hashed_password.startswith("$argon2"):
+        try:
+            return password_hasher.verify(hashed_password, plain_password)
+        except (VerificationError, InvalidHashError):
+            return False
+    try:
+        return bool(legacy_pwd_context.verify(plain_password, hashed_password))
+    except (ValueError, TypeError):
+        return False
 
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def password_needs_rehash(hashed_password: str) -> bool:
+    return not hashed_password.startswith("$argon2") or password_hasher.check_needs_rehash(hashed_password)
+
+
+def get_password_hash(password: str) -> str:
+    return password_hasher.hash(password)
+
+
+def burn_password_check(plain_password: str) -> None:
+    """Spend the same time as a real check when there is no account, so response timing does not reveal which
+    emails are registered."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = password_hasher.hash("agentmesh-dummy-password")
+    verify_password(plain_password, _dummy_hash)
 
 
 SHA256_PREFIX = "sha256$"

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from app.core.database import Session
 from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
-from app.core.security import get_password_hash, verify_node_api_key
+from app.core.security import hash_secret, verify_node_api_key
 from app.core.timeutil import utcnow
 from app.documents.node import Node, NodeHardware, NodeStatus
 from app.documents.user import Provider, User
@@ -24,7 +24,7 @@ async def register_node(db: Session, node_data: NodeCreate, user_id: uuid.UUID):
         name=node_data.name,
         public_key=node_data.public_key,
         region=node_data.region,
-        api_key_hash=get_password_hash(api_key),
+        api_key_hash=hash_secret(api_key),  # high-entropy key: a fast hash is appropriate
     )
     db.add(node)
     await db.flush()
