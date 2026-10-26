@@ -134,15 +134,16 @@ async def _is_leader(redis, owner: str) -> bool:
     return False
 
 
+RETENTION_EVERY_SECONDS = 3600
 RECONCILE_EVERY_SECONDS = 600
 
 
 async def monitor_loop(redis=None) -> None:
-    from app.services import billing_service, reconciliation_service
+    from app.services import billing_service, reconciliation_service, retention_service
     from app.services.ai import workflow as ai_workflow
 
     owner = uuid.uuid4().hex
-    last_billing = last_reconcile = 0.0
+    last_billing = last_reconcile = last_retention = 0.0
     while True:
         await asyncio.sleep(settings.MONITOR_INTERVAL_SECONDS)
         try:
@@ -161,6 +162,9 @@ async def monitor_loop(redis=None) -> None:
         if now - last_billing >= settings.BILLING_INTERVAL_SECONDS:
             jobs.append(billing_service.run_billing)
             last_billing = now
+        if now - last_retention >= RETENTION_EVERY_SECONDS:
+            jobs.append(retention_service.run_retention)
+            last_retention = now
         if settings.payments_enabled and now - last_reconcile >= RECONCILE_EVERY_SECONDS:
             jobs.append(reconciliation_service.run)
             last_reconcile = now

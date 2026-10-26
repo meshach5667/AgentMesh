@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     # Payments/payouts still unresolved after this long are checked against Paystack by reconciliation.
     RECONCILE_AFTER_MINUTES: int = 30
 
+    # Retention (app.services.retention_service, run hourly by the background monitor). Financial records (charges,
+    # ledger, payments, refunds, payouts) are kept and never purged by it.
+    AI_INFERENCE_RESULT_RETENTION_HOURS: int = 24
+    AI_RUN_RETENTION_DAYS: int = 90
+    USAGE_RECORD_RETENTION_DAYS: int = 400
+    DEPLOYMENT_EVENT_RETENTION_DAYS: int = 180
+    AUDIT_LOG_RETENTION_DAYS: int = 365
+
     # Bearer token for GET /metrics. Empty disables the endpoint.
     METRICS_TOKEN: str = ""
 
@@ -219,6 +227,17 @@ class Settings(BaseSettings):
                 raise ValueError("PUBLIC_BASE_URL must use https outside dev/test (API keys travel in headers)")
             if self.AI_INFERENCE_TOKEN and len(self.AI_INFERENCE_TOKEN) < 32:
                 raise ValueError("AI_INFERENCE_TOKEN must be a random value of at least 32 characters outside dev/test")
+        return self
+
+    @model_validator(mode="after")
+    def _check_retention(self) -> "Settings":
+        if not 1 <= self.AI_INFERENCE_RESULT_RETENTION_HOURS <= 24 * 30:
+            raise ValueError("AI_INFERENCE_RESULT_RETENTION_HOURS must be between 1 and 720")
+        for name in ("AI_RUN_RETENTION_DAYS", "USAGE_RECORD_RETENTION_DAYS", "DEPLOYMENT_EVENT_RETENTION_DAYS"):
+            if not 1 <= getattr(self, name) <= 3650:
+                raise ValueError(f"{name} must be between 1 and 3650")
+        if not 30 <= self.AUDIT_LOG_RETENTION_DAYS <= 3650:
+            raise ValueError("AUDIT_LOG_RETENTION_DAYS must be between 30 and 3650 (the audit trail must survive)")
         return self
 
     @model_validator(mode="after")

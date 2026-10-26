@@ -96,6 +96,23 @@ async def cancel_ai_deployment(run_id: str, db: Session = Depends(get_db), user:
     return await workflow.view(db, await workflow.get_run_for_user(db, run_id, user))
 
 
+@router.delete("/deployments/{run_id}")
+async def delete_ai_deployment(run_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Delete a finished AI deployment run: its request text, plan, events and model calls. Deployments it created
+    are separate and are stopped or deleted on their own. Returns what was deleted."""
+    from app.services import audit_service, retention_service
+
+    run = await workflow.get_run_for_user(db, run_id, user)
+    if run.status not in retention_service.FINISHED_RUN:
+        raise HTTPException(status_code=409, detail="Cancel the run and wait for it to finish before deleting it")
+    deleted = await retention_service.delete_runs(db, [run.id])
+    audit_service.record(
+        db, actor_id=user.id, action="ai.run_deleted", resource_type="ai_run", resource_id=run.id, details=deleted
+    )
+    await db.commit()
+    return {"deleted": deleted, "note": "Removed from the live database now; backups expire on their own schedule."}
+
+
 @router.get("/deployments/{run_id}/events", response_model=list[AiRunEventOut])
 async def ai_deployment_events(run_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     run = await workflow.get_run_for_user(db, run_id, user)
