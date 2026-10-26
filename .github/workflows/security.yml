@@ -3,65 +3,122 @@ name: Security Scan
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     - cron: '0 0 * * 0' # Every Sunday at midnight
+  workflow_dispatch:
+
+# Every job reads only. Fork pull requests run with no secrets (pull_request, never pull_request_target).
+permissions:
+  contents: read
 
 jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-          
-      - name: Install pip-audit
-        run: pip install pip-audit
-        
-      - name: Run Python dependency audit
-        run: pip-audit -r server/requirements.txt
-        
+
+      - name: Python dependency audit (the exact versions images ship)
+        run: |
+          pip install pip-audit==2.9.0
+          pip-audit -r server/requirements-lock.txt
+          pip-audit -r server/requirements-worker-lock.txt
+
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
-          
-      - name: Run Node dependency audit
-        run: cd client && npm audit --audit-level=critical
+
+      - name: Node dependency audit
+        run: cd client && npm audit --audit-level=high
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      # Fails on any medium or high severity finding. Reviewed exceptions are marked inline (# nosec <test id>)
+      # with the reason on the line above.
+      - name: Bandit
+        run: |
+          pip install bandit==1.9.4
+          cd server && bandit -r app node_agent ai_adapter -ll
 
   secret-scanning:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          
+
       # The CLI scans the whole history. gitleaks-action scans only the pushed range (`<first>^..<last>`), which
-      # fails outright when the push contains the root commit, as it has no parent.
+      # fails outright when the push contains the root commit, as it has no parent. The archive is verified against
+      # the checksum published with the release before it runs.
       - name: Gitleaks
         env:
           GITLEAKS_VERSION: "8.24.3"
+          GITLEAKS_SHA256: "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c"
         run: |
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz gitleaks
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks git . --config .gitleaks.toml --redact --verbose --exit-code 1
 
-  container-scanning:
+  container-and-iac-scanning:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build server image
-        run: docker build -t agentmesh-server -f Dockerfile.server .
-        
-      - name: Run Trivy vulnerability scanner on server image
-        uses: aquasecurity/trivy-action@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build images
+        run: |
+          docker build -t agentmesh-server -f Dockerfile.server .
+          docker build -t agentmesh-worker -f Dockerfile.node-agent .
+
+      - name: Trivy image scan (server)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: 'agentmesh-server'
-          format: 'table'
-          exit-code: '0'
+          image-ref: agentmesh-server
+          format: table
+          exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+
+      - name: Trivy image scan (worker)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: agentmesh-worker
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Trivy configuration scan (Dockerfiles, compose, workflows)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: SBOM (CycloneDX) for the server image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: agentmesh-server
+          format: cyclonedx
+          output: sbom-server.cdx.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: sbom-server.cdx.json

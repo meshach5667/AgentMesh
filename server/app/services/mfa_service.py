@@ -38,7 +38,9 @@ def _context(user: User) -> str:
 
 
 def _totp(seed: bytes) -> TOTP:
-    return TOTP(seed, 6, SHA1(), STEP_SECONDS, enforce_key_length=True)
+    # RFC 6238 TOTP is HMAC-SHA1, which every authenticator app expects; HMAC-SHA1 is not affected by SHA-1
+    # collision attacks.
+    return TOTP(seed, 6, SHA1(), STEP_SECONDS, enforce_key_length=True)  # nosec B303
 
 
 def _seed(user: User, field: str) -> bytes | None:

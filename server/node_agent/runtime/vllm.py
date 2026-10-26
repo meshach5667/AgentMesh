@@ -193,7 +193,12 @@ class VLLMDockerRuntime(OllamaDockerRuntime):
         source = _check_spec(spec)
         return {
             "command": _serve_args(
-                spec, source, "0.0.0.0", self.internal_port, _gpu_fraction(spec, self.total_vram_mb)
+                # The container's own interface on the internal workload network (never published on the host).
+                spec,
+                source,
+                "0.0.0.0",  # nosec B104
+                self.internal_port,
+                _gpu_fraction(spec, self.total_vram_mb),
             ),
             "environment": NO_TELEMETRY | {"HF_HOME": "/cache/hf"},
             "volumes": {self.hf_cache_volume: {"bind": "/cache/hf", "mode": "rw"}},
@@ -201,7 +206,8 @@ class VLLMDockerRuntime(OllamaDockerRuntime):
             # for tensor-parallel workers instead of using the host IPC namespace.
             "read_only": False,
             "shm_size": "2g",
-            "tmpfs": {"/tmp": "rw,nosuid,size=2g"},
+            # A private tmpfs inside the container, not a host temp directory.
+            "tmpfs": {"/tmp": "rw,nosuid,size=2g"},  # nosec B108
         }
 
     async def start(self, spec: WorkloadSpec) -> WorkloadHandle:

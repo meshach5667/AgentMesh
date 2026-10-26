@@ -3,7 +3,7 @@ services:
   # A single-node replica set: ledger postings commit in multi-document transactions, which need one.
   # Not published on the host; only the API reaches it.
   mongo:
-    image: mongo:8.0
+    image: mongo:8.0@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
     command: ["--replSet", "rs0", "--bind_ip_all"]
     volumes:
       - mongo_data:/data/db
@@ -20,7 +20,7 @@ services:
 
   # Not published on the host, and password-protected: replicas trust Redis messages for tunnel routing.
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ba19c50b56777f5c11c58eff8ddb69d0d5f27ba131cffb63f180ccfd43c66af
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD to a random value}"]
     healthcheck:
       test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping"]

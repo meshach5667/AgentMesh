@@ -199,7 +199,8 @@ class OllamaDockerRuntime(WorkloadRuntime):
             },
             "volumes": {self.models_volume: {"bind": "/root/.ollama", "mode": "rw"}},
             "read_only": True,
-            "tmpfs": {"/tmp": "rw,noexec,nosuid,size=512m"},
+            # A private tmpfs inside the container, not a host temp directory.
+            "tmpfs": {"/tmp": "rw,noexec,nosuid,size=512m"},  # nosec B108
         }
 
     async def _wait_started(self, base_url: str, alive) -> None:
