@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { WORKER_VERSION } from '../lib/config';
+import { REPO_SLUG, WORKER_VERSION } from '../lib/config';
 import { workerTag } from '../lib/worker';
 
 export type WorkerReleaseState = 'published' | 'unpublished' | 'unknown';
@@ -9,7 +9,7 @@ export const useWorkerRelease = (version = WORKER_VERSION) =>
   useQuery({
     queryKey: ['worker-release', version],
     queryFn: async (): Promise<WorkerReleaseState> => {
-      const res = await fetch(`https://api.github.com/repos/meshach5667/AgentMeshh/releases/tags/${workerTag(version)}`, {
+      const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}/releases/tags/${workerTag(version)}`, {
         headers: { Accept: 'application/vnd.github+json' },
       });
       if (res.ok) return 'published';

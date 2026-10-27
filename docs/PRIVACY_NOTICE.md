@@ -109,7 +109,7 @@ Our measures include:
 
 No system is completely secure, and the limitations in Section 2 apply to community-node execution. AgentMesh has not had an independent security audit.
 
-To report a security vulnerability, see our security policy: <https://github.com/meshach5667/AgentMeshh/blob/main/SECURITY.md>.
+To report a security vulnerability, see our security policy: <https://github.com/meshach5667/AgentMesh/blob/main/SECURITY.md>.
 
 ## 9. International Processing
 

@@ -42,7 +42,7 @@ export function agentInstallCommand({
 
 export function sourceInstallCommand({ token, controlPlane = CONTROL_PLANE_URL }: InstallOptions = {}): string {
   return [
-    `git clone ${REPO_URL}.git && cd AgentMeshh/server`,
+    `git clone ${REPO_URL}.git && cd AgentMesh/server`,
     'python3 scripts/build_worker_wheel.py',
     `./packaging/install.sh --control-plane ${controlPlane} --token ${token ?? TOKEN_PLACEHOLDER} \\`,
     '    --max-ram-mb 8192 --max-cpu 4 --max-disk-mb 30000',
@@ -51,7 +51,7 @@ export function sourceInstallCommand({ token, controlPlane = CONTROL_PLANE_URL }
 
 export function dockerInstallCommand({ token, controlPlane = CONTROL_PLANE_URL }: InstallOptions = {}): string {
   return [
-    `git clone ${REPO_URL}.git && cd AgentMeshh`,
+    `git clone ${REPO_URL}.git && cd AgentMesh`,
     `export AGENTMESH_CONTROL_PLANE_URL=${controlPlane}`,
     `export AGENTMESH_ENROLLMENT_TOKEN=${token ?? TOKEN_PLACEHOLDER}`,
     'export DOCKER_GID=$(getent group docker | cut -d: -f3)',

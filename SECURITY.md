@@ -15,7 +15,7 @@ AgentMesh is an open-source platform that runs open-weight AI models on machines
 **Please do not open a public issue, pull request or discussion about a security problem.**
 
 Report it privately through GitHub's private vulnerability reporting:
-<https://github.com/meshach5667/AgentMeshh/security/advisories/new>
+<https://github.com/meshach5667/AgentMesh/security/advisories/new>
 
 Include:
 - what is affected (component, endpoint or file);

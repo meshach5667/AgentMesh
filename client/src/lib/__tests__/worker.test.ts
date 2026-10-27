@@ -11,7 +11,7 @@ describe('worker release install', () => {
 
   it('downloads versioned assets and verifies them before installing', () => {
     const cmd = agentInstallCommand({ token: 'am_enroll_secret' });
-    expect(workerDownloadBase()).toBe(`https://github.com/meshach5667/AgentMeshh/releases/download/worker-v${WORKER_VERSION}`);
+    expect(workerDownloadBase()).toBe(`https://github.com/meshach5667/AgentMesh/releases/download/worker-v${WORKER_VERSION}`);
     expect(workerWheel()).toBe(`agentmesh_worker-${WORKER_VERSION}-py3-none-any.whl`);
     expect(cmd.indexOf('SHA256SUMS; else')).toBeLessThan(cmd.indexOf('./install.sh'));
     expect(cmd).toContain('--wheel ./agentmesh_worker-$VERSION-py3-none-any.whl');

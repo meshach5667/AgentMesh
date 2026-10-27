@@ -65,7 +65,7 @@ export default function OperatorGuide() {
       <Section id="deploy" title="Deploy">
         <P>Either run the whole stack with Docker Compose:</P>
         <Code
-          code={`git clone ${REPO_URL}.git && cd AgentMeshh
+          code={`git clone ${REPO_URL}.git && cd AgentMesh
 export SECRET_KEY=$(openssl rand -hex 32)
 export PUBLIC_BASE_URL=https://api.example.com FRONTEND_URL=https://app.example.com
 docker compose up -d`}
