@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   server-lint-and-type-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       
@@ -42,7 +42,7 @@ jobs:
         run: cd server && mypy app
 
   server-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       redis:
         image: redis:7-alpine
@@ -81,7 +81,7 @@ jobs:
           path: server/coverage.xml
 
   client-lint-and-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       
@@ -103,7 +103,7 @@ jobs:
         run: cd client && npx tsc --noEmit
 
   client-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       
@@ -119,7 +119,7 @@ jobs:
         run: cd client && npm test --if-present
 
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       
@@ -136,7 +136,7 @@ jobs:
         run: docker build -t agentmesh-client -f Dockerfile.client .
 
   backup-restore:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -157,7 +157,7 @@ jobs:
   e2e-stub-runtime:
     # Full worker -> control plane -> gateway flow on MongoDB. The model runtime is a
     # labelled stub (server/tests/fixtures/fake_ollama.py), so this proves the platform path, not inference.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MONGODB_URL: mongodb://localhost:27017/?replicaSet=rs0
       ENVIRONMENT: test
@@ -184,7 +184,7 @@ jobs:
   e2e-multi-replica:
     # Two API replicas sharing MongoDB and Redis. The worker connects to replica A; every customer call,
     # including streaming inference, goes to replica B, so requests must cross replicas through Redis.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       redis:
         image: redis:7-alpine
@@ -222,7 +222,7 @@ jobs:
   installer:
     # Build the worker wheel, install it with packaging/install.sh (no service: CI has no systemd user
     # session), enroll, run the installed agentmesh-worker, deploy on it (stub runtime), then uninstall.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MONGODB_URL: mongodb://localhost:27017/?replicaSet=rs0
       ENVIRONMENT: test
@@ -287,7 +287,7 @@ jobs:
   e2e-real-ollama:
     # Real model download and inference on CPU. Manual trigger only: downloads Ollama and a ~270 MB model.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MONGODB_URL: mongodb://localhost:27017/?replicaSet=rs0
       ENVIRONMENT: test

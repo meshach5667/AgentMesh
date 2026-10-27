@@ -48,7 +48,13 @@ needs_install() {
 
 if needs_install; then
   step "Installing MongoDB 8.0 from repo.mongodb.org"
+  # MongoDB publishes complete 8.0 packages (server, mongosh, tools) for jammy and noble only; its repositories for
+  # newer releases (e.g. Ubuntu 26.04 "resolute") hold only the database tools. Use noble's packages there.
   codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")
+  case "$codename" in
+    jammy | noble) ;;
+    *) echo "No complete MongoDB 8.0 packages for Ubuntu '$codename'; using noble's"; codename=noble ;;
+  esac
   keyring=/usr/share/keyrings/mongodb-server-8.0.gpg
   curl -fsSL --retry 3 https://pgp.mongodb.com/server-8.0.asc | sudo gpg --batch --yes --dearmor -o "$keyring"
   echo "deb [ arch=amd64,arm64 signed-by=$keyring ] https://repo.mongodb.org/apt/ubuntu ${codename}/mongodb-org/8.0 multiverse" \

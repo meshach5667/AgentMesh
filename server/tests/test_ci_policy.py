@@ -91,3 +91,11 @@ def test_production_images_carry_no_test_or_lint_tools():
         assert f"\n{tool}" not in locked, f"{tool} is in the production lock"
     dev = (ROOT / "server" / "requirements-dev.txt").read_text()
     assert all("==" in line for line in dev.splitlines() if line and not line.startswith("#"))
+
+
+def test_jobs_run_on_a_pinned_runner_image():
+    """ubuntu-latest moves to new Ubuntu releases on GitHub's schedule (26.04 from November 2026); MongoDB 8.0 has
+    no server or mongosh packages there, so every job pins the image it was verified on."""
+    for path in WORKFLOWS:
+        for name, job in _load(path)["jobs"].items():
+            assert job["runs-on"] == "ubuntu-24.04", f"{path.name}:{name} runs on {job['runs-on']}"
