@@ -229,6 +229,7 @@ class QuietMonitor:
 
 @pytest.fixture
 def control_plane(monkeypatch):
+    monkeypatch.setattr(settings, "AI_PROVIDER", "ollama")  # this file tests the internal-machine adapter
     monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", TOKEN)
     monkeypatch.setattr(settings, "OLLAMA_MODEL", MODEL)
     return httpx.ASGITransport(app=app)

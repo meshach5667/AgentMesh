@@ -102,10 +102,11 @@ export const DOC_PAGES: DocPageEntry[] = [
   {
     href: '/docs/ai-agent',
     title: 'AI deployment agent',
-    summary: 'Gemma 4 on an internal Ollama machine: setup, limits, offline behaviour and tests.',
+    summary: 'Gemini API (default) or Gemma 4 on an internal Ollama machine: setup, limits, offline behaviour and tests.',
     sections: [
-      { id: 'how-it-works', title: 'How it works', keywords: 'gemma ollama agent architecture outbound adapter' },
-      { id: 'hardware', title: 'Check the hardware', keywords: 'cpu ram disk gpu doctor hp 15 laptop' },
+      { id: 'how-it-works', title: 'How it works', keywords: 'gemini gemma ollama agent architecture outbound adapter' },
+      { id: 'gemini', title: 'Use the Gemini API (default)', keywords: 'gemini api key google ai studio gemini-2.5-flash provider' },
+      { id: 'hardware', title: 'Alternative: check the inference machine', keywords: 'cpu ram disk gpu doctor hp 15 laptop' },
       { id: 'model', title: 'Choose a Gemma 4 variant', keywords: 'gemma4 e2b e4b qat model tag size' },
       { id: 'install', title: 'Install Ollama and the model', keywords: 'pull check drop-in systemd' },
       { id: 'connect', title: 'Connect it to AgentMesh', keywords: 'ai_inference_token environment variables adapter' },

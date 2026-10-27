@@ -177,6 +177,7 @@ async def inference_heartbeat(
         "accepted": node.accepting,
         "expected_model": settings.OLLAMA_MODEL,
         "reason": node.reason,
+        "provider": settings.AI_PROVIDER,
         "heartbeat_interval_seconds": max(5, settings.AI_NODE_TIMEOUT_SECONDS // 3),
     }
 

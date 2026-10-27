@@ -10,27 +10,32 @@ export default function AiAgentGuide() {
   return (
     <DocPage href="/docs/ai-agent">
       <Callout tone="info" title="Availability">
-        AI Deploy is available whenever the inference machine is online. <C>/customer/ai</C> shows its live status (available,
-        busy or offline); while it is offline, requests wait in the queue and running deployments are not affected.
+        AI Deploy is available whenever its model is reachable: the Gemini API by default, or an internal Ollama machine.{' '}
+        <C>/customer/ai</C> shows its live status. While the model cannot answer, requests wait in the queue and running deployments
+        are not affected.
       </Callout>
       <Section id="how-it-works" title="How it works">
         <P>
-          Customers describe a deployment in plain language (<C>/customer/ai</C>) and authorize limits. A Gemma 4 model, served by
-          Ollama on an internal inference machine, turns the request into a structured plan and diagnoses failures. Everything with
-          consequences runs in the control plane&apos;s own code: catalog checks, limits, prices, wallet balance, node selection,
-          capacity reservation, submission, verification, and stopping.
+          Customers describe a deployment in plain language (<C>/customer/ai</C>) and authorize limits. A language model turns the
+          request into a structured plan and diagnoses failures: Google&apos;s Gemini API by default (<C>AI_PROVIDER=gemini</C>), or a
+          Gemma 4 model served by Ollama on an internal machine (<C>AI_PROVIDER=ollama</C>). Everything with consequences runs in the
+          control plane&apos;s own code: catalog checks, limits, prices, wallet balance, node selection, capacity reservation,
+          submission, verification, and stopping.
         </P>
         <Table
           head={['Component', 'Runs on', 'Responsible for']}
           rows={[
-            ['Control plane', 'The API (e.g. Render)', 'Auth, scheduling, reservations, billing, workflow state, audit, limit enforcement'],
-            ['Inference machine', 'An internal computer, e.g. an HP 15 laptop', 'Ollama + Gemma 4 + the adapter (python -m ai_adapter)'],
+            ['Control plane', 'The API (e.g. Render)', 'Auth, scheduling, reservations, billing, workflow state, audit, limit enforcement; with Gemini, it also calls the model'],
+            ['Gemini API (default)', 'Google', 'Answers planning and recovery questions with JSON'],
+            ['Inference machine (alternative)', 'An internal computer, e.g. an HP 15 laptop', 'Ollama + Gemma 4 + the adapter (python -m ai_adapter)'],
             ['Compute nodes', 'Provider machines', 'Customer model deployments, through the existing worker'],
           ]}
         />
         <P>
-          The adapter connects <strong>outbound</strong> over HTTPS, reports health, and leases queued model calls from the control
-          plane. The inference machine needs no public address and no open port, and Ollama stays bound to <C>127.0.0.1</C>. The
+          Model calls are queued either way, so retries, expiry and cancellation behave the same. With Gemini, the control plane answers
+          each queued call itself, right away, with <C>models/GEMINI_MODEL:generateContent</C>; the API key travels in a header and
+          never in a URL or log. With Ollama, the adapter connects <strong>outbound</strong> over HTTPS, reports health, and leases
+          queued model calls from the control plane. The inference machine needs no public address and no open port, and Ollama stays bound to <C>127.0.0.1</C>. The
           inference machine is never a provider node: it is not enrolled as a worker and never runs customer workloads.
         </P>
         <Callout tone="info" title="What the model decides, and what it does not">
@@ -40,7 +45,34 @@ export default function AiAgentGuide() {
         </Callout>
       </Section>
 
-      <Section id="hardware" title="Check the hardware">
+      <Section id="gemini" title="Use the Gemini API (default)">
+        <List
+          ordered
+          items={[
+            <>Create an API key in Google AI Studio (<C>https://aistudio.google.com/apikey</C>).</>,
+            <>Set it on the API as <C>GEMINI_API_KEY</C> (in the hosting platform&apos;s secret settings, never in the repository). <C>AI_PROVIDER=gemini</C> is the default.</>,
+            <>Optionally choose the model with <C>GEMINI_MODEL</C> (default <C>gemini-2.5-flash</C>). <C>GEMINI_THINKING_BUDGET=0</C> (default) turns off thinking tokens, which would otherwise use up <C>AI_MAX_TOKENS</C>; unset it for models that cannot turn thinking off, such as Pro models.</>,
+            <>Check <C>GET /api/v1/ai/health</C>: <C>available</C> with a key, <C>not_configured</C> without one, and <C>degraded</C> for a few minutes after Gemini fails to answer.</>,
+          ]}
+        />
+        <Table
+          head={['Setting', 'Default', 'Meaning']}
+          rows={[
+            [<C key="1">GEMINI_TIMEOUT_SECONDS</C>, '60', 'Per call; must not exceed AI_REQUEST_TIMEOUT.'],
+            [<C key="2">AI_MAX_ATTEMPTS</C>, '2', 'Deliveries per model call. Timeouts, 429 and 5xx answers are retried on the next background pass (about every 15 s); other errors fail the run without a decision.'],
+            [<C key="3">AI_MAX_CONCURRENT_REQUESTS</C>, '1', 'Gemini calls in flight at once, across all runs.'],
+          ]}
+        />
+        <Callout tone="warning" title="Customer requests go to Google">
+          With Gemini, the customer&apos;s request text, the plan conversation and short tool results (catalog entries, deployment status
+          and redacted log excerpts) are sent to Google for processing under the Gemini API terms. On Google&apos;s unpaid tier,
+          Google may use that content to improve its products; use a paid (billing-enabled) project for production. Prompts sent to
+          customers&apos; own deployments never go to Gemini.
+        </Callout>
+      </Section>
+
+      <Section id="hardware" title="Alternative: check the inference machine">
+        <P>The remaining setup sections apply only with <C>AI_PROVIDER=ollama</C>.</P>
         <P>Nothing is assumed about the machine. On the inference machine, run:</P>
         <Code
           code={[
@@ -216,6 +248,7 @@ export default function AiAgentGuide() {
         <Code
           code={[
             'cd server',
+            'pytest tests/test_ai_gemini.py                              # Gemini provider against a fake Gemini API',
             'pytest tests/test_ai_agent.py tests/test_ai_adapter.py     # scripted model answers, no Ollama needed',
             '',
             '# Optional: real structured generation against a local Ollama that already has the model',
@@ -233,6 +266,7 @@ export default function AiAgentGuide() {
       <Section id="not-verified" title="Not yet verified">
         <List
           items={[
+            'The Gemini provider has been tested against a fake that mirrors the documented generateContent API, not against Google itself; the first real call happens once GEMINI_API_KEY is set.',
             'Gemma 4 has not been pulled or run on the reference HP 15, so its latency, memory use, and the quality of its JSON plans there are unmeasured. Run python -m ai_adapter check after pulling.',
             'Ollama 0.40.6 support for the gemma4 tags is assumed from the registry listing; check confirms it.',
             'The memory figures for each variant are estimates.',

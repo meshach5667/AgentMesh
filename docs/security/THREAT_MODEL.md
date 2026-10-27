@@ -30,6 +30,7 @@ This describes what AgentMesh defends against, where the trust boundaries are, a
 | B5 | Worker ↔ model runtime | Prompts, outputs, model files | Runtime on loopback or an `internal` Docker network, container limits (`node_agent/runtime/ollama_docker.py`), digest-verified model files (`node_agent/runtime/model_store.py`) |
 | B6 | Provider ↔ their machine | Everything on it | **None that a root user cannot bypass** (accepted risk A1) |
 | B7 | Control plane ↔ Paystack | Payments, refunds, payouts | HMAC-SHA512 webhook signatures, idempotent processing, reconciliation |
+| B9 | Control plane → Gemini API (AI deployment agent, default provider) | The customer's AI request, planning conversation, short tool results | HTTPS, API key in a header (never a URL), redacted from logs; replies treated as untrusted and validated before any action (`app/services/ai/agent.py`); only the agent's data, never deployment prompts |
 | B8 | Contributors ↔ CI/release | Code, dependencies, actions | SHA-pinned actions, read-only workflow tokens, no `pull_request_target`, scans on every PR, signed worker updates, provenance attestations |
 
 ## 3. Adversaries

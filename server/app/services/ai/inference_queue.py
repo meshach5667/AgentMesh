@@ -6,9 +6,12 @@ public address, and Ollama stays bound to localhost.
 
 When no machine is connected, requests wait here (bounded by AI_QUEUE_MAX_LENGTH) until they expire after
 AI_QUEUE_TTL_SECONDS. A lease that is not answered within AI_REQUEST_TIMEOUT is handed out again, at most
-AI_MAX_ATTEMPTS times. A request is never answered by a model other than OLLAMA_MODEL.
+AI_MAX_ATTEMPTS times. A request is never answered by a model other than the configured one
+(``settings.ai_model``). With AI_PROVIDER=gemini, the control plane answers requests itself through the Gemini API
+(app.services.ai.gemini) and inference machines get no work.
 """
 
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -48,7 +51,7 @@ async def enqueue(
         id=uuid.uuid4(),
         run_id=run_id,
         purpose=purpose,
-        model=settings.OLLAMA_MODEL,
+        model=settings.ai_model,
         payload={"messages": messages, "format": schema, "options": options()},
         status="PENDING",
         max_attempts=settings.AI_MAX_ATTEMPTS,
@@ -96,6 +99,7 @@ def node_can_serve(node: AiInferenceNode, now: datetime | None = None) -> bool:
         and node.ollama_ok
         and node.model_ready
         and node.accepting
+        and settings.AI_PROVIDER == "ollama"
         and node.model == settings.OLLAMA_MODEL
     )
 
@@ -103,6 +107,8 @@ def node_can_serve(node: AiInferenceNode, now: datetime | None = None) -> bool:
 async def health(db: Session) -> Health:
     now = utcnow()
     queued = await depth(db)
+    if settings.AI_PROVIDER == "gemini":
+        return _gemini_health(queued)
     if not settings.AI_INFERENCE_TOKEN:
         return Health("not_configured", settings.OLLAMA_MODEL, queued, "No AI inference machine is configured.")
     nodes = await db.find(AiInferenceNode, sort=[("_id", 1)])
@@ -121,6 +127,19 @@ async def health(db: Session) -> Health:
     )
 
 
+def _gemini_health(queued: int) -> Health:
+    from app.services.ai import gemini
+
+    model = settings.GEMINI_MODEL
+    if not settings.GEMINI_API_KEY:
+        return Health("not_configured", model, queued, "The AI service is not configured.")
+    recent = gemini.last.ok is False and time.time() - gemini.last.at <= settings.AI_NODE_TIMEOUT_SECONDS * 4
+    if recent:
+        msg = "The AI service is having trouble answering; requests are retried automatically."
+        return Health("degraded", model, queued, msg)
+    return Health("available", model, queued, "The AI service is available.")
+
+
 async def heartbeat(db: Session, node_id: str, report: dict[str, Any]) -> AiInferenceNode:
     now = utcnow()
     node = await db.get(AiInferenceNode, node_id)
@@ -136,7 +155,10 @@ async def heartbeat(db: Session, node_id: str, report: dict[str, Any]) -> AiInfe
     node.reason = report.get("reason")
     node.metrics = report.get("metrics") or {}
     node.in_flight = int(report.get("in_flight") or 0)
-    if node.model != settings.OLLAMA_MODEL:
+    if settings.AI_PROVIDER != "ollama":
+        node.accepting = False
+        node.reason = f"AI_PROVIDER is {settings.AI_PROVIDER}; inference machines are not used"
+    elif node.model != settings.OLLAMA_MODEL:
         node.accepting = False
         node.reason = f"serves {node.model or 'no model'}, expected {settings.OLLAMA_MODEL}"
     await db.commit()
@@ -176,6 +198,41 @@ async def lease(db: Session, node: AiInferenceNode, max_requests: int) -> list[A
             },
         )
         if claimed:
+            leased.append(req)
+    await db.commit()
+    return leased
+
+
+async def lease_for_provider(
+    db: Session, provider_id: str, max_requests: int, only: uuid.UUID | None = None
+) -> list[AiInferenceRequest]:
+    """Lease queued requests for an API provider the control plane calls itself (Gemini), within the global
+    AI_MAX_CONCURRENT_REQUESTS limit. ``only`` restricts it to one request. Commits."""
+    now = utcnow()
+    in_flight = await db.count(AiInferenceRequest, {"status": "LEASED", "lease_expires_at": {"$gte": now}})
+    room = min(max_requests, settings.AI_MAX_CONCURRENT_REQUESTS - in_flight)
+    if room <= 0:
+        return []
+    query: dict[str, Any] = {"status": "PENDING", "expires_at": {"$gt": now}, "model": settings.ai_model}
+    if only is not None:
+        query["_id"] = only
+    candidates = await db.find(AiInferenceRequest, query, sort=[("created_at", 1)], limit=room)
+    leased = []
+    for req in candidates:
+        claimed = await db.update_one(
+            AiInferenceRequest,
+            {"_id": req.id, "status": "PENDING"},
+            {
+                "$set": {
+                    "status": "LEASED",
+                    "attempts": req.attempts + 1,
+                    "node_id": provider_id,
+                    "lease_expires_at": now + timedelta(seconds=settings.AI_REQUEST_TIMEOUT),
+                }
+            },
+        )
+        if claimed:
+            req.attempts += 1
             leased.append(req)
     await db.commit()
     return leased

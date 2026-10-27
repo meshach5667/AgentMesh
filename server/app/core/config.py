@@ -133,9 +133,21 @@ class Settings(BaseSettings):
     # Bearer token for GET /metrics. Empty disables the endpoint.
     METRICS_TOKEN: str = ""
 
-    # AI deployment agent. Inference runs on an internal machine (e.g. a laptop running Ollama) whose adapter
-    # connects outbound and pulls requests from a queue here (see docs/AI_INFERENCE_SETUP.md); the control
-    # plane never connects to Ollama. Empty AI_INFERENCE_TOKEN disables the adapter endpoints.
+    # AI deployment agent: which model answers its planning and recovery questions.
+    #   "gemini": the control plane calls the Gemini API directly (GEMINI_API_KEY). Default.
+    #   "ollama": an internal machine running Ollama pulls requests through the adapter endpoints (below).
+    AI_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+    GEMINI_TIMEOUT_SECONDS: float = 60.0
+    # Gemini 2.5 "thinking" tokens count against AI_MAX_TOKENS; 0 turns thinking off (Flash models). Set empty
+    # (unset in .env is fine) to use the model's default, e.g. for Pro models, which cannot turn it off.
+    GEMINI_THINKING_BUDGET: int | None = 0
+
+    # AI deployment agent (provider "ollama"). Inference runs on an internal machine (e.g. a laptop running
+    # Ollama) whose adapter connects outbound and pulls requests from a queue here; the control plane never
+    # connects to Ollama. Empty AI_INFERENCE_TOKEN disables the adapter endpoints.
     AI_INFERENCE_TOKEN: str = ""
     # The model every adapter must serve. Requests are never answered by a different model.
     OLLAMA_MODEL: str = "gemma4:e2b-it-qat"
@@ -280,8 +292,19 @@ class Settings(BaseSettings):
                 raise ValueError("DATA_ENCRYPTION_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)")
         return self
 
+    @property
+    def ai_model(self) -> str:
+        """The model every AI request is answered by (requests are never answered by another)."""
+        return self.GEMINI_MODEL if self.AI_PROVIDER == "gemini" else self.OLLAMA_MODEL
+
     @model_validator(mode="after")
     def _check_ai(self) -> "Settings":
+        if self.AI_PROVIDER not in ("gemini", "ollama"):
+            raise ValueError("AI_PROVIDER must be 'gemini' or 'ollama'")
+        if not self.GEMINI_BASE_URL.startswith("https://") and not self.is_dev:
+            raise ValueError("GEMINI_BASE_URL must use https outside dev/test")
+        if not 5 <= self.GEMINI_TIMEOUT_SECONDS <= self.AI_REQUEST_TIMEOUT:
+            raise ValueError("GEMINI_TIMEOUT_SECONDS must be between 5 and AI_REQUEST_TIMEOUT")
         if not 1 <= self.AI_MAX_CONCURRENT_REQUESTS <= 16:
             raise ValueError("AI_MAX_CONCURRENT_REQUESTS must be between 1 and 16")
         if not 1 <= self.AI_QUEUE_MAX_LENGTH <= 1000:

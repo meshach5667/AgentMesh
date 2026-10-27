@@ -31,7 +31,7 @@ If we later offer execution options with stronger confidentiality protections, w
 
 **Requests you send to your deployments.** Prompts and generated outputs pass through AgentMesh to the provider's machine and back. **We do not store them or write them to our logs.**
 
-**AI deployment assistant.** If you use the assistant that plans deployments for you, we store your request text, the plan and the steps taken, and briefly the model's replies (see Section 7).
+**AI deployment assistant.** If you use the assistant that plans deployments for you, we store your request text, the plan and the steps taken, and briefly the model's replies (see Section 7). The assistant is powered by Google's Gemini API, so this content is sent to Google to generate its answers (see Section 5).
 
 **Usage and billing records.** Request identifiers, timestamps, the deployment and model used, request and response sizes, token counts reported by the provider's machine, request outcome, resource time, charges, refunds, top-ups and payouts. Card payments are handled by Paystack; card details never reach AgentMesh.
 
@@ -52,7 +52,7 @@ We use information to:
 - maintain and improve the reliability and performance of the platform, using aggregated operational data;
 - comply with legal obligations.
 
-**We do not use your prompts, inputs or outputs to train AI models** unless you give separate, explicit, informed consent, which you may withdraw at any time. We do not currently ask for such consent.
+**We do not use your prompts, inputs or outputs to train AI models** unless you give separate, explicit, informed consent, which you may withdraw at any time. We do not currently ask for such consent. Content you give the AI deployment assistant is processed by Google under its Gemini API terms; whether Google may use it to improve its products depends on the Gemini service tier we use, as described in Section 5.
 
 **We do not sell your personal information.**
 
@@ -63,7 +63,8 @@ We use information to:
   - Render (API hosting);
   - Vercel (dashboard hosting);
   - MongoDB Atlas (database);
-  - Paystack (payments). Paystack receives your email address when you top up, and providers' bank details for payouts.
+  - Paystack (payments). Paystack receives your email address when you top up, and providers' bank details for payouts;
+  - Google (Gemini API), which receives what you write to the AI deployment assistant, the assistant's planning conversation and short status details, to generate the assistant's answers. On Google's unpaid tier Google may use this content to improve its products; on a paid tier it does not. Requests you send to your own deployments never go to Google.
 
   Hugging Face receives only public model lookups, never your data.
 - **Sponsors** of optional sponsored placements receive no personal information about you.

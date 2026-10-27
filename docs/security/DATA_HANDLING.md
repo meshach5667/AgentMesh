@@ -10,7 +10,7 @@ What data AgentMesh holds, where, who can see it, how long it is kept and how it
 |---|---|---|---|---|
 | **Prompts and outputs sent to deployments** (gateway) | **Not stored** by the control plane. Passes in memory through the API to the provider's machine and back | The customer; **the provider's machine processes it in plaintext** | Not stored | n/a. Tests inject canary strings and assert they never reach logs (`test_privacy.py`) |
 | AI deployment agent: request text, plan, run events | MongoDB `ai_runs`, `ai_run_events` | The customer; staff | 90 days after the run finishes (`AI_RUN_RETENTION_DAYS`) | Customer: `DELETE /ai/deployments/{id}` for finished runs (reports counts); retention job |
-| AI agent model calls: prompt, output | MongoDB `ai_inference_requests`; sent to the operator's internal inference machine (not a provider node) | Staff, the inference machine | Prompt erased when answered; output after 24 h (`AI_INFERENCE_RESULT_RETENTION_HOURS`); record deleted with its run | Retention job; run deletion |
+| AI agent model calls: prompt, output | MongoDB `ai_inference_requests`; sent to **Google's Gemini API** (default, `AI_PROVIDER=gemini`) or to the operator's internal inference machine (`ollama`), never to a provider node | Staff; Google (Gemini) or the inference machine | Prompt erased when answered; output after 24 h (`AI_INFERENCE_RESULT_RETENTION_HOURS`); record deleted with its run | Retention job; run deletion |
 | Account: email, role, password hash (Argon2id), MFA seed (AES-256-GCM, bound to the user) | MongoDB `users` | The user; staff see email and role | Life of the account | On request to the operator (no self-service account deletion yet; see Gaps) |
 | Sessions: IP address, browser user agent, timestamps | MongoDB `auth_sessions`; refresh tokens as SHA-256 in `refresh_tokens` | Staff (investigations) | Until the session expires (max 14 days, `REFRESH_TOKEN_TTL_DAYS`), removed by a TTL index | Logout, logout-all |
 | API keys | MongoDB `api_keys`, SHA-256 hash and prefix only | The owner sees the prefix | Until revoked; kept as revoked records | Revoke |
@@ -41,7 +41,7 @@ The operator's backup script (`server/ops/backup_db.sh`) keeps the 14 most recen
 
 ## Training and third parties
 
-Customer prompts, inputs and outputs are not used to train models and are not sent to any third party other than the provider node serving the request (and, for the AI deployment agent, the operator's own inference machine). Hugging Face receives only public repository lookups, with no customer data.
+Prompts and outputs sent to customers' deployments go only to the provider node serving them. Requests to the AI deployment agent (the customer's request text, the planning conversation and short tool results such as catalog entries, deployment status and redacted log excerpts) are sent to Google's Gemini API when `AI_PROVIDER=gemini`, the default. Google processes them under the Gemini API terms: on the unpaid tier Google may use them to improve its products, on a paid (billing-enabled) project it does not. Production should use a paid project. AgentMesh itself does not use customer content to train models. Hugging Face receives only public repository lookups, with no customer data.
 
 ## Logging rules
 

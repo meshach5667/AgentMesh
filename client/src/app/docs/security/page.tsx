@@ -24,7 +24,7 @@ export default function SecurityGuide() {
           head={['Data', 'Stored?']}
           rows={[
             ['Prompts and responses sent to your deployments', 'No. They are not stored or logged by AgentMesh (they do pass through the provider’s machine).'],
-            ['AI deployment agent requests', 'Your request text, plan and events for 90 days after the run finishes; model outputs for 24 hours. You can delete a finished run at any time.'],
+            ['AI deployment agent requests', 'Your request text, plan and events for 90 days after the run finishes; model outputs for 24 hours. You can delete a finished run at any time. The agent’s model is Google’s Gemini API by default, so this content is sent to Google to generate answers.'],
             ['Per-request usage', 'Yes, for 400 days: endpoint, status, duration, request and response sizes, token counts and a request id.'],
             ['API keys, refresh tokens and node credentials', 'Only as hashes. API keys are shown once.'],
             ['Passwords', 'Only as Argon2id hashes.'],

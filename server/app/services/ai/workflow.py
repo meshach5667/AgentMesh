@@ -262,6 +262,8 @@ async def _next_reply(ctx: Ctx, phase: str) -> agent.ParsedReply | None:
         await _ask(ctx, phase)
         return None
     req = await ctx.db.get(AiInferenceRequest, run.pending_request_id)
+    if req is not None:
+        await ctx.db.refresh(req)  # it may have been answered in another session (Gemini, an adapter)
     if req is None or req.status in ("PENDING", "LEASED"):
         return None
     run.pending_request_id = None
@@ -623,6 +625,7 @@ async def advance(run_id: uuid.UUID, max_steps: int = 6) -> str | None:
             customer = await db.get(Customer, run.customer_id)
             assert user is not None and customer is not None
             ctx = Ctx(db, run, user, customer)
+            answered: set[uuid.UUID] = set()
             for _ in range(max_steps):
                 status = R(run.status)
                 if status in TERMINAL:
@@ -630,6 +633,15 @@ async def advance(run_id: uuid.UUID, max_steps: int = 6) -> str | None:
                 before = (run.status, run.pending_request_id, run.agent_steps)
                 await STEPS[status](ctx)
                 await db.commit()
+                pending = run.pending_request_id
+                if pending is not None and settings.AI_PROVIDER == "gemini" and pending not in answered:
+                    # The control plane is its own inference service: answer now instead of waiting a pass. Each
+                    # request is tried once here; a retry after a failure waits for the background pass.
+                    from app.services.ai import gemini
+
+                    answered.add(pending)
+                    if await gemini.answer_now(pending):
+                        continue
                 if (run.status, run.pending_request_id, run.agent_steps) == before:
                     break
             return str(run.status)
@@ -649,6 +661,11 @@ async def run_due(limit: int = 100) -> int:
     async with session_scope() as db:
         await inference_queue.expire(db)
         await db.commit()
+    if settings.AI_PROVIDER == "gemini":
+        from app.services.ai import gemini
+
+        await gemini.process_pending()  # retries and requests left over from earlier passes
+    async with session_scope() as db:
         ids = [
             r.id
             for r in await db.find(

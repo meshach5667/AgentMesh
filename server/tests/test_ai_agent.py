@@ -28,6 +28,8 @@ LIMITS = {"max_spend": "500", "max_duration_hours": 2, "max_ram_mb": 8192, "max_
 
 @pytest.fixture(autouse=True)
 def _ai_settings(monkeypatch):
+    # These tests cover the internal-machine path; tests/test_ai_gemini.py covers the Gemini provider.
+    monkeypatch.setattr(settings, "AI_PROVIDER", "ollama")
     monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", TOKEN)
     monkeypatch.setattr(settings, "OLLAMA_MODEL", "gemma4:e2b-it-qat")
     monkeypatch.setattr(settings, "AI_RATE_LIMIT_PER_MINUTE", 100)
