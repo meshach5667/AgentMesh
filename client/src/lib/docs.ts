@@ -36,7 +36,7 @@ export const DOC_PAGES: DocPageEntry[] = [
       { id: 'api-keys', title: 'API keys', keywords: 'create revoke scope expiry' },
       { id: 'call', title: 'Call your model', keywords: 'openai curl python playground' },
       { id: 'stop', title: 'Stop and delete', keywords: 'stop delete revoke keys' },
-      { id: 'billing', title: 'Pricing, wallet and billing', keywords: 'paystack top-up charges prepaid balance insufficient funds refund csv export sponsored' },
+      { id: 'billing', title: 'Pricing, wallet and billing', keywords: 'paystack top-up charges prepaid balance insufficient funds refund csv export sponsored provider prices price limit cheapest' },
       { id: 'usage', title: 'Usage', keywords: 'tokens requests metering' },
       { id: 'privacy', title: 'Privacy', keywords: 'provider can see prompts responses trust' },
     ],
@@ -44,7 +44,7 @@ export const DOC_PAGES: DocPageEntry[] = [
   {
     href: '/docs/providers',
     title: 'Provider guide',
-    summary: 'Install the worker, enroll machines, manage them, and get paid.',
+    summary: 'Install the worker, enroll machines, set their prices, manage them, and get paid.',
     sections: [
       { id: 'how-it-works', title: 'How hosting works', keywords: 'outbound connections ports resources' },
       { id: 'prerequisites', title: 'Prerequisites', keywords: 'python 3.11 venv ollama linux macos' },
@@ -55,6 +55,7 @@ export const DOC_PAGES: DocPageEntry[] = [
       { id: 'status-checks', title: 'Check the worker', keywords: 'status doctor systemctl launchctl logs' },
       { id: 'manage', title: 'Manage machines', keywords: 'pause drain resume revoke schedule' },
       { id: 'community-models', title: 'Community models (opt-in)', keywords: 'huggingface gguf unreviewed opt in consent' },
+      { id: 'pricing', title: 'Set your prices', keywords: 'price list machine per hour tokens default commission' },
       { id: 'earnings', title: 'Earnings and payouts', keywords: 'bank account paystack payout clawback refund' },
       { id: 'troubleshooting', title: 'Troubleshooting', keywords: 'errors insufficient memory pull failed healthcheck' },
       { id: 'uninstall', title: 'Uninstall', keywords: 'remove purge models revoke' },

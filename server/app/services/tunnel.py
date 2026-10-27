@@ -72,14 +72,30 @@ class RequestHandle:
 
 
 class _RemoteSink:
-    """Pending entry on the owning replica that relays worker frames to the requesting replica."""
+    """Pending entry on the owning replica that relays worker frames to the requesting replica.
+
+    Frames are published one at a time, in arrival order. Concurrent publishes can take different Redis
+    connections and overtake each other, which would let ``response_end`` arrive before the last chunk.
+    """
 
     def __init__(self, coordinator: "RedisCoordinator", reply_to: str, request_id: str):
         self.coordinator, self.reply_to, self.request_id = coordinator, reply_to, request_id
+        self._outbox: list[dict] = []
+        self._sending = False
 
     def put_nowait(self, frame: dict) -> None:
-        frame = {**frame, "id": self.request_id}
-        self.coordinator.spawn(self.coordinator.publish(self.reply_to, {"kind": "frame", "frame": frame}))
+        self._outbox.append({**frame, "id": self.request_id})
+        if not self._sending:
+            self._sending = True
+            self.coordinator.spawn(self._drain())
+
+    async def _drain(self) -> None:
+        try:
+            while self._outbox:
+                frame = self._outbox.pop(0)
+                await self.coordinator.publish(self.reply_to, {"kind": "frame", "frame": frame})
+        finally:
+            self._sending = False
 
 
 class TunnelBroker:

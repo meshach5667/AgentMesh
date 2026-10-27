@@ -18,6 +18,7 @@ import {
   useDeleteDeployment,
   useDeployment,
   useDeploymentEvents,
+  useDeploymentPricing,
   useDeploymentUsage,
   useRestartDeployment,
   useStopDeployment,
@@ -29,7 +30,7 @@ import { sumAmounts } from '@/lib/billing';
 import { STATUS_HELP } from '@/lib/deployments';
 import { errorMessage } from '@/lib/errors';
 import { ago, count, dateTime, money, runtimeLabel, shortId } from '@/lib/format';
-import { IN_PROGRESS_STATUSES, TERMINAL_STATUSES } from '@/types';
+import { IN_PROGRESS_STATUSES, TERMINAL_STATUSES, type Deployment, type DeploymentPricing } from '@/types';
 
 export default function DeploymentDetailPage() {
   const id = useParams<{ id: string }>().id;
@@ -40,6 +41,7 @@ export default function DeploymentDetailPage() {
   const usage = useDeploymentUsage(id);
   const model = useModel(dep?.model_id ?? null);
   const charges = useCharges(id);
+  const pricing = useDeploymentPricing(id);
   const stop = useStopDeployment();
   const restart = useRestartDeployment();
   const remove = useDeleteDeployment();
@@ -159,7 +161,7 @@ export default function DeploymentDetailPage() {
         </>
       )}
 
-      <ChargesCard charges={charges} />
+      <ChargesCard charges={charges} pricing={pricing.data} limits={dep} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -216,14 +218,49 @@ export default function DeploymentDetailPage() {
   );
 }
 
-function ChargesCard({ charges }: { charges: ReturnType<typeof useCharges> }) {
+function ChargesCard({
+  charges,
+  pricing,
+  limits,
+}: {
+  charges: ReturnType<typeof useCharges>;
+  pricing: DeploymentPricing | undefined;
+  limits: Pick<Deployment, 'max_hourly_price' | 'max_token_price'>;
+}) {
+  const rates = pricing?.rates;
   return (
     <Card>
       <CardHeader>
         <CardTitle>Charges</CardTitle>
         <CardDescription>Rated every few minutes from READY time and runtime-reported tokens.</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {pricing && (
+          <div className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-3" data-testid="deployment-pricing">
+            <Field label="Price on its machine now">
+              {pricing.placed_at === null
+                ? 'Not on a machine right now'
+                : pricing.hourly != null && Number(pricing.hourly) > 0
+                  ? `${money(pricing.hourly, pricing.currency)} per hour while ready`
+                  : 'Free per hour'}
+            </Field>
+            <Field label="Tokens (per million)">
+              {rates
+                ? `${money(rates.input_tokens_per_million, pricing.currency)} in · ${money(rates.output_tokens_per_million, pricing.currency)} out`
+                : '—'}
+            </Field>
+            <Field label="Your price limits">
+              {limits.max_hourly_price ? `${money(limits.max_hourly_price, pricing.currency)}/h` : 'network prices'}
+              {' · '}
+              {limits.max_token_price ? `${money(limits.max_token_price, pricing.currency)}/M tokens` : 'network prices'}
+            </Field>
+            <p className="text-xs text-muted-foreground sm:col-span-3">
+              {rates?.source === 'node' ? "The machine's provider set these prices. " : rates ? 'The machine charges the network prices. ' : ''}
+              You never pay more than the prices in force when the deployment was placed on this machine; if the provider
+              lowers them, you pay the lower price.
+            </p>
+          </div>
+        )}
         <ChargesTable charges={charges.data ?? []} empty="No charges for this deployment yet." />
       </CardContent>
     </Card>

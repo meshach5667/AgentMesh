@@ -70,6 +70,7 @@ export default function ApiGuide() {
             <>Add <C>&quot;runtime&quot;: &quot;ollama&quot;</C> (or <C>llamacpp</C>, <C>vllm</C>) to choose one; otherwise they are tried in that order.</>,
             <><C>config</C> accepts only <C>num_ctx</C> (512–8192), <C>region</C> and <C>require_gpu</C>. Anything else is rejected.</>,
             <>Retrying with the same <C>idempotency_key</C> returns the same deployment.</>,
+            <>Providers price each machine. The deployment goes to the cheapest machine that fits within <C>max_hourly_price</C> (per hour of its reservation) and <C>max_token_price</C> (per million input or output tokens); omitted limits default to the network prices. <C>POST /deployments/quote</C> takes the same body and prices it without creating anything.</>,
             <>No node available: <C>503</C> with <C>{'{"detail": {"code": "no_eligible_node", "reasons": {...}, "by_runtime": {...}}}'}</C>.</>,
             <>Not enough balance: <C>402</C> with <C>{'{"detail": {"code": "insufficient_balance", "required": ..., "balance": ...}}'}</C>.</>,
           ]}
@@ -213,7 +214,10 @@ console.log(reply.choices[0].message.content);`}
           rows={[
             [<C key="1">GET /usage/&#123;deployment_id&#125;</C>, <>One record per request: endpoint, status, duration, bytes, token counts. Newest 200 by default (<C>?limit=</C> up to 1000).</>],
             [<C key="2">GET /usage/summary?days=30</C>, 'Requests, successes, failures and tokens per day and per deployment (1–90 days).'],
-            [<C key="3">GET /billing/pricing</C>, 'The price list in force.'],
+            [<C key="3">GET /billing/pricing</C>, 'The network price list in force (used by machines without their own prices, and the default price limits).'],
+            [<C key="3m">GET /billing/market</C>, 'Lowest and highest price of each unit across machines taking work; no authentication.'],
+            [<C key="3q">POST /deployments/quote</C>, <>Price a deployment before creating it (same body as <C>POST /deployments</C>): per runtime, the cheapest machine within your limits and the limits applied.</>],
+            [<C key="3d">GET /deployments/&#123;id&#125;/pricing</C>, 'The rates a deployment is billed at now, and the most it can be billed on its machine.'],
             [<C key="4">GET /billing/charges?deployment_id=…</C>, 'What each billing window cost.'],
             [<C key="5">GET /wallets</C>, 'Your balance.'],
             [<C key="6">POST /payments/topups</C>, <>Start a Paystack checkout (test mode): <C>{'{"amount": 5000}'}</C>.</>],

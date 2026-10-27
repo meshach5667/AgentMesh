@@ -10,7 +10,7 @@ from app.core.timeutil import utcnow
 from app.documents.node import BLOCKED_NODE_STATUSES, Node, NodeHardware, NodeStatus
 from app.documents.user import Provider, User
 from app.schemas.node import NodeCreate
-from app.services import audit_service, worker_service
+from app.services import audit_service, node_pricing_service, worker_service
 
 
 async def register_node(db: Session, node_data: NodeCreate, user_id: uuid.UUID):
@@ -28,6 +28,7 @@ async def register_node(db: Session, node_data: NodeCreate, user_id: uuid.UUID):
     )
     db.add(node)
     await db.flush()
+    await node_pricing_service.apply_provider_default(db, node)
     if node_data.hardware:
         db.add(NodeHardware(node_id=node.id, **node_data.hardware.model_dump()))
     await db.commit()

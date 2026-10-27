@@ -6,6 +6,7 @@ import type {
   BillingScope,
   BillingSummary,
   Charge,
+  Market,
   Payment,
   PaymentsConfig,
   Payout,
@@ -19,6 +20,10 @@ import type {
 
 export const usePricing = () =>
   useQuery({ queryKey: ['billing', 'pricing'], queryFn: async () => (await api.get<Pricing>('/billing/pricing')).data });
+
+/** Price ranges across machines that can take work (providers set their own prices). */
+export const useMarket = () =>
+  useQuery({ queryKey: ['billing', 'market'], queryFn: async () => (await api.get<Market>('/billing/market')).data });
 
 export const useCharges = (deploymentId?: string) =>
   useQuery({

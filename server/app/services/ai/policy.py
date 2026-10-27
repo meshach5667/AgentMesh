@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.core.config import settings
 from app.core.database import Session
 from app.documents.model import Model, ModelArtifact
-from app.services import billing_service, ledger_service
+from app.services import ledger_service, node_pricing_service
 from app.services.catalog_service import (
     MAX_NUM_CTX,
     RUNTIME_PREFERENCE,
@@ -26,6 +26,7 @@ from app.services.catalog_service import (
     estimate_requirements,
 )
 from app.services.ledger_service import money
+from app.services.scheduler_service import evaluate_nodes
 
 Runtime = Literal["ollama", "llamacpp", "vllm"]
 Source = Literal["ollama", "huggingface"]
@@ -124,16 +125,18 @@ def resource_violations(req: ResourceRequest, limits: AutonomyLimits) -> list[st
 
 
 async def hourly_cost(db: Session, req: ResourceRequest) -> tuple[bool, str, Decimal]:
-    """(priced, currency, hourly price) for a reservation at the pricing version in force now."""
-    rule = await billing_service.active_rule(db)
-    if billing_service.is_free(rule):
+    """(priced, currency, hourly price) for a reservation on the node placement would pick now: the cheapest that
+    fits within the network price limits. With no such node, the most those limits allow."""
+    limits = await node_pricing_service.limits_for(db, None, None, req.cpu_cores, req.ram_mb, req.vram_mb)
+    ev = await evaluate_nodes(db, req, limits=limits)
+    if ev.eligible:
+        rates = ev.rates[ev.eligible[0].id]
+        if rates is None or rates.is_free():
+            return False, settings.BILLING_CURRENCY, Decimal(0)
+        return True, settings.BILLING_CURRENCY, money(rates.hourly(req.cpu_cores, req.ram_mb, req.vram_mb))
+    if not limits.hourly:
         return False, settings.BILLING_CURRENCY, Decimal(0)
-    assert rule is not None
-    return (
-        True,
-        rule.currency,
-        money(billing_service.hourly_resource_price(rule, req.cpu_cores, req.ram_mb, req.vram_mb)),
-    )
+    return True, settings.BILLING_CURRENCY, money(limits.hourly)
 
 
 async def check_plan(

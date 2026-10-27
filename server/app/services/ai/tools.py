@@ -13,6 +13,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import HTTPException
@@ -25,11 +26,12 @@ from app.documents.deployment import Deployment, DeploymentEvent
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.user import Customer, User
 from app.schemas.deployment import DeploymentCreate
-from app.services import audit_service, deployment_service, placement_service
+from app.services import audit_service, deployment_service, node_pricing_service, placement_service
 from app.services import deployment_lifecycle as lifecycle
 from app.services.ai import probe
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan, resource_violations
 from app.services.catalog_service import DeploymentConfig, deployable_artifacts, estimate_requirements
+from app.services.ledger_service import money
 from app.services.scheduler_service import evaluate_nodes
 
 logger = logging.getLogger(__name__)
@@ -207,14 +209,23 @@ async def submit_deployment(ctx: ToolContext, args: PlanInput) -> dict:
     # plain values first.
     run_id, user_id = ctx.run.id, ctx.user.id
     attempt = len(ctx.run.deployment_ids or [])
+    # Placement may not pick a node dearer than the network prices or than the authorized spend allows per hour.
+    spend_cap = min(money(ctx.limits.max_spend / Decimal(str(args.plan.duration_hours))), Decimal(1_000_000))
+    caps = []
+    for c in check.candidates:
+        default = await node_pricing_service.limits_for(
+            ctx.db, None, None, c.req.cpu_cores, c.req.ram_mb, c.req.vram_mb
+        )
+        caps.append(min(spend_cap, default.hourly) if default.hourly is not None else spend_cap)
     runtimes = [c.artifact.runtime for c in check.candidates]
     failures = []
-    for runtime in runtimes:
+    for runtime, cap in zip(runtimes, caps, strict=True):
         body = DeploymentCreate(
             model_id=args.plan.model_id,
             runtime=runtime,  # type: ignore[arg-type]
             config={"num_ctx": args.plan.num_ctx, "region": args.plan.region, "require_gpu": args.plan.require_gpu},
             idempotency_key=f"ai:{run_id}:{attempt}:{runtime}",
+            max_hourly_price=cap,
         )
         try:
             dep = await deployment_service.create_deployment(ctx.db, body, user_id)

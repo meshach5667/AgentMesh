@@ -41,7 +41,7 @@ def render_systemd(name: str, executable: str, config_file: str) -> ServiceFiles
     unit = f"""# Installed by agentmesh-worker. Remove with: agentmesh-worker service uninstall --name {name}
 [Unit]
 Description=AgentMesh worker ({name})
-Documentation=https://agent-mesh-ten.vercel.app/docs/providers
+Documentation=https://www.agentmeshx.tech/docs/providers
 After=network-online.target
 Wants=network-online.target
 

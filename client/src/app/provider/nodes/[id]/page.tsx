@@ -8,6 +8,7 @@ import { ConfirmButton } from '@/components/common/ConfirmButton';
 import { Pill, StatusBadge } from '@/components/common/StatusBadge';
 import { ErrorState, Notice, PageHeader } from '@/components/common/Notices';
 import { CapacityBars } from '@/components/nodes/CapacityBars';
+import { NodePricingCard } from '@/components/pricing/NodePricingCard';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { useNode, useRevokeNode, useSetAccepting, useSetAcceptsCommunity } from '@/hooks/useNodes';
 import { errorMessage } from '@/lib/errors';
@@ -112,6 +113,8 @@ export default function NodeDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <NodePricingCard nodeId={node.id} editable={!revoked} />
 
       <Card>
         <CardHeader>

@@ -28,7 +28,12 @@ export interface Charge {
   id: string;
   deployment_id: string;
   node_id: string | null;
-  pricing_rule_id: string;
+  /** Network price version (sets the commission); null when none was in force. */
+  pricing_rule_id: string | null;
+  /** The node's own price version, when it charged its provider's prices. */
+  node_price_id: string | null;
+  /** Unit prices applied, as decimal strings, plus source: "node" or "network". */
+  rates: Record<string, string> | null;
   period_start: string;
   period_end: string;
   ready_seconds: number;
@@ -190,4 +195,88 @@ export interface RevenueAnalytics {
   };
   breakdown: { id: string; label: string; charges: number; gross: string; platform_fee: string; provider_share: string }[];
   breakdown_by: 'deployment' | 'node' | 'provider';
+}
+
+/** A machine's price list, before the platform commission. Decimal strings. */
+export interface Prices {
+  cpu_core_hour: string;
+  ram_gb_hour: string;
+  vram_gb_hour: string;
+  input_tokens_per_million: string;
+  output_tokens_per_million: string;
+}
+
+export type PriceField = keyof Prices;
+
+export const PRICE_FIELDS: { key: PriceField; label: string; unit: string }[] = [
+  { key: 'cpu_core_hour', label: 'CPU core', unit: 'per hour' },
+  { key: 'ram_gb_hour', label: 'Memory', unit: 'per GB-hour' },
+  { key: 'vram_gb_hour', label: 'GPU memory', unit: 'per GB-hour' },
+  { key: 'input_tokens_per_million', label: 'Input tokens', unit: 'per million' },
+  { key: 'output_tokens_per_million', label: 'Output tokens', unit: 'per million' },
+];
+
+/** What a machine charges: its provider's own prices ("node") or the network prices ("network"). */
+export interface Rates extends Prices {
+  source: 'node' | 'network';
+}
+
+export interface NodePriceVersion extends Prices {
+  id: string;
+  node_id: string;
+  version: number;
+  currency: string;
+  effective_from: string;
+  created_at: string;
+}
+
+export interface NodePricing {
+  node_id: string;
+  currency: string;
+  /** What the machine charges new deployments now; null when free. */
+  charging: Rates | null;
+  network: Rates | null;
+  commission_rate: string;
+  history: NodePriceVersion[];
+}
+
+export interface DefaultPrices {
+  currency: string;
+  prices: Prices | null;
+  updated_machines: number;
+}
+
+export interface Market {
+  currency: string;
+  nodes: number;
+  own_prices: number;
+  ranges: Partial<Record<PriceField, { min: string; max: string }>>;
+  network: Rates | null;
+  commission_rate: string;
+}
+
+export interface RuntimeQuote {
+  runtime: string;
+  requirements: { cpu_cores: number; ram_mb: number; disk_mb: number; vram_mb: number };
+  eligible_nodes: number;
+  over_price_limit: number;
+  cheapest: Rates | null;
+  hourly: string | null;
+  max_hourly_price: string | null;
+  max_token_price: string | null;
+}
+
+export interface Quote {
+  currency: string;
+  min_prepaid_hours: number;
+  by_runtime: RuntimeQuote[];
+}
+
+export interface DeploymentPricing {
+  deployment_id: string;
+  currency: string;
+  rates: Rates | null;
+  hourly: string | null;
+  placed_at: Record<string, string> | null;
+  commission_rate: string;
 }

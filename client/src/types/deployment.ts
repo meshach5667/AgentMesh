@@ -46,6 +46,9 @@ export interface Deployment {
   cleanup_status: string | null;
   schedule_attempts: number;
   restart_count: number;
+  /** Price limits for placement; null means the network prices are the limit. */
+  max_hourly_price: string | null;
+  max_token_price: string | null;
 }
 
 export interface DeploymentEvent {

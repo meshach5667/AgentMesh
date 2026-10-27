@@ -1,18 +1,20 @@
 """Pricing and rating: turns measured usage into charges and ledger postings.
 
-What is charged, per deployment and node:
+What is charged, per deployment and node, at that node's rates (its provider's own prices, else the network
+prices; never above the rates it was placed at, see node_pricing_service):
 
-* READY time x reserved resources (CPU cores, RAM, VRAM) at the pricing version in force. READY intervals come
-  from the control plane's own lifecycle events, not from the worker. UNHEALTHY time is not charged.
+* READY time x reserved resources (CPU cores, RAM, VRAM). READY intervals come from the control plane's own
+  lifecycle events, not from the worker. UNHEALTHY time is not charged.
 * Input/output tokens at the per-million prices, for successful requests only. Counts are runtime-reported (see
   UsageRecord.token_source); requests without counts are not charged for tokens.
 
-Each charge is split by the platform commission of its pricing version (settings.DEFAULT_PLATFORM_FEE_RATE, 10%,
-unless the operator set another): the fee is rounded to the ledger's precision and the provider is credited exactly
-the rest, so fee + provider share always equals what the customer paid.
+Each charge is split by the platform commission of the network pricing version in force
+(settings.DEFAULT_PLATFORM_FEE_RATE, 10%, unless the operator set another): the fee is rounded to the ledger's
+precision and the provider is credited exactly the rest, so fee + provider share always equals what the customer
+paid.
 
 A background job rates each deployment's window [metered_until, now) at most every BILLING_INTERVAL_SECONDS,
-splitting at pricing-version boundaries and node changes. Each (deployment, node, period_start) produces at most
+splitting at network and node price changes and at node changes. Each (deployment, node, period_start) produces at most
 one Charge (unique constraint) and advances the watermark with a compare-and-set, so concurrent replicas cannot
 double-charge. Settlement debits the customer, credits the provider, and records the platform fee; the
 customer's balance may go below zero by at most one window, after which their deployments are stopped.
@@ -39,10 +41,10 @@ from app.documents.usage import UsageRecord
 from app.documents.user import Customer, Provider, User
 from app.services import audit_service, ledger_service
 from app.services.ledger_service import money
+from app.services.node_pricing_service import PRICE_FIELDS, Rates, billed_rates, network_rule, node_price_changes
 
 logger = logging.getLogger(__name__)
 
-MB_PER_GB = Decimal(1024)
 SECONDS_PER_HOUR = Decimal(3600)
 MILLION = Decimal(1_000_000)
 
@@ -50,11 +52,7 @@ MILLION = Decimal(1_000_000)
 # --- Pricing rules -----------------------------------------------------------------------------------------
 
 
-async def active_rule(db: Session, at: datetime | None = None) -> PricingRule | None:
-    at = at or utcnow()
-    return await db.find_one(
-        PricingRule, {"effective_from": {"$lte": at}}, sort=[("effective_from", -1), ("version", -1)]
-    )
+active_rule = network_rule
 
 
 async def list_rules(db: Session) -> list[PricingRule]:
@@ -101,7 +99,7 @@ async def create_rule(db: Session, data: dict, actor: User) -> PricingRule:
     return rule
 
 
-RULE_PRICES = ("cpu_core_hour", "ram_gb_hour", "vram_gb_hour", "input_tokens_per_million", "output_tokens_per_million")
+RULE_PRICES = PRICE_FIELDS
 
 
 async def change_commission(
@@ -131,35 +129,15 @@ def split(amount: Decimal, rate: Decimal) -> tuple[Decimal, Decimal]:
     return amount - fee, fee
 
 
-def hourly_resource_price(rule: PricingRule, cpu_cores: int, ram_mb: int, vram_mb: int) -> Decimal:
-    return (
-        Decimal(rule.cpu_core_hour) * cpu_cores
-        + Decimal(rule.ram_gb_hour) * Decimal(ram_mb) / MB_PER_GB
-        + Decimal(rule.vram_gb_hour) * Decimal(vram_mb) / MB_PER_GB
-    )
-
-
-def is_free(rule: PricingRule | None) -> bool:
-    return rule is None or not any(
-        Decimal(v)
-        for v in (
-            rule.cpu_core_hour,
-            rule.ram_gb_hour,
-            rule.vram_gb_hour,
-            rule.input_tokens_per_million,
-            rule.output_tokens_per_million,
-        )
-    )
-
-
-async def require_prepaid(db: Session, user_id: uuid.UUID, cpu_cores: int, ram_mb: int, vram_mb: int) -> None:
-    """Refuse a deployment the customer cannot afford for BILLING_MIN_PREPAID_HOURS of its reservation."""
-    rule = await active_rule(db)
-    if is_free(rule):
+async def require_prepaid(
+    db: Session, user_id: uuid.UUID, rates: Rates | None, cpu_cores: int, ram_mb: int, vram_mb: int
+) -> None:
+    """Refuse a deployment the customer cannot afford for BILLING_MIN_PREPAID_HOURS of its reservation at the
+    rates of the node it was placed on."""
+    if rates is None or rates.is_free():
         return
-    assert rule is not None
     hours = Decimal(str(settings.BILLING_MIN_PREPAID_HOURS))
-    needed = money(hourly_resource_price(rule, cpu_cores, ram_mb, vram_mb) * hours)
+    needed = money(rates.hourly(cpu_cores, ram_mb, vram_mb) * hours)
     wallet = await ledger_service.wallet_for_user(db, user_id)
     have = await ledger_service.balance(db, wallet.id)
     if have < needed or have <= 0:
@@ -167,11 +145,11 @@ async def require_prepaid(db: Session, user_id: uuid.UUID, cpu_cores: int, ram_m
             status_code=402,
             detail={
                 "code": "insufficient_balance",
-                "message": f"This deployment needs at least {needed} {rule.currency} in your wallet "
+                "message": f"This deployment needs at least {needed} {settings.BILLING_CURRENCY} in your wallet "
                 f"({settings.BILLING_MIN_PREPAID_HOURS:g} h of its reserved resources); you have {money(have)}.",
                 "required": str(needed),
                 "balance": str(money(have)),
-                "currency": rule.currency,
+                "currency": settings.BILLING_CURRENCY,
             },
         )
 
@@ -269,13 +247,23 @@ async def _tokens(db: Session, dep_id: uuid.UUID, start: datetime, end: datetime
     return {r["_id"]: (int(r["input"] or 0), int(r["output"] or 0)) for r in rows}
 
 
-async def _reservation(db: Session, dep_id: uuid.UUID, node_id: uuid.UUID | None) -> tuple[int, int, int]:
+async def _reservation(db: Session, dep_id: uuid.UUID, node_id: uuid.UUID | None) -> ResourceReservation | None:
     if node_id is None:
-        return 0, 0, 0
-    res = await db.find_one(
+        return None
+    return await db.find_one(
         ResourceReservation, {"deployment_id": dep_id, "node_id": node_id}, sort=[("created_at", -1)]
     )
-    return (res.cpu_cores, res.ram_mb, res.vram_mb) if res else (0, 0, 0)
+
+
+async def placement_rates(db: Session, res: ResourceReservation | None) -> dict[str, str] | None:
+    """The most a deployment pays on a node: the rates kept with its reservation. Reservations made before rates
+    were kept fall back to the network prices of their time."""
+    if res is None:
+        return None
+    if res.rates is not None:
+        return res.rates
+    rule = await network_rule(db, res.created_at)
+    return (Rates.of(rule, "network") if rule else Rates.free()).snapshot()
 
 
 async def _provider_user(db: Session, node_id: uuid.UUID | None) -> uuid.UUID | None:
@@ -289,25 +277,22 @@ async def _provider_user(db: Session, node_id: uuid.UUID | None) -> uuid.UUID | 
 # --- Rating ------------------------------------------------------------------------------------------------
 
 
-def price(rule: PricingRule, ready_seconds: float, cpu: int, ram_mb: int, vram_mb: int, tin: int, tout: int):
+def price(rates: Rates, fee_rate, ready_seconds: float, cpu: int, ram_mb: int, vram_mb: int, tin: int, tout: int):
     hours = Decimal(str(ready_seconds)) / SECONDS_PER_HOUR
-    resource = money(hourly_resource_price(rule, cpu, ram_mb, vram_mb) * hours)
-    tokens = money(
-        (Decimal(rule.input_tokens_per_million) * tin + Decimal(rule.output_tokens_per_million) * tout) / MILLION
-    )
+    resource = money(rates.hourly(cpu, ram_mb, vram_mb) * hours)
+    tokens = money((rates.input_tokens_per_million * tin + rates.output_tokens_per_million * tout) / MILLION)
     amount = resource + tokens
-    provider_amount, fee = split(amount, rule.platform_fee_rate)
+    provider_amount, fee = split(amount, fee_rate)
     return resource, tokens, amount, provider_amount, fee
 
 
-async def _rules_in(db: Session, start: datetime, end: datetime) -> list[tuple[datetime, PricingRule | None]]:
-    """(segment start, rule) for each pricing segment of [start, end)."""
-    later = await db.find(
-        PricingRule, {"effective_from": {"$gt": start, "$lt": end}}, sort=[("effective_from", 1), ("version", 1)]
-    )
-    segments: list[tuple[datetime, PricingRule | None]] = [(start, await active_rule(db, start))]
-    segments += [(r.effective_from, r) for r in later]
-    return segments
+async def _cuts(db: Session, node_id: uuid.UUID | None, start: datetime, end: datetime) -> list[datetime]:
+    """Boundaries of [start, end) where the network prices or this node's own prices change."""
+    rules = await db.find(PricingRule, {"effective_from": {"$gt": start, "$lt": end}})
+    points = {start, end, *(r.effective_from for r in rules)}
+    if node_id is not None:
+        points.update(await node_price_changes(db, node_id, start, end))
+    return sorted(points)
 
 
 async def rate_deployment(db: Session, dep: Deployment, now: datetime) -> list[Charge]:
@@ -320,18 +305,27 @@ async def rate_deployment(db: Session, dep: Deployment, now: datetime) -> list[C
     customer = await db.get(Customer, dep.customer_id)
     customer_user = customer.user_id if customer else None
     charges: list[Charge] = []
-    segments = await _rules_in(db, start, now)
-    for i, (seg_start, rule) in enumerate(segments):
-        seg_end = segments[i + 1][0] if i + 1 < len(segments) else now
-        if rule is None or customer_user is None:
-            continue  # no price in force: usage is measured but free
-        seconds = _clip(intervals, seg_start, seg_end)
-        tokens = await _tokens(db, dep.id, seg_start, seg_end)
-        for node_id in set(seconds) | set(tokens):
-            ready_s = seconds.get(node_id, 0.0)
-            tin, tout = tokens.get(node_id, (0, 0))
-            cpu, ram, vram = await _reservation(db, dep.id, node_id)
-            resource, token_amt, amount, provider_amt, fee = price(rule, ready_s, cpu, ram, vram, tin, tout)
+    whole = _clip(intervals, start, now)
+    token_nodes = await _tokens(db, dep.id, start, now)
+    for node_id in set(whole) | set(token_nodes):
+        if customer_user is None:
+            break
+        reservation = await _reservation(db, dep.id, node_id)
+        cpu, ram, vram = (reservation.cpu_cores, reservation.ram_mb, reservation.vram_mb) if reservation else (0, 0, 0)
+        placed_at = await placement_rates(db, reservation)
+        cuts = await _cuts(db, node_id, start, now)
+        for seg_start, seg_end in zip(cuts, cuts[1:], strict=False):
+            if node_id is not None:
+                rates, rule = await billed_rates(db, node_id, placed_at, seg_start)
+            else:
+                rule = await active_rule(db, seg_start)
+                rates = Rates.of(rule, "network") if rule else None
+            if rates is None:
+                continue  # no price in force: usage is measured but free
+            ready_s = _clip(intervals, seg_start, seg_end).get(node_id, 0.0)
+            tin, tout = (await _tokens(db, dep.id, seg_start, seg_end)).get(node_id, (0, 0))
+            fee_rate = rule.platform_fee_rate if rule else settings.DEFAULT_PLATFORM_FEE_RATE
+            resource, token_amt, amount, provider_amt, fee = price(rates, fee_rate, ready_s, cpu, ram, vram, tin, tout)
             if amount <= 0:
                 continue
             customer_wallet = await ledger_service.wallet_for_user(db, customer_user)
@@ -343,7 +337,9 @@ async def rate_deployment(db: Session, dep: Deployment, now: datetime) -> list[C
                 node_id=node_id,
                 customer_wallet_id=customer_wallet.id,
                 provider_wallet_id=provider_wallet.id if provider_wallet else None,
-                pricing_rule_id=rule.id,
+                pricing_rule_id=rule.id if rule else None,
+                node_price_id=rates.node_price_id,
+                rates=rates.snapshot(),
                 period_start=seg_start,
                 period_end=seg_end,
                 ready_seconds=round(ready_s, 3),
@@ -357,8 +353,8 @@ async def rate_deployment(db: Session, dep: Deployment, now: datetime) -> list[C
                 amount=amount,
                 provider_amount=provider_amt if provider_wallet else money(0),
                 platform_fee=fee if provider_wallet else amount,
-                platform_fee_rate=rule.platform_fee_rate,
-                currency=rule.currency,
+                platform_fee_rate=fee_rate,
+                currency=settings.BILLING_CURRENCY,
             )
             db.add(charge)
             await db.flush()

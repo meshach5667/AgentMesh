@@ -4,10 +4,19 @@ from app.documents.ai import AiInferenceRequest, AiRun, AiRunEvent
 from app.documents.api_key import ApiKey
 from app.documents.audit import AuditLog
 from app.documents.base import Doc
-from app.documents.billing import Charge, Payment, PaymentEvent, Payout, PayoutAccount, PricingRule, Refund
+from app.documents.billing import (
+    Charge,
+    NodePrice,
+    Payment,
+    PaymentEvent,
+    Payout,
+    PayoutAccount,
+    PricingRule,
+    Refund,
+)
 from app.documents.deployment import Deployment, DeploymentEvent
 from app.documents.model import Model, ModelArtifact
-from app.documents.node import Node, NodeHardware, NodePricing
+from app.documents.node import Node, NodeHardware
 from app.documents.node_session import NodeChallenge, NodeSession
 from app.documents.reservation import ResourceReservation
 from app.documents.session import AuthSession, RefreshToken
@@ -37,7 +46,7 @@ DOCUMENTS: list[type[Doc]] = [
     NodeCommand,
     NodeEnrollmentToken,
     NodeHardware,
-    NodePricing,
+    NodePrice,
     NodeSession,
     Payment,
     PaymentEvent,

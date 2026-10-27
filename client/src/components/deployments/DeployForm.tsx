@@ -7,9 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Notice, TrustNotice } from '@/components/common/Notices';
 import { Pill } from '@/components/common/StatusBadge';
-import { useCreateDeployment } from '@/hooks/useDeployments';
-import { usePricing } from '@/hooks/useBilling';
-import { hourlyResourcePrice, isFree } from '@/lib/billing';
+import { useCreateDeployment, useQuote } from '@/hooks/useDeployments';
 import {
   DEFAULT_NUM_CTX,
   MAX_NUM_CTX,
@@ -25,13 +23,13 @@ import type { Model, Runtime } from '@/types';
 export function DeployForm({ model }: { model: Model }) {
   const router = useRouter();
   const create = useCreateDeployment();
-  const pricing = usePricing();
-  const rule = pricing.data?.current ?? null;
   const artifacts = useMemo(() => deployableArtifacts(model.artifacts), [model.artifacts]);
   const [runtime, setRuntime] = useState<Runtime | 'auto'>('auto');
   const [numCtx, setNumCtx] = useState(DEFAULT_NUM_CTX);
   const [requireGpu, setRequireGpu] = useState(false);
   const [region, setRegion] = useState('');
+  const [maxHourly, setMaxHourly] = useState('');
+  const [maxTokens, setMaxTokens] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
   // One key per form instance: a double-submit or retry after a network error returns the same deployment.
   const [idempotencyKey] = useState(newIdempotencyKey);
@@ -39,17 +37,22 @@ export function DeployForm({ model }: { model: Model }) {
   const ctxValid = Number.isInteger(numCtx) && numCtx >= MIN_NUM_CTX && numCtx <= MAX_NUM_CTX;
   const shown = runtime === 'auto' ? artifacts : artifacts.filter((a) => a.runtime === runtime);
   const capacity = create.error ? noCapacityDetail(create.error) : null;
+  const limitsValid = [maxHourly, maxTokens].every((v) => v.trim() === '' || /^\d+(\.\d{1,8})?$/.test(v.trim()));
+  const request = {
+    model_id: model.id,
+    runtime: runtime === 'auto' ? undefined : runtime,
+    config: { num_ctx: numCtx, require_gpu: requireGpu, ...(region.trim() ? { region: region.trim() } : {}) },
+    ...(maxHourly.trim() ? { max_hourly_price: maxHourly.trim() } : {}),
+    ...(maxTokens.trim() ? { max_token_price: maxTokens.trim() } : {}),
+  };
+  const quote = useQuote(request, ctxValid && limitsValid && artifacts.length > 0);
+  const quoteFor = (rt: string) => quote.data?.by_runtime.find((q) => q.runtime === rt);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!acknowledged || !ctxValid) return;
+    if (!acknowledged || !ctxValid || !limitsValid) return;
     create.mutate(
-      {
-        model_id: model.id,
-        runtime: runtime === 'auto' ? undefined : runtime,
-        config: { num_ctx: numCtx, require_gpu: requireGpu, ...(region.trim() ? { region: region.trim() } : {}) },
-        idempotency_key: idempotencyKey,
-      },
+      { ...request, idempotency_key: idempotencyKey },
       { onSuccess: (dep) => router.push(`/customer/deployments/${dep.id}`) },
     );
   };
@@ -118,20 +121,63 @@ export function DeployForm({ model }: { model: Model }) {
         Require a GPU
       </label>
 
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium">Price limits (optional)</legend>
+        <p className="text-xs text-muted-foreground">
+          Providers set their own prices. AgentMesh places your deployment on the cheapest machine that fits and never
+          on one above your limits, including when it moves after a failure. Leave a limit empty to use the network
+          prices as the limit.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="max_hourly_price">Most per hour while ready</Label>
+            <Input
+              id="max_hourly_price"
+              inputMode="decimal"
+              value={maxHourly}
+              onChange={(e) => setMaxHourly(e.target.value)}
+              placeholder={quote.data?.by_runtime[0]?.max_hourly_price ? money(quote.data.by_runtime[0].max_hourly_price, quote.data.currency) : 'Network prices'}
+              aria-invalid={!limitsValid}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="max_token_price">Most per million tokens</Label>
+            <Input
+              id="max_token_price"
+              inputMode="decimal"
+              value={maxTokens}
+              onChange={(e) => setMaxTokens(e.target.value)}
+              placeholder={quote.data?.by_runtime[0]?.max_token_price ? money(quote.data.by_runtime[0].max_token_price, quote.data.currency) : 'Network prices'}
+              aria-invalid={!limitsValid}
+            />
+          </div>
+        </div>
+      </fieldset>
+
       <div className="rounded-lg border border-border p-4">
-        <p className="mb-2 text-sm font-medium">Resources reserved on the node (estimate)</p>
+        <p className="mb-2 text-sm font-medium">Resources reserved on the node and price (estimate)</p>
         <ul className="space-y-1 text-sm text-muted-foreground">
           {shown.map((a) => {
             const r = estimateRequirements(a, ctxValid ? numCtx : DEFAULT_NUM_CTX, requireGpu);
+            const q = quoteFor(a.runtime);
+            const currency = quote.data?.currency;
             return (
               <li key={a.id}>
                 <span className="font-medium text-foreground">{runtimeLabel(a.runtime)}:</span> {r.cpu_cores} CPU,{' '}
                 {mb(r.ram_mb)} RAM, {mb(r.disk_mb)} disk{r.gpu_required ? `, ${mb(r.vram_mb)} GPU memory` : ''}
-                {rule && !isFree(rule) && (
+                {q && (
                   <span data-testid={`hourly-${a.runtime}`}>
                     {' '}
-                    · {money(hourlyResourcePrice(rule, r.cpu_cores, r.ram_mb, r.vram_mb), rule.currency)} per hour while
-                    ready, plus tokens
+                    ·{' '}
+                    {q.hourly != null && q.cheapest
+                      ? Number(q.hourly) === 0 && Number(q.cheapest.input_tokens_per_million) === 0 && Number(q.cheapest.output_tokens_per_million) === 0
+                        ? 'free on the cheapest machine'
+                        : `${money(q.hourly, currency)} per hour while ready, plus ${money(q.cheapest.input_tokens_per_million, currency)} in / ${money(q.cheapest.output_tokens_per_million, currency)} out per million tokens, on the cheapest of ${q.eligible_nodes} machine${q.eligible_nodes === 1 ? '' : 's'} within your limits`
+                      : q.hourly != null
+                        ? 'free on the cheapest machine'
+                        : q.over_price_limit > 0
+                          ? `${q.over_price_limit} machine${q.over_price_limit === 1 ? '' : 's'} fit but charge more than your price limits`
+                          : 'no machine can take it right now'}
                   </span>
                 )}
               </li>
@@ -139,9 +185,9 @@ export function DeployForm({ model }: { model: Model }) {
           })}
         </ul>
         <p className="mt-2 text-xs text-muted-foreground">
-          {rule && !isFree(rule)
-            ? `Figures come from the catalog and are estimates. You need a wallet balance covering ${pricing.data?.min_prepaid_hours ?? 1} h of the reservation to deploy; charges are taken from your wallet while the deployment is ready.`
-            : 'Figures come from the catalog and are estimates. No prices are set on this network, so usage is measured but not charged.'}
+          Figures come from the catalog and live machine prices, and are estimates. You need a wallet balance covering{' '}
+          {quote.data?.min_prepaid_hours ?? 1} h of the reservation at the chosen machine&apos;s price to deploy; charges
+          are taken from your wallet while the deployment is ready, and never above the prices it was placed at.
         </p>
       </div>
 
@@ -179,7 +225,7 @@ export function DeployForm({ model }: { model: Model }) {
       )}
 
       <div className="flex items-center gap-3">
-        <Button type="submit" size="lg" disabled={!acknowledged || !ctxValid || create.isPending}>
+        <Button type="submit" size="lg" disabled={!acknowledged || !ctxValid || !limitsValid || create.isPending}>
           {create.isPending ? 'Scheduling…' : 'Deploy'}
         </Button>
         {!acknowledged && <span className="text-xs text-muted-foreground">Confirm the notice above to deploy.</span>}

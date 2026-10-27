@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import Field
 
 from app.core.timeutil import utcnow
-from app.documents.base import Doc, index, unique
+from app.documents.base import Doc, Money, index, unique
 
 
 class DeploymentStatus(str, enum.Enum):  # noqa: UP042
@@ -51,6 +51,10 @@ class Deployment(Doc):
     excluded_node_ids: Any = None
     restart_count: int = 0
     artifact_id: uuid.UUID | None = None
+    # Price limits for placement (and every later move): per hour of the reservation, and per million tokens
+    # (input or output). None: the network prices are the limit.
+    max_hourly_price: Money | None = None
+    max_token_price: Money | None = None
     # Billing watermark: READY time and tokens before this instant have been rated into charges.
     metered_until: datetime | None = None
 

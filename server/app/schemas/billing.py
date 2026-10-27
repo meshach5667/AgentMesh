@@ -61,7 +61,9 @@ class ChargeOut(BaseModel):
     id: uuid.UUID
     deployment_id: uuid.UUID
     node_id: uuid.UUID | None
-    pricing_rule_id: uuid.UUID
+    pricing_rule_id: uuid.UUID | None = None
+    node_price_id: uuid.UUID | None = None
+    rates: dict[str, str] | None = Field(None, description="Unit prices applied, and whether they were the node's own")
     period_start: datetime
     period_end: datetime
     ready_seconds: float
@@ -190,3 +192,97 @@ class RefundOut(BaseModel):
 class AdminTopupOut(PaymentOut):
     user_email: str | None = None
     refundable: Decimal
+
+
+class Prices(BaseModel):
+    """A machine's price list: what customers pay per unit, before the platform commission."""
+
+    model_config = ConfigDict(extra="forbid")
+    cpu_core_hour: Decimal = PRICE
+    ram_gb_hour: Decimal = PRICE
+    vram_gb_hour: Decimal = PRICE
+    input_tokens_per_million: Decimal = PRICE
+    output_tokens_per_million: Decimal = PRICE
+
+
+class RatesOut(BaseModel):
+    cpu_core_hour: Decimal
+    ram_gb_hour: Decimal
+    vram_gb_hour: Decimal
+    input_tokens_per_million: Decimal
+    output_tokens_per_million: Decimal
+    source: str = Field(description="node: the provider's own prices; network: the network prices")
+
+
+class NodePriceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    node_id: uuid.UUID
+    version: int
+    currency: str
+    cpu_core_hour: Decimal
+    ram_gb_hour: Decimal
+    vram_gb_hour: Decimal
+    input_tokens_per_million: Decimal
+    output_tokens_per_million: Decimal
+    effective_from: datetime
+    created_at: datetime
+
+
+class NodePricingOut(BaseModel):
+    node_id: uuid.UUID
+    currency: str
+    charging: RatesOut | None = Field(description="What the machine charges new deployments now (null: free)")
+    network: RatesOut | None = Field(description="The network prices, used by machines without their own")
+    commission_rate: Decimal
+    history: list[NodePriceOut] = Field(description="The machine's own price versions, newest first")
+
+
+class DefaultPricesIn(Prices):
+    apply_to_existing: bool = Field(False, description="Also publish these prices on every active machine")
+
+
+class DefaultPricesOut(BaseModel):
+    currency: str
+    prices: Prices | None = Field(description="Prices new machines start with (null: the network prices)")
+    updated_machines: int = 0
+
+
+class PriceRange(BaseModel):
+    min: Decimal
+    max: Decimal
+
+
+class MarketOut(BaseModel):
+    currency: str
+    nodes: int = Field(description="Online machines accepting work")
+    own_prices: int = Field(description="How many of them charge their provider's own prices")
+    ranges: dict[str, PriceRange] = Field(description="Lowest and highest price of each unit across those machines")
+    network: RatesOut | None
+    commission_rate: Decimal
+
+
+class RuntimeQuote(BaseModel):
+    runtime: str
+    requirements: dict
+    eligible_nodes: int = Field(description="Machines that fit and are within the price limits")
+    over_price_limit: int = Field(description="Machines that fit but charge more than the limits")
+    cheapest: RatesOut | None = Field(description="Rates of the machine placement would pick now")
+    hourly: Decimal | None = Field(description="Hourly price of the reservation on that machine")
+    max_hourly_price: Decimal | None = Field(description="The hourly limit applied (yours or the network's)")
+    max_token_price: Decimal | None = Field(description="The per-million-token limit applied")
+
+
+class QuoteOut(BaseModel):
+    currency: str
+    min_prepaid_hours: float
+    by_runtime: list[RuntimeQuote]
+
+
+class DeploymentPricingOut(BaseModel):
+    deployment_id: uuid.UUID
+    currency: str
+    rates: RatesOut | None = Field(description="What the deployment is billed at now on its machine (null: free)")
+    hourly: Decimal | None = Field(description="Hourly price of its reservation at those rates")
+    placed_at: dict[str, str] | None = Field(description="Rates when it was placed: the most it pays there")
+    commission_rate: Decimal

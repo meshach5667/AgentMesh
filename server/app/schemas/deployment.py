@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
@@ -16,6 +17,22 @@ class DeploymentCreate(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict, description="num_ctx, region, require_gpu")
     idempotency_key: str | None = Field(
         None, max_length=128, description="Retries with the same key return the same deployment"
+    )
+    max_hourly_price: Decimal | None = Field(
+        None,
+        ge=0,
+        le=Decimal("1000000"),
+        max_digits=18,
+        decimal_places=8,
+        description="Most to pay per hour for the reserved CPU, RAM and VRAM. Omit to use the network prices",
+    )
+    max_token_price: Decimal | None = Field(
+        None,
+        ge=0,
+        le=Decimal("1000000"),
+        max_digits=18,
+        decimal_places=8,
+        description="Most to pay per million input or output tokens. Omit to use the network prices",
     )
 
 
@@ -41,6 +58,8 @@ class DeploymentOut(BaseModel):
     schedule_attempts: int = 0
     restart_count: int = 0
     artifact_id: uuid.UUID | None = None
+    max_hourly_price: Decimal | None = None
+    max_token_price: Decimal | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

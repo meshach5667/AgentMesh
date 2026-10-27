@@ -11,15 +11,16 @@ from app.core.dependencies import get_current_user, is_staff
 from app.core.timeutil import utcnow
 from app.documents.billing import Charge, PricingRule
 from app.documents.user import UserRole
-from app.schemas.billing import BillingSummary, ChargeOut, PricingOut, PricingRuleOut, RefundOut
-from app.services import billing_service, ledger_service, refund_service
+from app.schemas.billing import BillingSummary, ChargeOut, MarketOut, PricingOut, PricingRuleOut, RefundOut
+from app.services import billing_service, ledger_service, node_pricing_service, refund_service
 
 router = APIRouter()
 
 
 @router.get("/pricing", response_model=PricingOut)
 async def pricing(db: Session = Depends(get_db)):
-    """The price list in force (null when none is set: usage is then measured but not charged)."""
+    """The network price list in force: what machines without their own prices charge, and the default price
+    limits for placement (null when none is set)."""
     upcoming = await db.find(PricingRule, {"effective_from": {"$gt": utcnow()}}, sort=[("effective_from", 1)])
     current = await billing_service.active_rule(db)
     return PricingOut(
@@ -31,6 +32,13 @@ async def pricing(db: Session = Depends(get_db)):
         default_platform_fee_rate=settings.DEFAULT_PLATFORM_FEE_RATE,
         max_platform_fee_rate=settings.MAX_PLATFORM_FEE_RATE,
     )
+
+
+@router.get("/market", response_model=MarketOut)
+async def market(db: Session = Depends(get_db)):
+    """Lowest and highest price of each unit across machines that can take work now (providers set their own
+    prices). Aggregates only; no machine is identified."""
+    return await node_pricing_service.market(db)
 
 
 @router.get("/summary", response_model=BillingSummary)

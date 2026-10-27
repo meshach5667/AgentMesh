@@ -1,4 +1,4 @@
-"""Resource-aware node selection and capacity reservation."""
+"""Resource- and price-aware node selection and capacity reservation."""
 
 from collections import Counter
 from dataclasses import dataclass, field
@@ -10,6 +10,7 @@ from app.core.timeutil import utcnow
 from app.documents.node import Node, NodeStatus
 from app.documents.reservation import ResourceReservation
 from app.services.catalog_service import ResourceRequest
+from app.services.node_pricing_service import PriceLimits, Rates, rates_at
 
 # Reasons a node was rejected, reported back to the customer in aggregate (never per node).
 REASON_UNAVAILABLE = "provider_unavailable"  # offline, stale heartbeat, paused, or suspended
@@ -19,6 +20,7 @@ REASON_CAPACITY = "insufficient_capacity"
 REASON_REGION = "region_mismatch"
 REASON_PREVIOUSLY_FAILED = "previously_failed"  # nodes this deployment already failed on
 REASON_COMMUNITY = "community_not_accepted"  # provider has not opted in to unreviewed community models
+REASON_PRICE = "over_price_limit"  # the node charges more than the deployment's price limits
 
 REASON_TEXT = {
     REASON_UNAVAILABLE: "nodes are offline, paused, or not reporting heartbeats",
@@ -28,6 +30,7 @@ REASON_TEXT = {
     REASON_REGION: "nodes are outside the requested region",
     REASON_PREVIOUSLY_FAILED: "nodes already failed this deployment",
     REASON_COMMUNITY: "nodes do not accept community models (providers must opt in)",
+    REASON_PRICE: "nodes charge more than your price limit (raise max_hourly_price or max_token_price)",
 }
 
 
@@ -35,6 +38,7 @@ REASON_TEXT = {
 class Evaluation:
     eligible: list[Node] = field(default_factory=list)
     reasons: Counter = field(default_factory=Counter)
+    rates: dict = field(default_factory=dict)  # node id -> Rates it charges now (None: free)
 
     def explain(self) -> str:
         if not self.reasons:
@@ -64,7 +68,10 @@ def offers_runtime(node: Node, runtime: str) -> bool:
     return any(r.get("name") == runtime and r.get("available") for r in (node.runtimes or []) if isinstance(r, dict))
 
 
-async def evaluate_nodes(db: Session, req: ResourceRequest, exclude: set | None = None) -> Evaluation:
+async def evaluate_nodes(
+    db: Session, req: ResourceRequest, exclude: set | None = None, limits: PriceLimits | None = None
+) -> Evaluation:
+    """Nodes that can take ``req`` within ``limits``, cheapest first."""
     nodes = await db.find(Node, {"mode": {"$ne": None}})
     ev = Evaluation()
     now = utcnow()
@@ -95,14 +102,29 @@ async def evaluate_nodes(db: Session, req: ResourceRequest, exclude: set | None 
             ev.reasons[REASON_CAPACITY] += 1
         else:
             ev.eligible.append(node)
-    # Prefer the node with the most free memory, then reputation. Spreads load across providers.
-    ev.eligible.sort(key=lambda n: (_free(n, "ram_mb"), float(n.reputation_score or 0)), reverse=True)
+    ev.rates = await rates_at(db, [n.id for n in ev.eligible], now)
+    if limits is not None:
+        within = [n for n in ev.eligible if limits.allows(ev.rates[n.id], req.cpu_cores, req.ram_mb, req.vram_mb)]
+        if len(within) < len(ev.eligible):
+            ev.reasons[REASON_PRICE] += len(ev.eligible) - len(within)
+        ev.eligible = within
+
+    # Cheapest first (hourly price of this reservation, then token prices); among equal prices, the node with the
+    # most free memory, then reputation, which spreads load across providers.
+    def rank(n: Node):
+        rates = ev.rates[n.id] or Rates.free()
+        tokens = rates.input_tokens_per_million + rates.output_tokens_per_million
+        hourly = rates.hourly(req.cpu_cores, req.ram_mb, req.vram_mb)
+        return (hourly, tokens, -_free(n, "ram_mb"), -float(n.reputation_score or 0))
+
+    ev.eligible.sort(key=rank)
     return ev
 
 
-async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceRequest) -> bool:
+async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceRequest, rates: Rates | None = None) -> bool:
     """Atomically reserve capacity on one node. The conditional update only succeeds if the node still has
-    room at the moment it executes, so concurrent requests cannot oversubscribe. Does not commit."""
+    room at the moment it executes, so concurrent requests cannot oversubscribe. ``rates`` (what the node charges
+    now) is kept with the reservation as the most the deployment will be billed there. Does not commit."""
     wanted = {"cpu_cores": req.cpu_cores, "ram_mb": req.ram_mb, "disk_mb": req.disk_mb, "vram_mb": req.vram_mb}
     conditions: dict = {
         "_id": node.id,
@@ -127,16 +149,20 @@ async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceReque
             ram_mb=req.ram_mb,
             disk_mb=req.disk_mb,
             vram_mb=req.vram_mb,
+            rates=(rates or Rates.free()).snapshot(),
         )
     )
     return True
 
 
-async def schedule(db: Session, deployment_id, req: ResourceRequest, exclude: set | None = None) -> Node:
-    ev = await evaluate_nodes(db, req, exclude)
+async def schedule(
+    db: Session, deployment_id, req: ResourceRequest, exclude: set | None = None, limits: PriceLimits | None = None
+) -> tuple[Node, Rates | None]:
+    """Reserve capacity on the cheapest eligible node; returns it and the rates it charges."""
+    ev = await evaluate_nodes(db, req, exclude, limits)
     for node in ev.eligible:
-        if await try_reserve(db, node, deployment_id, req):
-            return node
+        if await try_reserve(db, node, deployment_id, req, ev.rates[node.id]):
+            return node, ev.rates[node.id]
         ev.reasons[REASON_CAPACITY] += 1  # lost a race for this node's capacity
     raise NoEligibleNode(ev)
 

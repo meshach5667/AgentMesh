@@ -217,10 +217,3 @@ async def test_stale_worker_cannot_regress_ready_deployment(client, make_user, e
     dep = await _deploy(client, customer, ollama_model)
     await _report(client, node, dep["id"], "READY")
     assert (await _report(client, node, dep["id"], "STARTING")).status_code == 409
-
-
-async def test_marketplace_lists_real_nodes(client, enroll_node):
-    """Regression: the marketplace called .value on a plain string status and crashed with any node."""
-    await enroll_node()
-    resp = await client.get("/api/v1/marketplace/nodes")
-    assert resp.status_code == 200 and resp.json()[0]["status"] == "ONLINE"

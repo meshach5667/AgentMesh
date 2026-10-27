@@ -65,14 +65,15 @@ export default function CustomerGuide() {
           ordered
           items={[
             'Open a model and choose a runtime, or Automatic (tries Ollama, then llama.cpp, then vLLM, and uses the first that fits on a node).',
-            'Set the context window (512 to 8192 tokens) and, optionally, a region or a GPU requirement. The form shows what the scheduler will reserve and the hourly price.',
+            'Set the context window (512 to 8192 tokens) and, optionally, a region or a GPU requirement. The form shows what the scheduler will reserve and the price of the cheapest machine that can take it.',
+            'Optionally set price limits: the most per hour while ready, and the most per million tokens. Leave them empty to use the network prices as your limits.',
             'Read and confirm the trust notice, then press Deploy.',
           ]}
         />
         <P>
           If no node can take it, the form explains why for each runtime, for example &ldquo;runtime not installed on the node&rdquo; or
-          &ldquo;not enough free CPU, memory, disk or GPU memory&rdquo;. Deploying needs enough wallet balance for one hour of the reservation
-          (see <A href="#billing">billing</A>).
+          &ldquo;not enough free CPU, memory, disk or GPU memory&rdquo;, or &ldquo;charges more than your price limit&rdquo;. Deploying needs
+          enough wallet balance for one hour of the reservation at the chosen machine&apos;s price (see <A href="#billing">billing</A>).
         </P>
       </Section>
 
@@ -153,11 +154,13 @@ print(reply.choices[0].message.content)`}
         <List
           items={[
             <>Deployments are <strong>prepaid</strong>. Add funds under <strong>Wallet</strong>; you return to the wallet after checkout and the top-up is credited once Paystack confirms it.</>,
-            'Prices are set by the network operator as a versioned price list: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. The landing page and deploy form show the current list.',
+            'Each machine has its own prices, set by its provider: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. Machines without their own prices charge the network prices set by the operator.',
+            'Your deployment goes to the cheapest machine that fits and is within your price limits; if it later moves after a failure, it only moves to a machine within those limits. Without limits of your own, the network prices are the limit.',
+            'You are never charged more than the prices in force when your deployment was placed on its machine. If the provider lowers them, you pay the lower price from then on; if they raise them, the rise only applies to new deployments. The deployment page shows the price you are paying now.',
             'Every few minutes while a deployment is READY, you are charged for its reserved resources multiplied by READY time, plus its tokens. Downloads, startup and unhealthy time are free.',
             'Each deployment lists its charges, and the wallet lists them all, each split into the platform commission and the share paid to the provider whose machine ran it. Requests that fail are not charged for tokens.',
             <>When your balance runs out, your deployments are stopped with <C>INSUFFICIENT_FUNDS</C>. The balance can dip below zero by at most one billing interval.</>,
-            'If no price list has been published yet, usage is measured but not charged.',
+            'A machine with no prices of its own on a network with no price list is free: usage is measured but not charged.',
             'If an operator refunds a charge, the amount returns to your wallet and appears under Refunds with the reason. Unspent funds from a top-up can be refunded to your card by an operator.',
             <>Transactions lists every ledger entry with filters; <strong>Export CSV</strong> downloads them (up to 10,000 rows).</>,
             'Dashboards may show an item labelled “Sponsored” if the operator enabled sponsorships. It is chosen without using your personal data, and you can dismiss it.',

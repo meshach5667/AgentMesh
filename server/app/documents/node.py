@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import Field
 
 from app.core.timeutil import utcnow
-from app.documents.base import ZERO, Doc, Money, index, unique
+from app.documents.base import Doc, Money, index, unique
 
 
 class NodeStatus(str, enum.Enum):  # noqa: UP042
@@ -86,23 +86,3 @@ class NodeHardware(Doc):
     class Settings(Doc.Settings):
         name = "node_hardware"
         indexes = [unique("node_id", name="uq_node_hardware_node_id")]
-
-
-class PricingMode(str, enum.Enum):  # noqa: UP042
-    PROVIDER_FIXED = "PROVIDER_FIXED"
-    AGENTMESH_RECOMMENDED = "AGENTMESH_RECOMMENDED"
-
-
-class NodePricing(Doc):
-    node_id: uuid.UUID
-    gpu_hour_price: Money | None = ZERO
-    cpu_hour_price: Money | None = ZERO
-    ram_gb_hour_price: Money | None = ZERO
-    storage_gb_month_price: Money | None = ZERO
-    bandwidth_gb_price: Money | None = ZERO
-    pricing_mode: str | None = PricingMode.PROVIDER_FIXED.value
-    currency: str | None = "USD"
-
-    class Settings(Doc.Settings):
-        name = "node_pricing"
-        indexes = [unique("node_id", name="uq_node_pricing_node_id")]

@@ -1,7 +1,7 @@
-import type { Charge, PricingRule } from '@/types';
+import type { Charge, Prices } from '@/types';
 
-/** Same formula as billing_service.hourly_resource_price (decimal strings are parsed as numbers for display). */
-export function hourlyResourcePrice(rule: PricingRule, cpuCores: number, ramMb: number, vramMb: number): number {
+/** Same formula as Rates.hourly on the server (decimal strings are parsed as numbers for display). */
+export function hourlyResourcePrice(rule: Prices, cpuCores: number, ramMb: number, vramMb: number): number {
   return (
     Number(rule.cpu_core_hour) * cpuCores +
     (Number(rule.ram_gb_hour) * ramMb) / 1024 +
@@ -9,7 +9,7 @@ export function hourlyResourcePrice(rule: PricingRule, cpuCores: number, ramMb: 
   );
 }
 
-export function isFree(rule: PricingRule | null | undefined): boolean {
+export function isFree(rule: Prices | null | undefined): boolean {
   if (!rule) return true;
   return [rule.cpu_core_hour, rule.ram_gb_hour, rule.vram_gb_hour, rule.input_tokens_per_million, rule.output_tokens_per_million].every(
     (v) => Number(v) === 0,

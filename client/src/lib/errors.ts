@@ -18,6 +18,7 @@ const REASON_TEXT: Record<string, string> = {
   region_mismatch: 'not in the requested region',
   previously_failed: 'this deployment already failed on the node',
   community_not_accepted: 'the provider has not opted in to community models',
+  over_price_limit: 'charges more than your price limit',
 };
 
 export function reasonText(reason: string): string {

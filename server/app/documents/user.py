@@ -41,6 +41,8 @@ class Provider(Doc):
     user_id: uuid.UUID
     payout_status: str | None = "pending"
     balance: Money | None = ZERO
+    # Prices given to each machine this provider enrolls (strings, keyed by price field); none: network prices.
+    default_prices: dict[str, str] | None = None
     created_at: datetime | None = Field(default_factory=utcnow)
 
     class Settings(Doc.Settings):

@@ -35,6 +35,31 @@ class PricingRule(Doc):
         indexes = [unique("version", name="uq_pricing_rules_version"), index("effective_from")]
 
 
+class NodePrice(Doc):
+    """One immutable version of a node's own price list, set by its provider. The node charges the newest version
+    whose effective_from has passed; a node without one charges the network prices (PricingRule)."""
+
+    node_id: uuid.UUID
+    provider_id: uuid.UUID
+    version: int
+    currency: str
+    cpu_core_hour: Money = ZERO
+    ram_gb_hour: Money = ZERO
+    vram_gb_hour: Money = ZERO
+    input_tokens_per_million: Money = ZERO
+    output_tokens_per_million: Money = ZERO
+    effective_from: datetime
+    created_by: uuid.UUID | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings(Doc.Settings):
+        name = "node_prices"
+        indexes = [
+            unique("node_id", "version", name="uq_node_prices_node_version"),
+            index("node_id", "effective_from"),
+        ]
+
+
 class Charge(Doc):
     """What a deployment was charged for one billing window on one node, priced with one pricing version."""
 
@@ -42,7 +67,11 @@ class Charge(Doc):
     node_id: uuid.UUID | None = None
     customer_wallet_id: uuid.UUID
     provider_wallet_id: uuid.UUID | None = None
-    pricing_rule_id: uuid.UUID
+    # Network price version in force (it sets the commission; null if none was set). node_price_id is the node's own
+    # price version when it had one, and rates the unit prices actually applied.
+    pricing_rule_id: uuid.UUID | None = None
+    node_price_id: uuid.UUID | None = None
+    rates: dict[str, str] | None = None
     period_start: datetime
     period_end: datetime
     # Measured quantities (snapshot): READY time from lifecycle events, reservation from the scheduler,

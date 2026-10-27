@@ -8,13 +8,13 @@ yet been exercised against Paystack's live API.
 
 ## Documentation
 
-The full documentation is in the dashboard at [agent-mesh-ten.vercel.app/docs](https://agent-mesh-ten.vercel.app/docs):
+The full documentation is in the dashboard at [www.agentmeshx.tech/docs](https://www.agentmeshx.tech/docs):
 
-- [Getting started](https://agent-mesh-ten.vercel.app/docs/getting-started): roles, accounts, and what works today
-- [Customer guide](https://agent-mesh-ten.vercel.app/docs/customers): deploy, call, and pay for models
-- [Provider guide](https://agent-mesh-ten.vercel.app/docs/providers): install the worker and manage machines
-- [API reference](https://agent-mesh-ten.vercel.app/docs/api): authentication, deployments, inference, errors
-- [Operators & self-hosting](https://agent-mesh-ten.vercel.app/docs/operators) and [Security & limitations](https://agent-mesh-ten.vercel.app/docs/security)
+- [Getting started](https://www.agentmeshx.tech/docs/getting-started): roles, accounts, and what works today
+- [Customer guide](https://www.agentmeshx.tech/docs/customers): deploy, call, and pay for models
+- [Provider guide](https://www.agentmeshx.tech/docs/providers): install the worker and manage machines
+- [API reference](https://www.agentmeshx.tech/docs/api): authentication, deployments, inference, errors
+- [Operators & self-hosting](https://www.agentmeshx.tech/docs/operators) and [Security & limitations](https://www.agentmeshx.tech/docs/security)
 
 The Markdown files in [docs/](docs/) hold the same material in more depth.
 
@@ -99,14 +99,14 @@ The browser end-to-end test (real control plane, real worker, real model, all th
 
 ## Project status
 
-What works and what is not yet verified is listed in the [getting-started guide](https://agent-mesh-ten.vercel.app/docs/getting-started#status) and the [security & limitations guide](https://agent-mesh-ten.vercel.app/docs/security). Security status: [docs/security](docs/security).
+What works and what is not yet verified is listed in the [getting-started guide](https://www.agentmeshx.tech/docs/getting-started#status) and the [security & limitations guide](https://www.agentmeshx.tech/docs/security). Security status: [docs/security](docs/security).
 
 ## Deployment
 
-- Live dashboard: [https://agent-mesh-ten.vercel.app](https://agent-mesh-ten.vercel.app).
+- Live dashboard: [https://www.agentmeshx.tech](https://www.agentmeshx.tech).
 - Live API: [https://agentmesh-riuz.onrender.com/api/v1](https://agentmesh-riuz.onrender.com/api/v1).
-- Documentation: [https://agent-mesh-ten.vercel.app/docs](https://agent-mesh-ten.vercel.app/docs) (customer, provider, API, operator and security guides).
-- Worker releases: [GitHub Releases](https://github.com/meshach5667/AgentMesh/releases). Pushing a tag `worker-v<version>` that matches `WORKER_VERSION` runs `.github/workflows/worker-release.yml`, which publishes the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`. Providers then install without cloning, from the dashboard's **Add a machine** page. No release has been published yet; see the [operator guide](https://agent-mesh-ten.vercel.app/docs/operators#worker-releases).
+- Documentation: [https://www.agentmeshx.tech/docs](https://www.agentmeshx.tech/docs) (customer, provider, API, operator and security guides).
+- Worker releases: [GitHub Releases](https://github.com/meshach5667/AgentMesh/releases). Pushing a tag `worker-v<version>` that matches `WORKER_VERSION` runs `.github/workflows/worker-release.yml`, which publishes the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`. Providers then install without cloning, from the dashboard's **Add a machine** page. No release has been published yet; see the [operator guide](https://www.agentmeshx.tech/docs/operators#worker-releases).
 - To deploy your own instance, use Vercel for `client/` and any container host for `Dockerfile.server`, or `docker-compose up -d` for the full stack. Set `NEXT_PUBLIC_API_URL` to that instance's API `/api/v1` URL.
   Set the variables in [.env.example](.env.example), including `MONGODB_URL` (for example a MongoDB Atlas connection string).
 

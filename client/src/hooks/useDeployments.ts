@@ -3,6 +3,8 @@ import api from '../lib/api';
 import {
   IN_PROGRESS_STATUSES,
   type Deployment,
+  type DeploymentPricing,
+  type Quote,
   type DeploymentConfig,
   type DeploymentEvent,
   type Runtime,
@@ -48,6 +50,8 @@ export interface CreateDeploymentInput {
   runtime?: Runtime;
   config: DeploymentConfig;
   idempotency_key: string;
+  max_hourly_price?: string;
+  max_token_price?: string;
 }
 
 export const useCreateDeployment = () => {
@@ -76,3 +80,22 @@ function useDeploymentAction(action: 'stop' | 'restart' | 'delete') {
 export const useStopDeployment = () => useDeploymentAction('stop');
 export const useRestartDeployment = () => useDeploymentAction('restart');
 export const useDeleteDeployment = () => useDeploymentAction('delete');
+
+/** Price a deployment before creating it (reserves nothing). */
+export const useQuote = (input: Omit<CreateDeploymentInput, 'idempotency_key'>, enabled = true) =>
+  useQuery({
+    queryKey: ['deployments', 'quote', input],
+    queryFn: async () => (await api.post<Quote>('/deployments/quote', input)).data,
+    enabled,
+    staleTime: 15000,
+    retry: false,
+  });
+
+/** The rates a deployment is billed at now on its machine. */
+export const useDeploymentPricing = (id: string) =>
+  useQuery({
+    queryKey: ['deployments', id, 'pricing'],
+    queryFn: async () => (await api.get<DeploymentPricing>(`/deployments/${id}/pricing`)).data,
+    enabled: !!id,
+    refetchInterval: 60000,
+  });

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import type { EnrollmentToken, Node } from '../types';
+import type { DefaultPrices, EnrollmentToken, Node, NodePricing, Prices } from '../types';
 
 export const useNodes = () =>
   useQuery({
@@ -49,3 +49,34 @@ export const useSetAcceptsCommunity = () =>
 
 export const useRevokeNode = () =>
   useNodeMutation(async (id: string) => (await api.post<Node>(`/nodes/${id}/revoke`)).data);
+
+/** What a machine charges, its price history and the network prices for comparison. */
+export const useNodePricing = (id: string) =>
+  useQuery({
+    queryKey: ['nodes', id, 'pricing'],
+    queryFn: async () => (await api.get<NodePricing>(`/nodes/${id}/pricing`)).data,
+    enabled: !!id,
+  });
+
+export const useSetNodePricing = (id: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (prices: Prices) => (await api.put<NodePricing>(`/nodes/${id}/pricing`, prices)).data,
+    onSuccess: (data) => qc.setQueryData(['nodes', id, 'pricing'], data),
+  });
+};
+
+export const useDefaultPrices = () =>
+  useQuery({
+    queryKey: ['nodes', 'default-prices'],
+    queryFn: async () => (await api.get<DefaultPrices>('/nodes/pricing/default')).data,
+  });
+
+export const useSetDefaultPrices = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: Prices & { apply_to_existing: boolean }) =>
+      (await api.put<DefaultPrices>('/nodes/pricing/default', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['nodes'] }),
+  });
+};

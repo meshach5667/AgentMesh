@@ -17,6 +17,8 @@ class ResourceReservation(Doc):
     ram_mb: int = 0
     disk_mb: int = 0
     vram_mb: int = 0
+    # Unit prices in force when the deployment was placed here; it is never billed above them on this node.
+    rates: dict[str, str] | None = None
     status: str = "ACTIVE"  # ACTIVE | RELEASED
     created_at: datetime = Field(default_factory=utcnow)
     released_at: datetime | None = None

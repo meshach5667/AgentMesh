@@ -20,7 +20,7 @@ from app.documents.deployment import DeploymentStatus as S
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeStatus
 from app.documents.worker import CommandType
-from app.services import audit_service
+from app.services import audit_service, node_pricing_service
 from app.services import deployment_lifecycle as lifecycle
 from app.services.catalog_service import (
     DeploymentConfig,
@@ -132,8 +132,11 @@ async def fail_or_reschedule(
             excluded.add(old_node)
         req = await requirements_for(db, dep)
         source = worker_source(await artifact_for(db, dep))
+        limits = await node_pricing_service.limits_for(
+            db, dep.max_hourly_price, dep.max_token_price, req.cpu_cores, req.ram_mb, req.vram_mb
+        )
         try:
-            node = await schedule(db, dep.id, req, exclude=excluded)
+            node, _ = await schedule(db, dep.id, req, exclude=excluded, limits=limits)
         except NoEligibleNode as exc:
             message = f"{message}. No other node could take it: {exc.evaluation.explain()}"
         else:

@@ -199,6 +199,19 @@ export default function ProviderGuide() {
         />
       </Section>
 
+      <Section id="pricing" title="Set your prices">
+        <List
+          items={[
+            'Each machine has its own price list: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. Set it on the machine\'s page under Pricing; the form shows what you keep after the platform commission.',
+            'Under Settings, set default prices that every machine you enroll starts with, and optionally publish them on all your active machines at once.',
+            'A machine without its own prices charges the network prices set by the operator.',
+            'Customers are placed on the cheapest machine that fits. Unless a customer raises their price limit, they are only placed on machines at or below the network prices, so pricing above them means fewer placements.',
+            'New prices apply at once to new placements. Deployments already on your machine never pay more than the prices they were placed at: a cut reaches them immediately, a rise only applies to deployments placed after it.',
+            'Every price change is kept as a version with its time, and each charge records the prices it was rated at.',
+          ]}
+        />
+      </Section>
+
       <Section id="earnings" title="Earnings and payouts">
         <Callout tone="warning" title="Paystack test mode">Payouts run through Paystack in test mode. No real money is transferred yet.</Callout>
         <List

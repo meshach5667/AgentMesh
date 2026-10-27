@@ -47,8 +47,8 @@ export default function OperatorPricingPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Pricing"
-        description={`Prices are versioned and immutable. A new version applies from its start time; earlier usage keeps the price it was rated at. Currency: ${currency ?? ''}.`}
+        title="Network prices"
+        description={`Providers set each machine's own prices. These network prices apply to machines without their own, are the default price limit for placement (customers are only placed above them if they raise their limit), and set the platform commission. Versions are immutable: a new one applies from its start time and earlier usage keeps the price it was rated at. Currency: ${currency ?? ''}.`}
       />
       <Card>
         <CardHeader>

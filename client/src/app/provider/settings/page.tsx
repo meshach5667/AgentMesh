@@ -3,11 +3,13 @@
 import { AccountCard } from '@/components/account/AccountCard';
 import Link from 'next/link';
 import { PageHeader } from '@/components/common/Notices';
+import { DefaultPricesCard } from '@/components/pricing/DefaultPricesCard';
 
 export default function ProviderSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Settings" />
+      <DefaultPricesCard />
       <AccountCard />
       <p className="text-sm text-muted-foreground">
         Your payout bank account is managed on the{' '}

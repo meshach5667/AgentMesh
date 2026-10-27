@@ -37,7 +37,7 @@ from app.schemas.worker import (
     HeartbeatResponse,
     SigningKey,
 )
-from app.services import audit_service, placement_service, release_service
+from app.services import audit_service, node_pricing_service, placement_service, release_service
 from app.services import deployment_lifecycle as lifecycle
 from app.services.commands import cancel_undelivered, enqueue_command  # noqa: F401  (re-exported)
 from app.services.scheduler_service import release_reservation
@@ -132,6 +132,7 @@ async def enroll(db: Session, req: EnrollRequest) -> dict:
     _apply_capabilities(node, hw, req.allocation, req.runtimes)
     db.add(node)
     await db.flush()
+    await node_pricing_service.apply_provider_default(db, node)
     gpu = hw.gpus[0] if hw.gpus else None
     db.add(
         NodeHardware(

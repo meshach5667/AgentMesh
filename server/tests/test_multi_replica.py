@@ -86,6 +86,29 @@ async def test_request_is_routed_to_the_replica_holding_the_worker(replicas):
     assert "r1" not in b._connections[NODE].pending  # owner cleaned up after the end frame
 
 
+@pytest.mark.parametrize("chunks", [1, 20])
+async def test_frames_keep_their_order_when_publishes_overtake_each_other(replicas, chunks):
+    """Regression: each frame was published by its own task; on real Redis (a connection pool) a short reply's
+    response_end could overtake its only chunk, so non-streaming completions came back empty across replicas."""
+    import random
+
+    a, b, _ = replicas
+    publish = b.coordinator.publish
+
+    async def jittered_publish(replica_id, message):
+        await asyncio.sleep(random.uniform(0, 0.01))
+        return await publish(replica_id, message)
+
+    b.coordinator.publish = jittered_publish
+    worker = Worker(chunks=chunks)
+    await b.register(worker.conn)
+    for n in range(5):
+        _, _, queue = await a.open_request(NODE, {"type": "request", "id": f"order-{chunks}-{n}"})
+        frames = await _collect(queue)
+        assert [f["type"] for f in frames] == ["response_start", *["chunk"] * chunks, "response_end"]
+        assert [f["data"] for f in frames[1:-1]] == [f"{i}\n" for i in range(chunks)]
+
+
 async def test_cancel_crosses_replicas(replicas):
     a, b, _ = replicas
     worker = Worker(chunks=100, delay=0.01)
