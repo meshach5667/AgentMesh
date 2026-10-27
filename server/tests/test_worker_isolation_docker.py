@@ -60,32 +60,40 @@ def sandbox():
 
 
 def test_no_docker_socket_or_host_filesystem(sandbox):
-    code, out, _ = sandbox("ls /var/run/docker.sock; ls /host /root/.ssh 2>&1; echo done")
-    assert "No such file" in out and "docker.sock" not in out.split("No such file")[0]
+    paths = "/var/run/docker.sock /run/docker.sock /host /root/.ssh /etc/agentmesh /home"
+    code, out, _ = sandbox(f'for p in {paths}; do [ -e "$p" ] && echo "PRESENT:$p"; done; echo checked')
+    assert "checked" in out and "PRESENT:" not in out, out
 
 
 def test_root_filesystem_is_read_only_and_tmpfs_is_capped(sandbox):
-    code, out, _ = sandbox("touch /evil 2>&1; dd if=/dev/zero of=/tmp/big bs=1M count=32 2>&1; echo end")
-    assert "Read-only file system" in out
-    assert "No space left on device" in out
+    code, out, _ = sandbox(
+        "touch /evil 2>/dev/null; echo touch=$?; "
+        "dd if=/dev/zero of=/tmp/big bs=1048576 count=32 2>/dev/null; echo dd=$?; "
+        "echo size=$(wc -c < /tmp/big)"
+    )
+    assert "touch=0" not in out and "dd=0" not in out, out
+    size = int(out.split("size=")[1].split()[0])
+    assert size <= 16 * 1024 * 1024, out  # the tmpfs holds 16 MiB, never the 32 MiB written
 
 
 def test_no_capabilities_and_no_privilege_escalation(sandbox):
     code, out, _ = sandbox("grep -E 'CapEff|NoNewPrivs' /proc/self/status")
-    assert "CapEff:\t0000000000000000" in out and "NoNewPrivs:\t1" in out
+    assert "CapEff:\t0000000000000000" in out and "NoNewPrivs:\t1" in out, out
 
 
 @pytest.mark.parametrize("target", ["169.254.169.254", "10.0.0.1", "192.168.1.1", "172.16.0.1", "1.1.1.1"])
 def test_no_route_to_metadata_private_ranges_or_internet(sandbox, target):
-    code, out, _ = sandbox(f"wget -q -T 3 -O- http://{target}/ 2>&1; echo exit=$?")
-    assert "exit=0" not in out
+    code, out, _ = sandbox(f"wget -q -T 3 -O /dev/null http://{target}/ 2>/dev/null; echo exit=$?")
+    assert "exit=" in out and "exit=0" not in out, out
 
 
 def test_memory_limit_kills_the_workload(sandbox):
-    code, _, state = sandbox("head -c 200m /dev/zero | tail > /dev/null", ram_mb=32)
-    assert state["OOMKilled"] is True or code == 137
+    # dd becomes PID 1 and allocates a 200 MiB buffer in a 32 MiB container: the kernel must kill it.
+    code, out, state = sandbox("exec dd if=/dev/zero of=/dev/null bs=209715200 count=1", ram_mb=32)
+    assert state["OOMKilled"] is True or code == 137, (code, state, out)
 
 
 def test_pid_limit_stops_fork_bombs(sandbox):
-    code, out, _ = sandbox("for i in $(seq 1 700); do sleep 5 & done 2>&1 | tail -1; echo spawned")
-    assert "Resource temporarily unavailable" in out or "can't fork" in out
+    # 700 background processes against a limit of 512: forking must fail before the loop ends.
+    code, out, _ = sandbox("for i in $(seq 1 700); do sleep 30 & done; echo all-forked")
+    assert "all-forked" not in out or "can't fork" in out or "Resource temporarily unavailable" in out, out
