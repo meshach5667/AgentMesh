@@ -62,11 +62,7 @@ jobs:
           pip install -r server/requirements-lock.txt -r server/requirements-dev.txt
 
       - name: Start MongoDB (single-node replica set)
-        run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.adminCommand({ping: 1})" >/dev/null 2>&1; do sleep 1; done'
-          docker exec mongo mongosh --quiet --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})"
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done'
+        run: server/ops/ci_mongo.sh
 
       - name: Run pytest
         env:
@@ -145,25 +141,18 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Start MongoDB (single-node replica set)
-        run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.adminCommand({ping: 1})" >/dev/null 2>&1; do sleep 1; done'
-          docker exec mongo mongosh --quiet --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})"
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done'
+        run: server/ops/ci_mongo.sh
 
       - name: Backup and restore round trip
         env:
           MONGODB_URL: mongodb://localhost:27017/?replicaSet=rs0
         run: |
           cd server
-          # Archives travel over stdin/stdout, so the tool containers need no volume.
           mkdir -p /tmp/agentmesh-backups
-          M="docker run --rm -i --network host mongo:8.0"
-          $M mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh').pricing_rules.insertOne({version: 99, currency: 'NGN'})"
-          MONGODUMP="$M mongodump" ops/backup_db.sh /tmp/agentmesh-backups
-          MONGODB_DB=agentmesh_restore MONGORESTORE="$M mongorestore" MONGOSH="$M mongosh" \
-            ops/restore_db.sh /tmp/agentmesh-backups/agentmesh-*.archive.gz
-          test "$($M mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh_restore').pricing_rules.findOne().version")" = "99"
+          mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh').pricing_rules.insertOne({version: 99, currency: 'NGN'})"
+          ops/backup_db.sh /tmp/agentmesh-backups
+          MONGODB_DB=agentmesh_restore ops/restore_db.sh /tmp/agentmesh-backups/agentmesh-*.archive.gz
+          test "$(mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh_restore').pricing_rules.findOne().version")" = "99"
 
   e2e-stub-runtime:
     # Full worker -> control plane -> gateway flow on MongoDB. The model runtime is a
@@ -180,11 +169,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r server/requirements-lock.txt
       - name: Start MongoDB (single-node replica set)
-        run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.adminCommand({ping: 1})" >/dev/null 2>&1; do sleep 1; done'
-          docker exec mongo mongosh --quiet --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})"
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done'
+        run: server/ops/ci_mongo.sh
       - name: Start control plane
         run: cd server && (uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../cp.log 2>&1 &) && sleep 5 && curl -sf http://127.0.0.1:8000/health
       - name: End-to-end (stub runtime)
@@ -218,11 +203,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r server/requirements-lock.txt
       - name: Start MongoDB (single-node replica set)
-        run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.adminCommand({ping: 1})" >/dev/null 2>&1; do sleep 1; done'
-          docker exec mongo mongosh --quiet --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})"
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done'
+        run: server/ops/ci_mongo.sh
       - name: Start two replicas
         run: |
           cd server
@@ -253,11 +234,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r server/requirements-lock.txt
       - name: Start MongoDB (single-node replica set)
-        run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.adminCommand({ping: 1})" >/dev/null 2>&1; do sleep 1; done'
-          docker exec mongo mongosh --quiet --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})"
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done'
+        run: server/ops/ci_mongo.sh
       - name: Build wheel
         run: cd server && python scripts/build_worker_wheel.py dist
       - name: Start control plane
@@ -323,11 +300,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r server/requirements-lock.txt
       - name: Start MongoDB (single-node replica set)
-        run: |
-          docker run -d --name mongo -p 27017:27017 mongo:8.0 --replSet rs0 --bind_ip_all
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.adminCommand({ping: 1})" >/dev/null 2>&1; do sleep 1; done'
-          docker exec mongo mongosh --quiet --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})"
-          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done'
+        run: server/ops/ci_mongo.sh
       - name: Install pinned Ollama
         run: curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=$OLLAMA_VERSION sh && sudo systemctl stop ollama || true
       - name: Start control plane

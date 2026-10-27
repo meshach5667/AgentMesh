@@ -216,3 +216,34 @@ async def test_catalog_seed_adds_missing_entries_once_and_keeps_operator_changes
     assert await seed_catalog(mdb) == 0
     mdb.expire_all()
     assert (await mdb.get(Model, model_id("smollm2:135m"))).is_approved is False
+
+
+async def test_replicas_starting_at_once_on_an_empty_database_all_start(mongodb_url):
+    """Several API replicas run init_mongo concurrently on first deploy; none may fail on a collection another one
+    created a moment earlier (CollectionInvalid) or on its indexes."""
+    import asyncio
+
+    from app.documents import Model
+    from app.services.catalog_seed import catalog_models, seed_catalog
+
+    db_name = f"race_{uuid.uuid4().hex[:8]}"
+    clients = await asyncio.gather(*(mongo_core.init_mongo(mongodb_url, db_name) for _ in range(4)))
+    try:
+        names = set(await clients[0][db_name].list_collection_names())
+        assert {d.get_settings().name for d in DOCUMENTS} <= names
+
+        # Each replica is its own process with one client; here they share one, seeding in separate transactions.
+        clients.append(await mongo_core.init_mongo(mongodb_url, db_name))
+
+        async def seed() -> int:
+            async with mongo_core.mongo_session() as s:
+                return await seed_catalog(s)
+
+        added = await asyncio.gather(*(seed() for _ in range(4)))  # every replica seeds the catalog at startup
+        async with mongo_core.mongo_session() as s:
+            assert await s.count(Model) == len(catalog_models())
+        assert sum(added) >= len(catalog_models())  # someone inserted them; nobody crashed
+    finally:
+        await clients[0].drop_database(db_name)
+        for c in clients:
+            await c.close()

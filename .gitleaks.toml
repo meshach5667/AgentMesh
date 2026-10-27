@@ -4,9 +4,13 @@
 useDefault = true
 
 [allowlist]
-description = "Fake Paystack/Stripe-style keys in tests and docs"
+description = "Fake keys and non-secrets in tests and docs"
 regexes = [
   '''^sk_test_fake0+$''',
   '''^sk_test_abc123abc123$''',
   '''^sk_live_1234567890abcdef$''',
+  # Marker string the log-canary tests (server/tests/test_privacy.py) assert never reaches the logs.
+  '''^CANARY-SECRET-e51d0a$''',
+  # A type annotation (key: Ed25519PrivateKey | None) in server/tests/test_node_agent/test_phase4.py, not a key.
+  '''^Ed25519PrivateKey$''',
 ]

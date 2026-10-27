@@ -7,7 +7,9 @@ never undone. Ids are deterministic, so every installation names the same model 
 import uuid
 from datetime import datetime
 
-from app.core.database import Session
+from pymongo.errors import DuplicateKeyError
+
+from app.core.database import Session, retry_transient
 from app.core.timeutil import utcnow
 from app.documents.model import Model, ModelArtifact
 
@@ -246,8 +248,23 @@ def catalog_artifacts(models: list[Model]) -> list[ModelArtifact]:
     return out
 
 
+SEED_ATTEMPTS = 5
+
+
 async def seed_catalog(db: Session) -> int:
-    """Insert catalog models and artifacts that do not exist yet. Commits. Returns how many were added."""
+    """Insert catalog models and artifacts that do not exist yet. Commits. Returns how many were added.
+
+    Safe when several replicas start at once: a transaction aborted by a concurrent one, or an insert that lost the
+    race to another replica's identical entry, is retried, and the retry finds the entries already present."""
+    for _ in range(SEED_ATTEMPTS - 1):
+        try:
+            return await retry_transient(db, lambda: _seed_once(db))
+        except DuplicateKeyError:
+            await db.rollback()
+    return await retry_transient(db, lambda: _seed_once(db))
+
+
+async def _seed_once(db: Session) -> int:
     wanted = catalog_models()
     have = set(await db.distinct(Model, "_id", {"_id": {"$in": [m.id for m in wanted]}}))
     new_models = [m for m in wanted if m.id not in have]

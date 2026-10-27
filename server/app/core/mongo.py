@@ -18,7 +18,7 @@ from beanie import SortDirection, init_beanie
 from beanie.odm.utils.dump import get_dict
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.errors import PyMongoError
+from pymongo.errors import CollectionInvalid, PyMongoError
 
 from app.core.config import settings
 from app.core.timeutil import utcnow
@@ -45,7 +45,10 @@ async def init_mongo(url: str | None = None, db_name: str | None = None) -> Asyn
     # Create every collection up front instead of implicitly on first insert (which may be inside a transaction).
     existing = set(await database.list_collection_names())
     for name in {doc.Settings.name for doc in DOCUMENTS} - existing:  # type: ignore[attr-defined]
-        await database.create_collection(name)
+        try:
+            await database.create_collection(name)
+        except CollectionInvalid:
+            pass  # another replica starting at the same moment created it first
     await init_beanie(database=database, document_models=DOCUMENTS)
     _client = client
     return client

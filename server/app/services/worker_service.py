@@ -211,6 +211,19 @@ async def authenticate_worker(
     return node
 
 
+async def _ensure_still_active(node: Node) -> None:
+    """Re-check a node authenticated at the start of a long request. Revocation deletes its credential and ends its
+    sessions; quarantine and suspension change its status. Raises the same errors authentication would."""
+    from app.core.database import session_scope
+
+    async with session_scope() as db:
+        fresh = await db.get(Node, node.id)
+    if fresh is None or fresh.status == NodeStatus.REVOKED or fresh.api_key_hash != node.api_key_hash:
+        raise HTTPException(status_code=401, detail="Node credential revoked")
+    if fresh.status in BLOCKED_NODE_STATUSES:
+        raise HTTPException(status_code=403, detail="Node suspended")
+
+
 async def still_authorized(node_id: uuid.UUID, credential_hash: str | None) -> str | None:
     """Why a node authenticated earlier must drop its connection, or None if it may keep it. Reasons: "revoked"
     (gone, revoked, or its credential replaced), "blocked" (quarantined or suspended), "session_expired" (renew
@@ -436,9 +449,9 @@ async def poll_commands(db: Session, node: Node, max_commands: int, wait_seconds
     deadline = asyncio.get_running_loop().time() + wait_seconds
     first = True
     while True:
-        # A node revoked or quarantined during the wait must not lease work at the end of it.
-        if not first and not await still_authorized(node.id, node.api_key_hash):
-            raise HTTPException(status_code=401, detail="Node credential revoked")
+        # A node revoked, quarantined or re-keyed during the wait must not lease work at the end of it.
+        if not first:
+            await _ensure_still_active(node)
         first = False
         leased = await _lease_once(db, node, max_commands)
         if leased or asyncio.get_running_loop().time() >= deadline:

@@ -188,6 +188,62 @@ async def test_a_long_poll_cannot_lease_work_after_revocation(client, db, enroll
     assert leased == []
 
 
+@pytest.mark.parametrize("auth", ["enrollment_credential", "node_session"])
+async def test_a_healthy_long_poll_waits_and_picks_up_work_that_arrives(client, db, enroll_node, auth):
+    """Regression: an inverted re-check refused every long poll after its first second, so idle workers thought
+    they had been revoked and shut down."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from node_agent.identity import get_public_key_pem
+    from tests.test_node_sessions import _session, _with
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    node = await enroll_node(public_key=get_public_key_pem(key.public_key()))
+    node["private_key"] = key
+    headers = node["headers"]
+    if auth == "node_session":
+        headers = _with(node, (await _session(client, node)).json()["session_token"])
+    node_id = uuid.UUID(node["node_id"])
+
+    started = time.monotonic()
+    idle = await client.post(
+        "/api/v1/worker/commands/poll", json={"max_commands": 5, "wait_seconds": 2}, headers=headers
+    )
+    assert idle.status_code == 200, idle.text
+    assert idle.json()["commands"] == [] and time.monotonic() - started >= 1.5
+
+    async def queue_work():
+        await asyncio.sleep(1.2)
+        db.add(NodeCommand(node_id=node_id, type="STOP", payload={}))
+        await db.commit()
+
+    background = asyncio.create_task(queue_work())
+    busy = await client.post(
+        "/api/v1/worker/commands/poll", json={"max_commands": 5, "wait_seconds": 4}, headers=headers
+    )
+    await background
+    assert busy.status_code == 200 and len(busy.json()["commands"]) == 1
+
+
+async def test_a_long_poll_is_cut_off_by_quarantine(client, db, enroll_node):
+    node = await enroll_node()
+    node_id = uuid.UUID(node["node_id"])
+
+    async def quarantine():
+        await asyncio.sleep(1.2)
+        await db.update_one(Node, {"_id": node_id}, {"$set": {"status": "QUARANTINED"}})
+        db.add(NodeCommand(node_id=node_id, type="STOP", payload={}))
+        await db.commit()
+
+    background = asyncio.create_task(quarantine())
+    poll = await client.post(
+        "/api/v1/worker/commands/poll", json={"max_commands": 5, "wait_seconds": 4}, headers=node["headers"]
+    )
+    await background
+    assert poll.status_code == 403
+    assert await db.find(NodeCommand, {"node_id": node_id, "status": "LEASED"}) == []
+
+
 @pytest.mark.parametrize(
     "headers",
     [
