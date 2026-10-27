@@ -37,7 +37,7 @@ from app.documents.deployment import DeploymentStatus as DepStatus
 from app.documents.model import Model, ModelArtifact
 from app.documents.user import Customer, User
 from app.services import audit_service, deployment_lifecycle
-from app.services.ai import agent, inference_queue, tools
+from app.services.ai import agent, gemini, inference_queue, tools
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan
 from app.services.catalog_service import artifact_problem, load_artifacts
 from app.services.ledger_service import money
@@ -634,11 +634,9 @@ async def advance(run_id: uuid.UUID, max_steps: int = 6) -> str | None:
                 await STEPS[status](ctx)
                 await db.commit()
                 pending = run.pending_request_id
-                if pending is not None and settings.AI_PROVIDER == "gemini" and pending not in answered:
-                    # The control plane is its own inference service: answer now instead of waiting a pass. Each
-                    # request is tried once here; a retry after a failure waits for the background pass.
-                    from app.services.ai import gemini
-
+                if pending is not None and pending not in answered:
+                    # Answer the model call now instead of waiting a background pass. Each call is tried once here;
+                    # a retry after a failure waits for the background pass.
                     answered.add(pending)
                     if await gemini.answer_now(pending):
                         continue
@@ -661,10 +659,7 @@ async def run_due(limit: int = 100) -> int:
     async with session_scope() as db:
         await inference_queue.expire(db)
         await db.commit()
-    if settings.AI_PROVIDER == "gemini":
-        from app.services.ai import gemini
-
-        await gemini.process_pending()  # retries and requests left over from earlier passes
+    await gemini.process_pending()  # retries and model calls left over from earlier passes
     async with session_scope() as db:
         ids = [
             r.id

@@ -29,6 +29,7 @@ jobs:
           pip install pip-audit==2.9.0
           pip-audit -r server/requirements-lock.txt
           pip-audit -r server/requirements-worker-lock.txt
+          pip-audit -r server/requirements-dev.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -50,7 +51,7 @@ jobs:
       - name: Bandit
         run: |
           pip install bandit==1.9.4
-          cd server && bandit -r app node_agent ai_adapter -ll
+          cd server && bandit -r app node_agent -ll
 
   secret-scanning:
     runs-on: ubuntu-latest

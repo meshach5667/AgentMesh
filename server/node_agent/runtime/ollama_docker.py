@@ -11,7 +11,7 @@ created as ``internal`` (no route out). The container joins the egress network o
 model and is disconnected before it serves any request. In loopback mode (worker on the host) Docker cannot
 isolate egress this way, and the runtime reports ``egress_restricted=False``.
 
-Containers do not protect the workload from the host administrator; see docs/IMPLEMENTATION_PLAN.md.
+Containers do not protect the workload from the host administrator; see docs/security/THREAT_MODEL.md.
 """
 
 import asyncio

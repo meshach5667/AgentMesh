@@ -12,7 +12,6 @@ Authorization is enforced on the server for every request: through `get_current_
 | Operator, admin (staff) | As above **plus TOTP**: staff routes refuse sessions that have not completed MFA while `STAFF_MFA_REQUIRED` | Same |
 | API key (`am_sk_…`) | Bearer key, stored as SHA-256 | Until revoked or its expiry; optional binding to one deployment; scope `inference` |
 | Node (worker) | Node session token (1 h) obtained by signing a challenge with the node's private key plus the enrollment credential; or the enrollment credential alone while `ALLOW_LEGACY_NODE_CREDENTIALS` | Session 1 h; ended by revocation or quarantine |
-| AI inference adapter | `AI_INFERENCE_TOKEN` (32+ chars in production) | Until rotated |
 | Paystack | HMAC-SHA512 webhook signature | Per request |
 | Metrics scraper | `METRICS_TOKEN` | Until rotated |
 

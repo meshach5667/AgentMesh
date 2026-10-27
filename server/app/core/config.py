@@ -133,10 +133,8 @@ class Settings(BaseSettings):
     # Bearer token for GET /metrics. Empty disables the endpoint.
     METRICS_TOKEN: str = ""
 
-    # AI deployment agent: which model answers its planning and recovery questions.
-    #   "gemini": the control plane calls the Gemini API directly (GEMINI_API_KEY). Default.
-    #   "ollama": an internal machine running Ollama pulls requests through the adapter endpoints (below).
-    AI_PROVIDER: str = "gemini"
+    # AI deployment agent: the Gemini API answers its planning and recovery questions. Empty GEMINI_API_KEY disables
+    # the agent (its endpoints answer 503 ai_not_configured).
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
@@ -144,22 +142,13 @@ class Settings(BaseSettings):
     # Gemini 2.5 "thinking" tokens count against AI_MAX_TOKENS; 0 turns thinking off (Flash models). Set empty
     # (unset in .env is fine) to use the model's default, e.g. for Pro models, which cannot turn it off.
     GEMINI_THINKING_BUDGET: int | None = 0
-
-    # AI deployment agent (provider "ollama"). Inference runs on an internal machine (e.g. a laptop running
-    # Ollama) whose adapter connects outbound and pulls requests from a queue here; the control plane never
-    # connects to Ollama. Empty AI_INFERENCE_TOKEN disables the adapter endpoints.
-    AI_INFERENCE_TOKEN: str = ""
-    # The model every adapter must serve. Requests are never answered by a different model.
-    OLLAMA_MODEL: str = "gemma4:e2b-it-qat"
-    AI_REQUEST_TIMEOUT: int = 180  # lease on one inference request; an unanswered lease is retried
-    AI_MAX_CONCURRENT_REQUESTS: int = 1  # requests leased at once across all inference machines
-    AI_MAX_ATTEMPTS: int = 2  # deliveries per inference request
-    AI_QUEUE_MAX_LENGTH: int = 20  # waiting + in-flight inference requests; new AI work is refused beyond this
-    AI_QUEUE_TTL_SECONDS: int = 3600  # queued requests expire (e.g. the inference machine stayed offline)
-    AI_NUM_CTX: int = 4096
+    AI_REQUEST_TIMEOUT: int = 180  # lease on one model call; an unanswered lease is retried
+    AI_MAX_CONCURRENT_REQUESTS: int = 1  # model calls in flight at once
+    AI_MAX_ATTEMPTS: int = 2  # deliveries per model call (timeouts, 429 and 5xx are retried)
+    AI_QUEUE_MAX_LENGTH: int = 20  # waiting + in-flight model calls; new AI work is refused beyond this
+    AI_QUEUE_TTL_SECONDS: int = 3600  # model calls not answered by then expire without a decision
     AI_MAX_TOKENS: int = 512
     AI_RATE_LIMIT_PER_MINUTE: int = 3  # new AI deployment requests per user
-    AI_NODE_TIMEOUT_SECONDS: int = 45  # no adapter heartbeat for this long -> AI service unavailable
     AI_MAX_AGENT_STEPS: int = 6  # model turns per planning or diagnosis conversation
     AI_MAX_TOOL_CALLS: int = 8  # tool calls per AI deployment run, all purposes
     # Platform ceilings on what a customer may authorize for autonomous deployments.
@@ -243,8 +232,6 @@ class Settings(BaseSettings):
                 raise ValueError("CORS_ORIGINS must include at least one frontend origin outside dev/test")
             if not self.PUBLIC_BASE_URL.startswith("https://"):
                 raise ValueError("PUBLIC_BASE_URL must use https outside dev/test (API keys travel in headers)")
-            if self.AI_INFERENCE_TOKEN and len(self.AI_INFERENCE_TOKEN) < 32:
-                raise ValueError("AI_INFERENCE_TOKEN must be a random value of at least 32 characters outside dev/test")
         return self
 
     @model_validator(mode="after")
@@ -292,15 +279,8 @@ class Settings(BaseSettings):
                 raise ValueError("DATA_ENCRYPTION_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)")
         return self
 
-    @property
-    def ai_model(self) -> str:
-        """The model every AI request is answered by (requests are never answered by another)."""
-        return self.GEMINI_MODEL if self.AI_PROVIDER == "gemini" else self.OLLAMA_MODEL
-
     @model_validator(mode="after")
     def _check_ai(self) -> "Settings":
-        if self.AI_PROVIDER not in ("gemini", "ollama"):
-            raise ValueError("AI_PROVIDER must be 'gemini' or 'ollama'")
         if not self.GEMINI_BASE_URL.startswith("https://") and not self.is_dev:
             raise ValueError("GEMINI_BASE_URL must use https outside dev/test")
         if not 5 <= self.GEMINI_TIMEOUT_SECONDS <= self.AI_REQUEST_TIMEOUT:
@@ -309,8 +289,8 @@ class Settings(BaseSettings):
             raise ValueError("AI_MAX_CONCURRENT_REQUESTS must be between 1 and 16")
         if not 1 <= self.AI_QUEUE_MAX_LENGTH <= 1000:
             raise ValueError("AI_QUEUE_MAX_LENGTH must be between 1 and 1000")
-        if not 1024 <= self.AI_NUM_CTX <= 32768 or not 64 <= self.AI_MAX_TOKENS <= 4096:
-            raise ValueError("AI_NUM_CTX must be 1024-32768 and AI_MAX_TOKENS 64-4096")
+        if not 64 <= self.AI_MAX_TOKENS <= 8192:
+            raise ValueError("AI_MAX_TOKENS must be between 64 and 8192")
         if self.AI_REQUEST_TIMEOUT < 10 or self.AI_MAX_ATTEMPTS < 1:
             raise ValueError("AI_REQUEST_TIMEOUT must be at least 10 seconds and AI_MAX_ATTEMPTS at least 1")
         return self

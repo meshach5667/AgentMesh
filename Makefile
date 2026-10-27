@@ -54,7 +54,7 @@ dev-restart:
 
 # Server
 server-install:
-	cd server && pip install -r requirements.txt
+	cd server && pip install -r requirements-lock.txt -r requirements-dev.txt
 
 server-run:
 	cd server && uvicorn app.main:app --reload
@@ -66,7 +66,7 @@ server-format:
 	cd server && ruff format .
 
 server-typecheck:
-	cd server && mypy app/ --ignore-missing-imports
+	cd server && mypy app
 
 server-test:
 	cd server && pytest tests/ -v
@@ -76,7 +76,7 @@ server-test-cov:
 
 # Node Agent
 agent-install:
-	cd server && pip install -r requirements-worker.txt
+	cd server && pip install -r requirements-worker-lock.txt
 
 agent-run:
 	cd server && python -m node_agent run

@@ -26,11 +26,6 @@ class NodeStatus(str, enum.Enum):  # noqa: UP042
 BLOCKED_NODE_STATUSES = frozenset({NodeStatus.SUSPENDED.value, NodeStatus.QUARANTINED.value, NodeStatus.REVOKED.value})
 
 
-class NodeMode(str, enum.Enum):  # noqa: UP042
-    DOCKER = "docker"  # Docker-based worker managing workload containers
-    AGENT = "agent"  # installable agent managing dedicated runtime processes
-
-
 class Node(Doc):
     owner_id: uuid.UUID
     name: str | None = None

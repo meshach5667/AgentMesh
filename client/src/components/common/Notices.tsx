@@ -41,7 +41,7 @@ export function Notice({
   );
 }
 
-/** The trust model, stated the same way everywhere it appears (see docs/IMPLEMENTATION_PLAN.md). */
+/** The trust model, stated the same way everywhere it appears (see docs/security/THREAT_MODEL.md). */
 export function TrustNotice({ className }: { className?: string }) {
   return (
     <Notice tone="warning" title="Your requests run on a computer owned by an independent provider" className={className}>
@@ -53,14 +53,6 @@ export function TrustNotice({ className }: { className?: string }) {
 }
 
 /** Marks a feature that exists in the product plan but is not implemented. */
-export function PlannedNotice({ feature, children }: { feature: string; children?: React.ReactNode }) {
-  return (
-    <Notice tone="info" title={`${feature}: not available yet`}>
-      {children ?? 'This is planned and not implemented. Nothing on this page simulates it.'}
-    </Notice>
-  );
-}
-
 export function ErrorState({ message, retry }: { message: string; retry?: () => void }) {
   return (
     <Notice tone="danger" title="Could not load this page">

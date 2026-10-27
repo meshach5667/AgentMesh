@@ -99,14 +99,14 @@ The browser end-to-end test (real control plane, real worker, real model, all th
 
 ## Project status
 
-What works, what is missing, and the phased plan are tracked in [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+What works and what is not yet verified is listed in the [getting-started guide](https://agent-mesh-ten.vercel.app/docs/getting-started#status) and the [security & limitations guide](https://agent-mesh-ten.vercel.app/docs/security). Security status: [docs/security](docs/security).
 
 ## Deployment
 
 - Live dashboard: [https://agent-mesh-ten.vercel.app](https://agent-mesh-ten.vercel.app).
 - Live API: [https://agentmesh-riuz.onrender.com/api/v1](https://agentmesh-riuz.onrender.com/api/v1).
 - Documentation: [https://agent-mesh-ten.vercel.app/docs](https://agent-mesh-ten.vercel.app/docs) (customer, provider, API, operator and security guides).
-- Worker releases: [GitHub Releases](https://github.com/meshach5667/AgentMeshh/releases). Pushing a tag `worker-v<version>` that matches `WORKER_VERSION` runs `.github/workflows/worker-release.yml`, which publishes the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`. Providers then install without cloning, from the dashboard's **Add a machine** page. No release has been published yet; see [docs/WORKER.md](docs/WORKER.md#publishing-a-release-maintainers).
+- Worker releases: [GitHub Releases](https://github.com/meshach5667/AgentMeshh/releases). Pushing a tag `worker-v<version>` that matches `WORKER_VERSION` runs `.github/workflows/worker-release.yml`, which publishes the wheel, `install.sh`, `uninstall.sh` and `SHA256SUMS`. Providers then install without cloning, from the dashboard's **Add a machine** page. No release has been published yet; see the [operator guide](https://agent-mesh-ten.vercel.app/docs/operators#worker-releases).
 - To deploy your own instance, use Vercel for `client/` and any container host for `Dockerfile.server`, or `docker-compose up -d` for the full stack. Set `NEXT_PUBLIC_API_URL` to that instance's API `/api/v1` URL.
   Set the variables in [.env.example](.env.example), including `MONGODB_URL` (for example a MongoDB Atlas connection string).
 

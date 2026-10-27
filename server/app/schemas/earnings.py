@@ -12,14 +12,3 @@ class EarningsSummary(BaseModel):
     available_balance: Decimal
     total_deployments: int
     active_deployments: int
-
-
-class EarningsHistoryItem(BaseModel):
-    date: str
-    earnings: Decimal
-    deployment_count: int
-
-
-class EarningsHistoryResponse(BaseModel):
-    history: list[EarningsHistoryItem]
-    total: Decimal

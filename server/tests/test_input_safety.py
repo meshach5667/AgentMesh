@@ -68,12 +68,12 @@ async def test_operator_injection_in_login_and_queries_is_inert(client, db, make
 
 
 async def test_unhandled_errors_return_a_generic_500(client, make_user, monkeypatch):
-    from app.services import usage_service
+    from app.services import reporting_service
 
     async def boom(*args, **kwargs):
         raise RuntimeError("mongodb://admin:SECRET@internal-db:27017 exploded")
 
-    monkeypatch.setattr(usage_service, "summary", boom, raising=False)
+    monkeypatch.setattr(reporting_service, "usage_summary", boom)
     _, customer = await make_user("customer")
     from httpx import ASGITransport, AsyncClient
 
@@ -81,8 +81,7 @@ async def test_unhandled_errors_return_a_generic_500(client, make_user, monkeypa
 
     async with AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://t") as c:
         resp = await c.get("/api/v1/usage/summary", headers=customer)
-    if resp.status_code == 500:
-        assert resp.text == "Internal Server Error"
+    assert resp.status_code == 500 and resp.text == "Internal Server Error"
     _no_leak(resp)
 
 

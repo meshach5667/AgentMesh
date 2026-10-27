@@ -9,8 +9,7 @@ Differences from Ollama and llama.cpp:
 * Only the OpenAI-compatible routes are exposed. Readiness: /health 200, then a real test generation.
 * vLLM's usage telemetry is disabled.
 
-STATUS: implemented and unit-tested with fakes only. It has not run on real GPU hardware (see
-docs/IMPLEMENTATION_PLAN.md).
+STATUS: implemented and unit-tested with fakes only. It has not run on real GPU hardware.
 """
 
 import asyncio

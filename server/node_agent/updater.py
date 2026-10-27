@@ -18,7 +18,6 @@ import hashlib
 import json
 import logging
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -178,10 +177,3 @@ async def run(settings: WorkerSettings, check_only: bool = False) -> int:
         return 1
     finally:
         await client.close()
-
-
-def cache_current_wheel(settings: WorkerSettings, wheel: Path) -> None:
-    """Keep the installed wheel so a failed update can roll back to it (called by the installer)."""
-    releases = settings.data_path / "releases"
-    releases.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(wheel, releases / wheel.name)

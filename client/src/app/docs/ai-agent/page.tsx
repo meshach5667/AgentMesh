@@ -1,42 +1,35 @@
 import type { Metadata } from 'next';
 import { C, Callout, Code, DocPage, List, P, Section, Table } from '@/components/docs/DocsContent';
-import { API_URL } from '@/lib/config';
 
 export const metadata: Metadata = { title: 'AI deployment agent' };
 
-const CONTROL_PLANE = API_URL.replace(/\/api\/v1\/?$/, '');
 
 export default function AiAgentGuide() {
   return (
     <DocPage href="/docs/ai-agent">
       <Callout tone="info" title="Availability">
-        AI Deploy is available whenever its model is reachable: the Gemini API by default, or an internal Ollama machine.{' '}
-        <C>/customer/ai</C> shows its live status. While the model cannot answer, requests wait in the queue and running deployments
-        are not affected.
+        AI Deploy is available when the Gemini API is configured and answering. <C>/customer/ai</C> shows its live status. While
+        Gemini cannot answer, requests wait in the queue and running deployments are not affected.
       </Callout>
       <Section id="how-it-works" title="How it works">
         <P>
           Customers describe a deployment in plain language (<C>/customer/ai</C>) and authorize limits. A language model turns the
-          request into a structured plan and diagnoses failures: Google&apos;s Gemini API by default (<C>AI_PROVIDER=gemini</C>), or a
-          Gemma 4 model served by Ollama on an internal machine (<C>AI_PROVIDER=ollama</C>). Everything with consequences runs in the
-          control plane&apos;s own code: catalog checks, limits, prices, wallet balance, node selection, capacity reservation,
+          request into a structured plan and diagnoses failures, using Google&apos;s Gemini API. Everything with consequences runs in
+          the control plane&apos;s own code: catalog checks, limits, prices, wallet balance, node selection, capacity reservation,
           submission, verification, and stopping.
         </P>
         <Table
           head={['Component', 'Runs on', 'Responsible for']}
           rows={[
-            ['Control plane', 'The API (e.g. Render)', 'Auth, scheduling, reservations, billing, workflow state, audit, limit enforcement; with Gemini, it also calls the model'],
-            ['Gemini API (default)', 'Google', 'Answers planning and recovery questions with JSON'],
-            ['Inference machine (alternative)', 'An internal computer, e.g. an HP 15 laptop', 'Ollama + Gemma 4 + the adapter (python -m ai_adapter)'],
+            ['Control plane', 'The API (e.g. Render)', 'Auth, scheduling, reservations, billing, workflow state, audit, limit enforcement, and the calls to Gemini'],
+            ['Gemini API', 'Google', 'Answers planning and recovery questions with JSON'],
             ['Compute nodes', 'Provider machines', 'Customer model deployments, through the existing worker'],
           ]}
         />
         <P>
-          Model calls are queued either way, so retries, expiry and cancellation behave the same. With Gemini, the control plane answers
-          each queued call itself, right away, with <C>models/GEMINI_MODEL:generateContent</C>; the API key travels in a header and
-          never in a URL or log. With Ollama, the adapter connects <strong>outbound</strong> over HTTPS, reports health, and leases
-          queued model calls from the control plane. The inference machine needs no public address and no open port, and Ollama stays bound to <C>127.0.0.1</C>. The
-          inference machine is never a provider node: it is not enrolled as a worker and never runs customer workloads.
+          Every model call is queued first, so retries, expiry and cancellation do not depend on one HTTP call. The control plane
+          answers each queued call right away with <C>models/GEMINI_MODEL:generateContent</C>; the API key travels in a header and
+          never in a URL or log.
         </P>
         <Callout tone="info" title="What the model decides, and what it does not">
           The model chooses among catalog models and recovery actions and writes explanations. It never decides authorization, GPU
@@ -45,12 +38,12 @@ export default function AiAgentGuide() {
         </Callout>
       </Section>
 
-      <Section id="gemini" title="Use the Gemini API (default)">
+      <Section id="gemini" title="Configure Gemini">
         <List
           ordered
           items={[
             <>Create an API key in Google AI Studio (<C>https://aistudio.google.com/apikey</C>).</>,
-            <>Set it on the API as <C>GEMINI_API_KEY</C> (in the hosting platform&apos;s secret settings, never in the repository). <C>AI_PROVIDER=gemini</C> is the default.</>,
+            <>Set it on the API as <C>GEMINI_API_KEY</C> (in the hosting platform&apos;s secret settings, never in the repository). Without it the agent is off and its endpoints answer <C>ai_not_configured</C>.</>,
             <>Optionally choose the model with <C>GEMINI_MODEL</C> (default <C>gemini-2.5-flash</C>). <C>GEMINI_THINKING_BUDGET=0</C> (default) turns off thinking tokens, which would otherwise use up <C>AI_MAX_TOKENS</C>; unset it for models that cannot turn thinking off, such as Pro models.</>,
             <>Check <C>GET /api/v1/ai/health</C>: <C>available</C> with a key, <C>not_configured</C> without one, and <C>degraded</C> for a few minutes after Gemini fails to answer.</>,
           ]}
@@ -71,156 +64,13 @@ export default function AiAgentGuide() {
         </Callout>
       </Section>
 
-      <Section id="hardware" title="Alternative: check the inference machine">
-        <P>The remaining setup sections apply only with <C>AI_PROVIDER=ollama</C>.</P>
-        <P>Nothing is assumed about the machine. On the inference machine, run:</P>
-        <Code
-          code={[
-            'lscpu | grep -E "Model name|^CPU\\(s\\)|Flags" | cut -c1-120   # CPU and AVX2/AVX-512 support',
-            'free -h                                                     # total and available memory',
-            'df -h /usr/share/ollama 2>/dev/null || df -h ~                # disk for models',
-            'lspci | grep -iE "vga|3d"                                     # GPUs (an Intel iGPU is not used by default)',
-            'cd server && python -m ai_adapter doctor                      # all of the above, plus Ollama and a recommendation',
-          ].join('\n')}
-        />
-        <P>
-          <C>doctor</C> changes nothing. It reports CPU flags, memory, free disk where Ollama stores models, whether an NVIDIA or
-          ROCm GPU device exists (installed tools alone do not count), whether Ollama answers, and whether the configured model is
-          pulled.
-        </P>
-        <P>Reference machine (measured 2026-10-21):</P>
-        <Table
-          head={['Item', 'HP Laptop 15-dy1xxx']}
-          rows={[
-            ['CPU', 'Intel Core i5-1035G1, 4 cores / 8 threads, AVX2 and AVX-512'],
-            ['Memory', '15 GB total; often only 1-2 GB available with a browser and editor open'],
-            ['GPU', 'Intel Iris Plus (integrated). No NVIDIA/AMD device: CPU inference'],
-            ['Disk', '~390 GB free'],
-            ['Ollama', '0.40.6, system service on 127.0.0.1:11434'],
-          ]}
-        />
-      </Section>
-
-      <Section id="model" title="Choose a Gemma 4 variant">
-        <P>
-          Download sizes below come from the Ollama registry manifests (checked 2026-10-21). Memory figures are estimates (weights
-          plus about 1.5 GB for a 4,096-token context and the runtime).
-        </P>
-        <Table
-          head={['Tag', 'Download', 'Memory needed (est.)', 'Use']}
-          rows={[
-            [<C key="a">gemma4:e2b-it-qat</C>, '4.3 GB', '~6 GB', 'Default. CPU-only laptops with 12-16 GB RAM'],
-            [<C key="b">gemma4:e4b-it-qat</C>, '6.1 GB', '~8 GB', 'Machines with 16 GB+ to spare or a GPU; about half the speed on CPU'],
-          ]}
-        />
-        <P>
-          Larger variants (12b, 26b, 31b) are not supported by the adapter on laptops. Set the same tag in <C>OLLAMA_MODEL</C> on the
-          control plane and the adapter: the control plane rejects answers from any other model, and the adapter refuses jobs for
-          another model, so there is never a silent fallback.
-        </P>
-      </Section>
-
-      <Section id="install" title="Install Ollama and the model">
-        <List
-          ordered
-          items={[
-            <>Install Ollama (Linux): <C>curl -fsSL https://ollama.com/install.sh | sh</C>. This creates the <C>ollama</C> systemd service.</>,
-            <>
-              Optional but recommended: apply <C>server/packaging/ollama-agentmesh.conf</C> as a drop-in. It pins Ollama to loopback,
-              keeps one model loaded with one request at a time, and caps it at 6 of 8 threads and 8 GB of RAM.
-            </>,
-            <>Set up the adapter environment (a Python 3.11+ venv in <C>server/</C> with <C>pip install -r requirements-worker.txt</C>).</>,
-            <>
-              Pull the model through the adapter, which checks disk space and RAM first: <C>python -m ai_adapter pull</C> shows what it
-              would do; <C>python -m ai_adapter pull --yes</C> downloads.
-            </>,
-            <>
-              Test real inference: <C>python -m ai_adapter check</C> runs one small structured (JSON-schema) generation and prints the
-              latency. It fails if the installed Ollama cannot run the model.
-            </>,
-          ]}
-        />
-        <Code
-          title="Install the drop-in"
-          code={[
-            'sudo mkdir -p /etc/systemd/system/ollama.service.d',
-            'sudo cp server/packaging/ollama-agentmesh.conf /etc/systemd/system/ollama.service.d/agentmesh.conf',
-            'sudo systemctl daemon-reload && sudo systemctl restart ollama',
-          ].join('\n')}
-        />
-      </Section>
-
-      <Section id="connect" title="Connect it to AgentMesh">
-        <List
-          ordered
-          items={[
-            <>Generate a token: <C>openssl rand -hex 32</C>.</>,
-            <>
-              Control plane (e.g. Render environment): set <C>AI_INFERENCE_TOKEN</C> to it and <C>OLLAMA_MODEL</C> to the tag. Without
-              a token the adapter endpoints are disabled and customers see “not configured”.
-            </>,
-            <>
-              Inference machine: copy <C>server/ai_adapter/ai-adapter.env.example</C> to <C>~/.config/agentmesh/ai-adapter.env</C>,
-              fill in the token, and <C>chmod 600</C> it.
-            </>,
-          ]}
-        />
-        <Table
-          head={['Adapter variable', 'Default', 'Meaning']}
-          rows={[
-            [<C key="1">AGENTMESH_CONTROL_PLANE_URL</C>, CONTROL_PLANE, 'https required (except localhost)'],
-            [<C key="2">AI_INFERENCE_TOKEN</C>, '—', 'Shared secret; must match the control plane'],
-            [<C key="3">AI_INFERENCE_NODE_ID</C>, 'hp15', 'Name of this machine in health reports'],
-            [<C key="4">OLLAMA_BASE_URL</C>, 'http://127.0.0.1:11434', 'Loopback only unless ALLOW_REMOTE_OLLAMA=true'],
-            [<C key="5">OLLAMA_MODEL</C>, 'gemma4:e2b-it-qat', 'Must equal the control plane setting'],
-            [<C key="6">AI_REQUEST_TIMEOUT</C>, '180', 'Seconds per model call'],
-            [<C key="7">AI_MAX_CONCURRENT_REQUESTS</C>, '1', 'Model calls at once on this machine (max 4)'],
-            [<><C>AI_NUM_CTX</C>, <C>AI_MAX_TOKENS</C></>, '4096, 512', 'Context and output caps (the adapter clamps requests to them)'],
-            [<C key="9">AI_MIN_AVAILABLE_MEMORY_MB</C>, '1024', 'Stop taking work below this much free memory'],
-            [<C key="10">AI_MAX_LOAD_PER_CPU</C>, '1.5', 'Stop taking work above this load average per CPU'],
-          ]}
-        />
-        <P>
-          Control-plane limits (<C>server/app/core/config.py</C>): <C>AI_QUEUE_MAX_LENGTH</C> (20), <C>AI_QUEUE_TTL_SECONDS</C>{' '}
-          (3600), <C>AI_MAX_ATTEMPTS</C> (2), <C>AI_RATE_LIMIT_PER_MINUTE</C> (3 per user), <C>AI_MAX_AGENT_STEPS</C> (6),{' '}
-          <C>AI_MAX_TOOL_CALLS</C> (8), <C>AI_MAX_DEPLOYMENT_HOURS</C> (168), <C>AI_MAX_RECOVERY_ATTEMPTS</C> (3).
-        </P>
-      </Section>
-
-      <Section id="systemd" title="Run it at startup">
-        <Code
-          code={[
-            'mkdir -p ~/.config/systemd/user',
-            'cp server/packaging/agentmesh-ai-adapter.service ~/.config/systemd/user/',
-            '# edit WorkingDirectory/ExecStart if the repository is not at ~/AgentMesh',
-            'systemctl --user daemon-reload',
-            'systemctl --user enable --now agentmesh-ai-adapter',
-            'loginctl enable-linger "$USER"   # keep running while logged out',
-            'journalctl --user -u agentmesh-ai-adapter -f',
-          ].join('\n')}
-        />
-      </Section>
-
-      <Section id="monitoring" title="Monitor CPU and memory">
+      <Section id="offline" title="When Gemini is unavailable">
         <List
           items={[
-            <>Every heartbeat reports CPU %, load per CPU, and available memory; operators see them in <C>GET /api/v1/ai/health</C>. Customers only see available / busy / offline and the queue length.</>,
-            <>On the machine: <C>ollama ps</C> (loaded model and its memory), <C>systemctl status ollama</C>, <C>top</C> or <C>htop</C>.</>,
-            <>When memory or CPU is short, the adapter stops leasing work and reports why; requests wait in the queue. It never restarts Ollama.</>,
-            <>Before the model is loaded, the adapter requires room for the weights plus 1.5 GB; once loaded (kept for 30 minutes), only the configured reserve.</>,
-          ]}
-        />
-      </Section>
-
-      <Section id="offline" title="Restarts and disconnections">
-        <P>The inference machine is a personal computer; it will be off or offline sometimes. When it is:</P>
-        <List
-          items={[
-            <>After <C>AI_NODE_TIMEOUT_SECONDS</C> (45 s) without a heartbeat the AI service shows as offline. Nothing is sent to it.</>,
             'The control plane, database, billing, and every running customer deployment keep working. Deployment state lives in the database, not in the model conversation.',
-            'New AI requests are accepted and queued (up to AI_QUEUE_MAX_LENGTH). A request not answered within AI_QUEUE_TTL_SECONDS fails with “No AI decision was made”; nothing is deployed.',
+            'A failed call (timeout, 429 or 5xx) is queued again and retried on the next background pass, up to AI_MAX_ATTEMPTS; the AI service shows as degraded meanwhile.',
+            'New AI requests are accepted and queued (up to AI_QUEUE_MAX_LENGTH). A call not answered within AI_QUEUE_TTL_SECONDS fails with “No AI decision was made”; nothing is deployed.',
             'Deterministic steps continue: verification, duration and spend limits, stopping and cancellation all work without the model.',
-            'When the machine reconnects, the adapter heartbeats, leases the queued requests, and runs continue where they stopped. A model call that was in progress is re-queued once its lease expires (bounded by AI_MAX_ATTEMPTS).',
           ]}
         />
       </Section>
@@ -246,30 +96,20 @@ export default function AiAgentGuide() {
 
       <Section id="testing" title="Tests">
         <Code
-          code={[
-            'cd server',
-            'pytest tests/test_ai_gemini.py                              # Gemini provider against a fake Gemini API',
-            'pytest tests/test_ai_agent.py tests/test_ai_adapter.py     # scripted model answers, no Ollama needed',
-            '',
-            '# Optional: real structured generation against a local Ollama that already has the model',
-            'AGENTMESH_TEST_OLLAMA_URL=http://127.0.0.1:11434 \\',
-            'AGENTMESH_TEST_OLLAMA_MODEL=gemma4:e2b-it-qat \\',
-            '  pytest tests/test_ai_adapter.py -k real_ollama',
-          ].join('\n')}
+          code={['cd server', 'pytest tests/test_ai_agent.py tests/test_ai_gemini.py     # against a fake Gemini API'].join('\n')}
         />
         <P>
-          The tests never pull models, never create paid deployments (no price is configured unless a test sets one), and never use
-          GPUs. The real-Ollama test is skipped unless both variables are set and the model is already present.
+          The tests never call Google, never create paid deployments (no price is configured unless a test sets one), and never use
+          GPUs. The fake Gemini checks every request the way the real API requires (key in the header, alternating turns, JSON
+          responses).
         </P>
       </Section>
 
       <Section id="not-verified" title="Not yet verified">
         <List
           items={[
-            'The Gemini provider has been tested against a fake that mirrors the documented generateContent API, not against Google itself; the first real call happens once GEMINI_API_KEY is set.',
-            'Gemma 4 has not been pulled or run on the reference HP 15, so its latency, memory use, and the quality of its JSON plans there are unmeasured. Run python -m ai_adapter check after pulling.',
-            'Ollama 0.40.6 support for the gemma4 tags is assumed from the registry listing; check confirms it.',
-            'The memory figures for each variant are estimates.',
+            'The Gemini integration has been tested against a fake that mirrors the documented generateContent API, not against Google itself; the first real call happens once GEMINI_API_KEY is set.',
+            'The quality of Gemini’s plans for this catalog has not been measured.',
             'The end-to-end flow was tested with scripted model answers and a simulated worker tunnel, not with a real provider node running a model.',
           ]}
         />

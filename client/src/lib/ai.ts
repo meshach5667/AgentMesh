@@ -57,7 +57,6 @@ export const AI_STATUS_HELP: Record<AiRunStatus, string> = {
 export const AI_SERVICE_TEXT: Record<AiServiceStatus, string> = {
   available: 'AI agent online',
   degraded: 'AI agent busy',
-  unavailable: 'AI agent offline',
   not_configured: 'AI agent not configured',
 };
 

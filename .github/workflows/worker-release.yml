@@ -65,7 +65,7 @@ jobs:
 
           Install it from the provider dashboard (Add a machine), which fills in the control-plane URL and a
           one-time enrollment token. Verify downloads with \`SHA256SUMS\` before running \`install.sh\`.
-          See docs/WORKER.md for details.
+          See https://agent-mesh-ten.vercel.app/docs/providers for details.
           EOF
           gh release create "$GITHUB_REF_NAME" release/* \
             --title "AgentMesh worker $VERSION" --notes-file notes.md --verify-tag

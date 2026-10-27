@@ -1,8 +1,8 @@
-"""Gemini API as the AI deployment agent's model (AI_PROVIDER=gemini).
+"""The Gemini API as the AI deployment agent's model.
 
-Model calls still go through the inference queue (app.services.ai.inference_queue), so retries, expiry,
-cancellation and the "answered only by the configured model" rule work exactly as with an Ollama machine. Here the
-control plane itself answers queued requests by calling ``models/{GEMINI_MODEL}:generateContent``:
+Model calls go through the queue (app.services.ai.inference_queue), so retries, expiry, cancellation and the
+"answered only by the configured model" rule do not depend on one HTTP call. The control plane answers queued requests
+by calling ``models/{GEMINI_MODEL}:generateContent``:
 
 * right after a run asks (``answer_now``), so a planning conversation does not wait for the background loop;
 * from the background monitor (``process_pending``), which picks up retries and anything left over.
@@ -29,7 +29,9 @@ from app.services.ai import inference_queue
 
 logger = logging.getLogger(__name__)
 
-PROVIDER_ID = "gemini"  # recorded as the "node" that answered a request
+PROVIDER_PREFIX = (
+    "gemini"  # leases are recorded as "gemini:<batch id>", so late answers to a re-leased call are dropped
+)
 _transport: httpx.AsyncBaseTransport | None = None
 
 
@@ -152,7 +154,7 @@ async def generate(messages: list[dict], schema: dict) -> Reply:
         raise GeminiError("BAD_JSON", "Gemini returned a non-JSON response", retryable=True) from None
 
 
-async def _answer(request: Any) -> None:
+async def _answer(request: Any, lease_id: str) -> None:
     """Call Gemini for one leased request and record the outcome."""
     started = time.monotonic()
     payload = request.payload or {}
@@ -183,7 +185,7 @@ async def _answer(request: Any) -> None:
     last.at = time.time()
     async with session_scope() as db:
         await inference_queue.complete(
-            db, PROVIDER_ID, request.id, latency_ms=int((time.monotonic() - started) * 1000), **fields
+            db, lease_id, request.id, latency_ms=int((time.monotonic() - started) * 1000), **fields
         )
         await db.commit()
 
@@ -191,11 +193,12 @@ async def _answer(request: Any) -> None:
 async def process_pending(only: uuid.UUID | None = None) -> int:
     """Lease queued requests (all, or just ``only``) within AI_MAX_CONCURRENT_REQUESTS and answer them
     concurrently. Returns how many were answered (successfully or not)."""
-    if settings.AI_PROVIDER != "gemini" or not settings.GEMINI_API_KEY:
+    if not settings.GEMINI_API_KEY:
         return 0
+    lease_id = f"{PROVIDER_PREFIX}:{uuid.uuid4().hex[:12]}"
     async with session_scope() as db:
-        leased = await inference_queue.lease_for_provider(db, PROVIDER_ID, settings.AI_MAX_CONCURRENT_REQUESTS, only)
-    await asyncio.gather(*(_answer(r) for r in leased))
+        leased = await inference_queue.lease_for_provider(db, lease_id, settings.AI_MAX_CONCURRENT_REQUESTS, only)
+    await asyncio.gather(*(_answer(r, lease_id) for r in leased))
     return len(leased)
 
 

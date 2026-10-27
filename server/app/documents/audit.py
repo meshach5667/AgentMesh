@@ -20,13 +20,3 @@ class AuditLog(Doc):
     class Settings(Doc.Settings):
         name = "audit_logs"
         indexes = [index("created_at"), index("user_id")]
-
-
-class Event(Doc):
-    type: str | None = None
-    source: str | None = None
-    data: Any = None
-    created_at: datetime | None = Field(default_factory=utcnow)
-
-    class Settings(Doc.Settings):
-        name = "events"

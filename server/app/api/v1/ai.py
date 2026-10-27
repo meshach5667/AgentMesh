@@ -6,43 +6,31 @@ Customers:
     GET  /ai/deployments/{id}          progress, plan, estimated and actual cost, verified endpoint
     POST /ai/deployments/{id}/cancel   stop the run and any deployment it created
     GET  /ai/deployments/{id}/events   run history
-    GET  /ai/health                    whether the AI service is available (no infrastructure details)
+    DELETE /ai/deployments/{id}        delete a finished run and everything stored for it
+    GET  /ai/health                    whether the AI service is available
 
-Internal inference machines (bearer AI_INFERENCE_TOKEN, X-AgentMesh-Inference-Node: <AI_INFERENCE_NODE_ID>):
-    POST /ai/inference/heartbeat
-    POST /ai/inference/lease
-    POST /ai/inference/requests/{id}/result
+The agent's model calls are answered by the Gemini API (app.services.ai.gemini).
 """
 
-import asyncio
-import hmac
-import re
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.core.config import settings
 from app.core.database import Session, get_db
-from app.core.dependencies import get_current_user, is_staff, require_roles
-from app.core.ids import parse_uuid
+from app.core.dependencies import get_current_user, require_roles
 from app.core.ratelimit import limiters
-from app.documents.ai import AiInferenceNode, AiRun, AiRunEvent
+from app.documents.ai import AiRun, AiRunEvent
 from app.documents.user import Customer, User, UserRole
 from app.schemas.ai import (
     AiDeploymentCreate,
     AiHealthOut,
     AiRunEventOut,
     AiRunOut,
-    InferenceHeartbeat,
-    InferenceJob,
-    InferenceLeaseRequest,
-    InferenceResult,
 )
 from app.services.ai import inference_queue, workflow
 
 router = APIRouter()
-
-NODE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 async def _advance_quietly(run_id: uuid.UUID) -> None:
@@ -123,118 +111,6 @@ async def ai_deployment_events(run_id: str, db: Session = Depends(get_db), user:
 @router.get("/health", response_model=AiHealthOut)
 async def ai_health(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     h = await inference_queue.health(db)
-    nodes = None
-    if is_staff(user):
-        nodes = [
-            {
-                "id": n.id,
-                "last_seen": n.last_seen,
-                "fresh": inference_queue.node_is_fresh(n),
-                "model": n.model,
-                "ollama_version": n.ollama_version,
-                "ollama_ok": n.ollama_ok,
-                "model_ready": n.model_ready,
-                "accepting": n.accepting,
-                "reason": n.reason,
-                "in_flight": n.in_flight,
-                "metrics": n.metrics,
-            }
-            for n in h.nodes
-        ]
     return AiHealthOut(
-        status=h.status, available=h.available, model=h.model, queue_depth=h.queue_depth, message=h.message, nodes=nodes
+        status=h.status, available=h.available, model=h.model, queue_depth=h.queue_depth, message=h.message
     )
-
-
-# --- Inference machines --------------------------------------------------------------------------------
-
-
-async def inference_node(
-    request: Request,
-    db: Session = Depends(get_db),
-    node_id: str | None = Header(None, alias="X-AgentMesh-Inference-Node"),
-) -> str:
-    """Authenticate an inference machine. Disabled entirely unless AI_INFERENCE_TOKEN is set."""
-    expected = settings.AI_INFERENCE_TOKEN
-    auth = request.headers.get("authorization", "")
-    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-    if not expected or not token or not hmac.compare_digest(token.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="Invalid inference credentials")
-    if not node_id or not NODE_ID_RE.fullmatch(node_id):
-        raise HTTPException(status_code=400, detail="X-AgentMesh-Inference-Node must be a simple identifier")
-    return node_id
-
-
-@router.post("/inference/heartbeat")
-async def inference_heartbeat(
-    body: InferenceHeartbeat, db: Session = Depends(get_db), node_id: str = Depends(inference_node)
-):
-    report = body.model_dump()
-    metrics = body.metrics.model_dump() if body.metrics else {}
-    report["metrics"] = {k: v for k, v in metrics.items() if v is not None}
-    node = await inference_queue.heartbeat(db, node_id, report)
-    return {
-        "accepted": node.accepting,
-        "expected_model": settings.OLLAMA_MODEL,
-        "reason": node.reason,
-        "provider": settings.AI_PROVIDER,
-        "heartbeat_interval_seconds": max(5, settings.AI_NODE_TIMEOUT_SECONDS // 3),
-    }
-
-
-@router.post("/inference/lease", response_model=list[InferenceJob])
-async def inference_lease(
-    body: InferenceLeaseRequest, db: Session = Depends(get_db), node_id: str = Depends(inference_node)
-):
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + body.wait_seconds
-    while True:
-        node = await db.get(AiInferenceNode, node_id)
-        if node is None:
-            raise HTTPException(status_code=409, detail="Send a heartbeat first")
-        await db.refresh(node)
-        leased = await inference_queue.lease(db, node, body.max_requests)
-        if leased or loop.time() >= deadline:
-            break
-        await asyncio.sleep(1.0)
-    return [
-        InferenceJob(
-            id=r.id,
-            model=r.model,
-            messages=(r.payload or {}).get("messages", []),
-            format=(r.payload or {}).get("format"),
-            options=(r.payload or {}).get("options", {}),
-            timeout_seconds=settings.AI_REQUEST_TIMEOUT,
-        )
-        for r in leased
-    ]
-
-
-@router.post("/inference/requests/{request_id}/result")
-async def inference_result(
-    request_id: str,
-    body: InferenceResult,
-    background: BackgroundTasks,
-    db: Session = Depends(get_db),
-    node_id: str = Depends(inference_node),
-):
-    req = await inference_queue.complete(
-        db,
-        node_id,
-        parse_uuid(request_id, "Inference request"),
-        content=body.content,
-        error_code=body.error_code,
-        error=body.error,
-        retryable=body.retryable,
-        latency_ms=body.latency_ms,
-        prompt_tokens=body.prompt_tokens,
-        output_tokens=body.output_tokens,
-        model=body.model,
-    )
-    if req is None:
-        await db.rollback()
-        return {"accepted": False}
-    await db.commit()
-    if req.run_id is not None and req.status in ("COMPLETED", "FAILED"):
-        background.add_task(_advance_quietly, req.run_id)
-    return {"accepted": True, "status": req.status}

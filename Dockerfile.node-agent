@@ -1,6 +1,6 @@
 # AgentMesh Docker worker. Manages Ollama workload containers through the host Docker daemon.
 # The worker itself runs as an unprivileged user with a read-only root filesystem; it needs the Docker
-# socket (see docs/WORKER.md for what that implies). Workload containers never receive the socket.
+# socket, which is root-equivalent on the host (see docs/security/PERMISSIONS.md). Workload containers never receive it.
 # Base image pinned by digest (python:3.12-slim, resolved 26 October 2026); Dependabot proposes updates.
 FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 

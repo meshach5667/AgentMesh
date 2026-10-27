@@ -29,20 +29,3 @@ class UsageRecordResponse(BaseModel):
     token_source: str | None = None
     response_bytes: int | None = None
     model_config = {"from_attributes": True}
-
-
-class UsageCreateRequest(BaseModel):
-    deployment_id: uuid.UUID
-    gpu_seconds: float = 0
-    cpu_seconds: float = 0
-    storage_usage: float = 0
-    bandwidth_usage: float = 0
-    period_start: datetime
-    period_end: datetime
-
-
-class UsageSummaryResponse(BaseModel):
-    total_gpu_hours: float
-    total_cpu_hours: float
-    total_cost: Decimal
-    record_count: int

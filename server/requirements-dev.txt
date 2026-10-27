@@ -1,0 +1,8 @@
+# Test, lint and type-check tools, exact versions as used in CI. Not installed in production images.
+#   pip install -r requirements-lock.txt -r requirements-dev.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+fakeredis[lua]==2.40.0
+ruff==0.16.7
+mypy==2.4.0

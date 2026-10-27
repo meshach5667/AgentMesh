@@ -1,7 +1,8 @@
-"""AI deployment agent: inference queue and adapter protocol, policy, tools, workflow, and API.
+"""AI deployment agent: model-call queue, policy, tools, workflow, and API.
 
-Model answers are scripted (no real inference); see tests/test_ai_adapter.py for the adapter itself and the
-optional real-Ollama integration test.
+Model answers come from a fake Gemini API (tests/ai_support.py). Here calls wait in the queue until a test answers them
+with ``model_turn``, so each step of a conversation can be checked; tests/test_ai_gemini.py covers answering them
+immediately and the Gemini client itself.
 """
 
 import asyncio
@@ -15,24 +16,29 @@ import pytest
 from app.core.config import settings
 from app.core.database import session_scope
 from app.core.timeutil import utcnow
-from app.documents import AiInferenceNode, AiInferenceRequest, AiRun, AiRunEvent, Charge, Deployment, PricingRule
-from app.services.ai import agent, inference_queue, tools, workflow
+from app.documents import AiInferenceRequest, AiRun, AiRunEvent, Charge, Deployment, PricingRule
+from app.services.ai import agent, gemini, inference_queue, tools, workflow
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan
 from app.services.ai.workflow import TERMINAL, TRANSITIONS, R
 from app.services.tunnel import WorkerConnection, broker
+from tests.ai_support import MODEL, FakeGemini, install
 
-TOKEN = "t" * 40
-NODE = "hp15"
 LIMITS = {"max_spend": "500", "max_duration_hours": 2, "max_ram_mb": 8192, "max_recovery_attempts": 1}
+FAKE: FakeGemini
+REAL_PROCESS = gemini.process_pending
 
 
 @pytest.fixture(autouse=True)
 def _ai_settings(monkeypatch):
-    # These tests cover the internal-machine path; tests/test_ai_gemini.py covers the Gemini provider.
-    monkeypatch.setattr(settings, "AI_PROVIDER", "ollama")
-    monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", TOKEN)
-    monkeypatch.setattr(settings, "OLLAMA_MODEL", "gemma4:e2b-it-qat")
-    monkeypatch.setattr(settings, "AI_RATE_LIMIT_PER_MINUTE", 100)
+    global FAKE
+    FAKE = install(monkeypatch)
+
+    async def hold(only=None):
+        return 0  # calls wait in the queue until model_turn answers them
+
+    monkeypatch.setattr(gemini, "process_pending", hold)
+    yield
+    gemini.set_transport(None)
 
 
 @pytest.fixture(autouse=True)
@@ -41,52 +47,18 @@ async def _catalog(ollama_model):
     return ollama_model
 
 
-def adapter_headers(node=NODE, token=TOKEN):
-    return {"Authorization": f"Bearer {token}", "X-AgentMesh-Inference-Node": node}
-
-
-async def heartbeat(client, *, model="gemma4:e2b-it-qat", accepting=True, ready=True, node=NODE):
-    resp = await client.post(
-        "/api/v1/ai/inference/heartbeat",
-        json={
-            "model": model,
-            "ollama_version": "0.40.6",
-            "ollama_ok": True,
-            "model_ready": ready,
-            "accepting": accepting,
-            "metrics": {"cpu_percent": 12.5, "mem_available_mb": 6000},
-        },
-        headers=adapter_headers(node),
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()
-
-
-async def lease(client, node=NODE):
-    resp = await client.post(
-        "/api/v1/ai/inference/lease", json={"max_requests": 1, "wait_seconds": 0}, headers=adapter_headers(node)
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()
-
-
-async def answer(client, job, reply, *, model="gemma4:e2b-it-qat", node=NODE):
-    content = reply if isinstance(reply, str) else json.dumps(reply)
-    return await client.post(
-        f"/api/v1/ai/inference/requests/{job['id']}/result",
-        json={"content": content, "model": model, "latency_ms": 1200, "prompt_tokens": 300, "output_tokens": 40},
-        headers=adapter_headers(node),
-    )
-
-
 async def model_turn(client, reply):
-    """The inference machine answers the next queued request with ``reply``."""
-    await heartbeat(client)
-    jobs = await lease(client)
-    assert len(jobs) == 1, jobs
-    resp = await answer(client, jobs[0], reply)
-    assert resp.json()["accepted"], resp.text
-    return jobs[0]
+    """Gemini answers the one queued model call with ``reply``; the run then moves on. Returns the call as sent."""
+    async with session_scope() as s:
+        pending = await s.find(AiInferenceRequest, {"status": "PENDING"}, sort=[("created_at", 1)])
+        assert len(pending) == 1, [p.status for p in pending]
+        req = pending[0]
+        job = {"id": str(req.id), "model": req.model, **(req.payload or {})}
+    FAKE.replies.append(reply)
+    assert await REAL_PROCESS(only=req.id) == 1
+    if req.run_id is not None:
+        await workflow.advance(req.run_id)
+    return job
 
 
 def mid(model) -> str:
@@ -180,62 +152,14 @@ async def test_invalid_run_transition_is_refused(db, make_user):
 # --- Inference machine protocol and health -------------------------------------------------------------
 
 
-async def test_adapter_endpoints_require_the_inference_token(client, monkeypatch):
-    body = {"ollama_ok": True, "model_ready": True, "accepting": True}
-    assert (await client.post("/api/v1/ai/inference/heartbeat", json=body)).status_code == 401
-    bad = await client.post("/api/v1/ai/inference/heartbeat", json=body, headers=adapter_headers(token="x" * 40))
-    assert bad.status_code == 401
-    weird = await client.post("/api/v1/ai/inference/heartbeat", json=body, headers=adapter_headers(node="../etc"))
-    assert weird.status_code == 400
-    monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", "")  # not configured: disabled entirely
-    assert (
-        await client.post("/api/v1/ai/inference/heartbeat", json=body, headers=adapter_headers())
-    ).status_code == 401
-
-
-async def test_health_reports_offline_degraded_and_available_without_internals(client, make_user, monkeypatch):
-    _, customer = await make_user("customer")
-    _, operator = await make_user("operator")
-    h = (await client.get("/api/v1/ai/health", headers=customer)).json()
-    assert h["status"] == "unavailable" and not h["available"] and h["nodes"] is None
-
-    await heartbeat(client, model="llama3.2:1b")  # wrong model: never used, never silently substituted
-    h = (await client.get("/api/v1/ai/health", headers=customer)).json()
-    assert h["status"] == "degraded" and h["model"] == "gemma4:e2b-it-qat"
-
-    await heartbeat(client)
-    h = (await client.get("/api/v1/ai/health", headers=customer)).json()
-    assert h["status"] == "available" and h["available"]
-    assert NODE not in json.dumps(h) and "metrics" not in json.dumps(h)
-    staff = (await client.get("/api/v1/ai/health", headers=operator)).json()
-    assert staff["nodes"][0]["id"] == NODE and staff["nodes"][0]["metrics"]["cpu_percent"] == 12.5
-
-    monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", "")
-    assert (await client.get("/api/v1/ai/health", headers=customer)).json()["status"] == "not_configured"
-
-
-async def test_stale_or_overloaded_machine_gets_no_work(client, db, make_user):
-    _, customer = await make_user("customer")
-    assert (await start(client, customer)).status_code == 202
-    await heartbeat(client, accepting=False)  # overloaded: keeps the request queued
-    assert await lease(client) == []
-    await heartbeat(client)
-    await db.update_many(AiInferenceNode, {}, {"$set": {"last_seen": utcnow() - timedelta(minutes=5)}})
-    await db.commit()
-    assert await lease(client) == []  # stale heartbeat
-    await heartbeat(client)
-    assert len(await lease(client)) == 1
-
-
 async def test_global_concurrency_limit(client, make_user, monkeypatch):
     monkeypatch.setattr(settings, "AI_MAX_CONCURRENT_REQUESTS", 1)
     for _ in range(2):
         _, customer = await make_user("customer")
         await start(client, customer)
-    await heartbeat(client)
-    assert len(await lease(client)) == 1
-    await heartbeat(client, node="second-machine")
-    assert await lease(client, node="second-machine") == []  # one request in flight across all machines
+    async with session_scope() as s:
+        assert len(await inference_queue.lease_for_provider(s, "gemini:a", 5)) == 1
+        assert await inference_queue.lease_for_provider(s, "gemini:b", 5) == []  # one call in flight at a time
 
 
 # --- Creating runs -------------------------------------------------------------------------------------
@@ -277,7 +201,7 @@ async def test_queue_full_and_not_configured_are_refused(client, make_user, monk
     assert (await start(client, customer)).status_code == 202
     full = await start(client, customer)
     assert full.status_code == 503 and full.json()["detail"]["code"] == "ai_queue_full"
-    monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
     assert (await start(client, customer)).json()["detail"]["code"] == "ai_not_configured"
 
 
@@ -309,8 +233,7 @@ async def test_end_to_end_plan_deploy_verify_publish(client, db, make_user, conn
             "explanation": "check",
         },
     )
-    assert job["model"] == "gemma4:e2b-it-qat" and job["format"]["properties"]["action"]
-    assert job["options"]["num_predict"] == settings.AI_MAX_TOKENS
+    assert job["model"] == MODEL and job["format"]["properties"]["action"]
     second = await model_turn(client, final_plan(ollama_model))
     assert "TOOL RESULT for inspect_model_requirements" in second["messages"][-1]["content"]
 
@@ -361,16 +284,18 @@ async def test_failed_verification_rolls_back(client, db, make_user, connected, 
 # --- AI service offline --------------------------------------------------------------------------------
 
 
-async def test_offline_inference_machine_queues_then_resumes(client, db, make_user, connected, ollama_model):
+async def test_unavailable_ai_service_queues_then_resumes(client, db, make_user, connected, ollama_model):
     _, customer = await make_user("customer")
     run = (await start(client, customer)).json()
-    evs = await events(db, run["id"])
-    assert any("offline" in (e.message or "") for e in evs)
-    # Background passes while offline change nothing and invent no decisions.
+    # Gemini is down for one attempt: nothing is decided and the call is queued again.
+    FAKE.replies.append(503)
+    async with session_scope() as s:
+        req = await s.find_one(AiInferenceRequest, {"status": "PENDING"})
+    assert await REAL_PROCESS(only=req.id) == 1
     await workflow.run_due()
     r = await run_of(db, run["id"])
     assert r.status == "PLANNING" and r.plan is None and r.deployment_id is None
-    # The machine reconnects and the queued request is served.
+    # Gemini answers the retry.
     await model_turn(client, final_plan(ollama_model))
     assert (await run_of(db, run["id"])).status == "DEPLOYING"
 
@@ -391,8 +316,8 @@ async def test_unanswered_lease_is_retried_then_fails(client, db, make_user, mon
     _, customer = await make_user("customer")
     run = (await start(client, customer)).json()
     for attempt in (1, 2):
-        await heartbeat(client)
-        assert len(await lease(client)) == 1, attempt
+        async with session_scope() as s:
+            assert len(await inference_queue.lease_for_provider(s, f"gemini:{attempt}", 1)) == 1, attempt
         await db.update_many(AiInferenceRequest, {}, {"$set": {"lease_expires_at": utcnow() - timedelta(seconds=1)}})
         await db.commit()
         await workflow.run_due()
@@ -403,28 +328,43 @@ async def test_unanswered_lease_is_retried_then_fails(client, db, make_user, mon
     assert r.status == "FAILED" and r.error_code == "AI_ERROR"
 
 
+def _answer(**over):
+    fields = {
+        "content": json.dumps({"action": "final_plan"}),
+        "error_code": None,
+        "error": None,
+        "retryable": False,
+        "latency_ms": 1200,
+        "prompt_tokens": 300,
+        "output_tokens": 40,
+        "model": MODEL,
+    }
+    return fields | over
+
+
 async def test_late_answer_after_lease_moved_is_discarded(client, db, make_user):
     _, customer = await make_user("customer")
     await start(client, customer)
-    await heartbeat(client)
-    job = (await lease(client))[0]
+    async with session_scope() as s:
+        [job] = await inference_queue.lease_for_provider(s, "gemini:first", 1)
     await db.update_many(AiInferenceRequest, {}, {"$set": {"lease_expires_at": utcnow() - timedelta(seconds=1)}})
     await db.commit()
     async with session_scope() as s:
         await inference_queue.expire(s)
         await s.commit()
-    await heartbeat(client, node="other")
-    assert len(await lease(client, node="other")) == 1
-    late = await answer(client, job, {"action": "final_plan"})  # from the first machine
-    assert late.json() == {"accepted": False}
+        assert len(await inference_queue.lease_for_provider(s, "gemini:second", 1)) == 1
+        late = await inference_queue.complete(s, "gemini:first", job.id, **_answer())  # the first, slow batch
+    assert late is None
 
 
 async def test_answer_from_a_different_model_is_rejected(client, db, make_user):
     _, customer = await make_user("customer")
     run = (await start(client, customer)).json()
-    await heartbeat(client)
-    job = (await lease(client))[0]
-    await answer(client, job, {"action": "final_plan"}, model="llama3.2:1b")
+    async with session_scope() as s:
+        [job] = await inference_queue.lease_for_provider(s, "gemini:a", 1)
+        await inference_queue.complete(s, "gemini:a", job.id, **_answer(model="gemini-1.0-pro"))
+        await s.commit()
+    await workflow.advance(uuid.UUID(run["id"]))
     db.expire_all()
     req = await db.find_one(AiInferenceRequest)
     assert req.status == "FAILED" and req.error_code == "MODEL_MISMATCH"
@@ -434,13 +374,8 @@ async def test_answer_from_a_different_model_is_rejected(client, db, make_user):
 async def test_transient_inference_error_is_retried_and_secrets_redacted(client, db, make_user):
     _, customer = await make_user("customer")
     await start(client, customer)
-    await heartbeat(client)
-    job = (await lease(client))[0]
-    await client.post(
-        f"/api/v1/ai/inference/requests/{job['id']}/result",
-        json={"error_code": "OLLAMA_UNREACHABLE", "error": "connect failed token=am_sk_abcdefghijk", "retryable": True},
-        headers=adapter_headers(),
-    )
+    FAKE.replies.append({"status": 503, "message": "connect failed token=am_sk_abcdefghijk"})
+    assert await REAL_PROCESS() == 1
     db.expire_all()
     req = await db.find_one(AiInferenceRequest)
     assert req.status == "PENDING" and "am_sk_abcdefghijk" not in req.error

@@ -1,5 +1,5 @@
 """Runtime adapter unit tests. The Docker backend uses a fake Docker client here; it has not yet been run
-against a real Docker daemon (see docs/IMPLEMENTATION_PLAN.md)."""
+against a real Docker daemon (tests/test_worker_isolation_docker.py)."""
 
 from pathlib import Path
 from types import SimpleNamespace

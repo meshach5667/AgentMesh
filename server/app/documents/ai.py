@@ -108,22 +108,3 @@ class AiInferenceRequest(Doc):
     class Settings(Doc.Settings):
         name = "ai_inference_requests"
         indexes = [index("run_id"), index("status", "created_at"), index("created_at")]
-
-
-class AiInferenceNode(Doc):
-    """Last heartbeat from an internal inference machine. Not a provider node: it never runs customer work."""
-
-    id: str  # type: ignore[assignment]  # AI_INFERENCE_NODE_ID
-    last_seen: datetime
-    model: str | None = None
-    ollama_version: str | None = None
-    ollama_ok: bool = False
-    model_ready: bool = False
-    accepting: bool = False
-    reason: str | None = None  # why it is not accepting work
-    metrics: Any = None  # cpu/memory/load, numbers only
-    in_flight: int = 0
-    created_at: datetime = Field(default_factory=utcnow)
-
-    class Settings(Doc.Settings):
-        name = "ai_inference_nodes"

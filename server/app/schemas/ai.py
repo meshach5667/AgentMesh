@@ -58,62 +58,10 @@ class AiRunEventOut(BaseModel):
 
 
 class AiHealthOut(BaseModel):
-    """What customers see. No hostnames, addresses, or credentials of the inference machine."""
+    """Whether the AI service can answer, and which model answers."""
 
     status: str
     available: bool
     model: str
     queue_depth: int
     message: str
-    nodes: list[dict[str, Any]] | None = Field(None, description="Staff only")
-
-
-# --- Inference adapter protocol ------------------------------------------------------------------------
-
-
-class InferenceMetrics(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    cpu_percent: float | None = Field(None, ge=0, le=100)
-    load_per_cpu: float | None = Field(None, ge=0, le=1000)
-    mem_available_mb: int | None = Field(None, ge=0)
-    mem_total_mb: int | None = Field(None, ge=0)
-    ollama_rss_mb: int | None = Field(None, ge=0)
-
-
-class InferenceHeartbeat(BaseModel):
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
-    model: str | None = Field(None, max_length=255)
-    ollama_version: str | None = Field(None, max_length=50)
-    ollama_ok: bool
-    model_ready: bool
-    accepting: bool
-    reason: str | None = Field(None, max_length=200)
-    in_flight: int = Field(0, ge=0, le=64)
-    metrics: InferenceMetrics | None = None
-
-
-class InferenceLeaseRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    max_requests: int = Field(1, ge=1, le=16)
-    wait_seconds: float = Field(0, ge=0, le=25)
-
-
-class InferenceJob(BaseModel):
-    id: uuid.UUID
-    model: str
-    messages: list[dict[str, Any]]
-    format: dict[str, Any] | None
-    options: dict[str, Any]
-    timeout_seconds: int
-
-
-class InferenceResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
-    content: str | None = Field(None, max_length=64_000)
-    model: str | None = Field(None, max_length=255)
-    error_code: str | None = Field(None, max_length=50)
-    error: str | None = Field(None, max_length=2000)
-    retryable: bool = False
-    latency_ms: int | None = Field(None, ge=0)
-    prompt_tokens: int | None = Field(None, ge=0)
-    output_tokens: int | None = Field(None, ge=0)

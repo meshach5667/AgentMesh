@@ -1,9 +1,8 @@
-"""MongoDB documents (Beanie), one collection per former PostgreSQL table, with the same ids and fields."""
+"""MongoDB documents (Beanie), one collection each."""
 
-from app.documents.agent import AgentAction, AgentTask
-from app.documents.ai import AiInferenceNode, AiInferenceRequest, AiRun, AiRunEvent
+from app.documents.ai import AiInferenceRequest, AiRun, AiRunEvent
 from app.documents.api_key import ApiKey
-from app.documents.audit import AuditLog, Event
+from app.documents.audit import AuditLog
 from app.documents.base import Doc
 from app.documents.billing import Charge, Payment, PaymentEvent, Payout, PayoutAccount, PricingRule, Refund
 from app.documents.deployment import Deployment, DeploymentEvent
@@ -18,13 +17,9 @@ from app.documents.usage import UsageRecord
 from app.documents.user import Customer, Provider, User
 from app.documents.wallet import Wallet
 from app.documents.worker import NodeCommand, NodeEnrollmentToken
-from app.documents.workload import Workload, WorkloadStatus
 
 DOCUMENTS: list[type[Doc]] = [
     AdSettings,
-    AgentAction,
-    AgentTask,
-    AiInferenceNode,
     AiInferenceRequest,
     AiRun,
     AiRunEvent,
@@ -35,7 +30,6 @@ DOCUMENTS: list[type[Doc]] = [
     Customer,
     Deployment,
     DeploymentEvent,
-    Event,
     Model,
     ModelArtifact,
     Node,
@@ -61,7 +55,6 @@ DOCUMENTS: list[type[Doc]] = [
     UsageRecord,
     User,
     Wallet,
-    Workload,
 ]
 
-__all__ = [d.__name__ for d in DOCUMENTS] + ["DOCUMENTS", "Doc", "WorkloadStatus"]
+__all__ = [d.__name__ for d in DOCUMENTS] + ["DOCUMENTS", "Doc"]

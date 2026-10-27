@@ -73,12 +73,3 @@ class NodeCreate(BaseModel):
     public_key: str
     region: str
     hardware: NodeHardwareUpdate | None = None
-
-
-class NodePricingUpdate(BaseModel):
-    gpu_hour_price: float
-    cpu_hour_price: float
-    ram_gb_hour_price: float
-    storage_gb_month_price: float
-    bandwidth_gb_price: float
-    pricing_mode: str

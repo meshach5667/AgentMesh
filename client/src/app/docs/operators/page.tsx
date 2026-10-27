@@ -58,7 +58,7 @@ export default function OperatorGuide() {
         />
         <P>
           <C>.env.example</C> lists the minimum set. Billing intervals, payment limits and rate limits have sensible defaults; see{' '}
-          <C>server/app/core/config.py</C> and <C>docs/OPERATIONS.md</C> for every setting.
+          <C>server/app/core/config.py</C> for every setting.
         </P>
       </Section>
 
@@ -84,10 +84,6 @@ docker compose up -d`}
           model catalog entries that are missing; it never changes or removes existing data, so several replicas can start at once. There are no
           migrations to run. For local development, run <C>mongod --replSet rs0</C> once with <C>rs.initiate()</C>, or use{' '}
           <C>docker compose up -d mongo</C>.
-        </P>
-        <P>
-          Moving an existing PostgreSQL installation: stop the API, then copy every table into MongoDB with{' '}
-          <C>python scripts/migrate_postgres_to_mongo.py</C> (see its header for options) before starting the new version.
         </P>
       </Section>
 
@@ -214,8 +210,8 @@ MONGODB_URL=mongodb+srv://… MONGODB_DB=agentmesh_restore ops/restore_db.sh /va
             'Backups are compressed mongodump archives (mode 0600). On Atlas, also enable its scheduled backups. Store copies off the host, encrypted, and test a restore monthly. The restore script refuses a non-empty database.',
             'After a restore: point MONGODB_DB at it, start the API, then run reconciliation to re-check open top-ups and payouts with Paystack.',
             'API restarts lose nothing: workers reconnect and billing resumes from each deployment’s watermark without double charging.',
-            'Never refund a pending payout by hand; the transfer may still complete. Ledger corrections and refunds need a code path that does not exist yet.',
-            <>Full runbooks are in <A href={`${REPO_URL}/blob/main/docs/OPERATIONS.md`}>docs/OPERATIONS.md</A>.</>,
+            'Never refund a pending payout by hand; the transfer may still complete. Refund customers from Refunds, which reverses the provider share and commission through the ledger.',
+            <>Incident runbooks (compromised nodes, leaked credentials, key rotation, rollback) are in <A href={`${REPO_URL}/blob/main/docs/security/INCIDENT_RESPONSE.md`}>docs/security/INCIDENT_RESPONSE.md</A>.</>,
           ]}
         />
       </Section>

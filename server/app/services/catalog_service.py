@@ -56,12 +56,6 @@ class ResourceRequest:
     community: bool = False  # unreviewed community model: only nodes whose provider opted in
 
 
-def validate_model_tag(tag: str | None) -> str:
-    if not tag or not OLLAMA_TAG_RE.fullmatch(tag):
-        raise HTTPException(status_code=422, detail="Model has no valid runtime identifier")
-    return tag
-
-
 def artifact_problem(a: ModelArtifact) -> str | None:
     """Why an artifact cannot be deployed, or None if it is valid. Mirrors the worker's own validation."""
     if a.runtime not in SUPPORTED_RUNTIMES:

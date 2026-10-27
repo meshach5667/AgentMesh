@@ -46,7 +46,7 @@ SELF_AUTHENTICATING = {
     ("WS", "/api/v1/worker/tunnel"): "node credential",
 }
 
-GUARDS = {"get_current_user", "get_session_user", "current_node", "enrolled_node", "inference_node"}
+GUARDS = {"get_current_user", "get_session_user", "current_node", "enrolled_node"}
 
 
 def _routes():

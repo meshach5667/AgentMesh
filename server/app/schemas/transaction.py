@@ -40,8 +40,3 @@ class TransactionResponse(BaseModel):
     # Relative to the caller's wallet: money in ("credit") or out ("debit"). Null in operator listings.
     direction: str | None = None
     model_config = {"from_attributes": True}
-
-
-class TransactionListResponse(BaseModel):
-    transactions: list[TransactionResponse]
-    total: int

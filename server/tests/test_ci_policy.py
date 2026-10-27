@@ -83,3 +83,11 @@ def test_lock_files_pin_every_requirement_exactly():
             name = re.split(r"[<>=\[ #]", line.strip())[0]
             if name:
                 assert norm(name) in locked, f"{name} from {req} missing in {lock}"
+
+
+def test_production_images_carry_no_test_or_lint_tools():
+    locked = (ROOT / "server" / "requirements-lock.txt").read_text().lower()
+    for tool in ("pytest", "ruff", "mypy", "fakeredis"):
+        assert f"\n{tool}" not in locked, f"{tool} is in the production lock"
+    dev = (ROOT / "server" / "requirements-dev.txt").read_text()
+    assert all("==" in line for line in dev.splitlines() if line and not line.startswith("#"))

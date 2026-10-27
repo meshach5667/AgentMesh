@@ -6,7 +6,7 @@
     agentmesh-worker doctor [--deep]                check this machine's setup and suggest fixes
     agentmesh-worker pause | drain | resume         stop new work / also move running work away / undo
     agentmesh-worker hardware                       what is reported and offered
-    agentmesh-worker update [--check]               install a signed worker update (see docs/WORKER.md)
+    agentmesh-worker update [--check]               install a signed worker update
     agentmesh-worker uninstall [--purge-models]     stop workloads and delete credentials
 
 Configuration: ~/.config/agentmesh/worker.env (written by the installer) and AGENTMESH_* variables.

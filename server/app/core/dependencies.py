@@ -73,10 +73,6 @@ async def get_current_user(request: Request, user: User = Depends(get_session_us
     return user
 
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
-
-
 def require_roles(*roles: str) -> Callable:
     """Dependency factory enforcing role-based access on the backend."""
     allowed = frozenset(r.value if isinstance(r, UserRole) else r for r in roles)

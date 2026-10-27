@@ -1,69 +1,26 @@
-"""AI deployment agent on the Gemini API (AI_PROVIDER=gemini), against a fake Gemini that checks every request.
+"""AI deployment agent on the Gemini API, against a fake Gemini that checks every request.
 
 No real Gemini call is made here. The fake enforces what the real API needs: the key in the x-goog-api-key header
 (never the URL), alternating user/model turns, a JSON response type, and the configured model.
 """
 
 import io
-import json
 import logging
 import uuid
 
-import httpx
 import pytest
 
 from app.core.config import settings
 from app.core.logging import JsonFormatter, RedactingFilter
 from app.documents import AiInferenceRequest
 from app.services.ai import gemini, inference_queue, workflow
+from tests.ai_support import KEY, MODEL, install
 from tests.test_ai_agent import LIMITS, ProbeWorker, events, final_plan, mid, report, run_of, start
-
-KEY = "AIza" + "S" * 35
-MODEL = "gemini-2.5-flash"
-
-
-class FakeGemini:
-    """Answers generateContent with scripted replies: a dict/str becomes the model's JSON text; an int is an HTTP
-    error status; a full dict under "raw" is returned as the response body."""
-
-    def __init__(self):
-        self.replies: list = []
-        self.requests: list[dict] = []
-
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        self.requests.append({"url": str(request.url), "headers": dict(request.headers), "body": body})
-        assert request.headers.get("x-goog-api-key") == KEY
-        assert KEY not in str(request.url)
-        assert str(request.url).endswith(f"/models/{MODEL}:generateContent")
-        roles = [c["role"] for c in body["contents"]]
-        assert roles[0] == "user" and all(a != b for a, b in zip(roles, roles[1:], strict=False)), roles
-        reply = self.replies.pop(0) if self.replies else {"action": "final_plan"}
-        if isinstance(reply, int):
-            return httpx.Response(reply, json={"error": {"message": f"failure {reply} for key {KEY}"}})
-        if isinstance(reply, dict) and "raw" in reply:
-            return httpx.Response(200, json=reply["raw"])
-        text = reply if isinstance(reply, str) else json.dumps(reply)
-        return httpx.Response(
-            200,
-            json={
-                "candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": "STOP"}],
-                "usageMetadata": {"promptTokenCount": 420, "candidatesTokenCount": 37},
-                "modelVersion": MODEL,
-            },
-        )
 
 
 @pytest.fixture(autouse=True)
 def fake(monkeypatch):
-    monkeypatch.setattr(settings, "AI_PROVIDER", "gemini")
-    monkeypatch.setattr(settings, "GEMINI_API_KEY", KEY)
-    monkeypatch.setattr(settings, "GEMINI_MODEL", MODEL)
-    monkeypatch.setattr(settings, "AI_RATE_LIMIT_PER_MINUTE", 100)
-    monkeypatch.setattr(gemini, "last", gemini.Outcome())
-    g = FakeGemini()
-    gemini.set_transport(httpx.MockTransport(g.handler))
-    yield g
+    yield install(monkeypatch)
     gemini.set_transport(None)
 
 
@@ -113,7 +70,7 @@ async def test_gemini_plans_deploys_verifies_and_publishes(client, db, make_user
     assert "TOOL RESULT for inspect_model_requirements" in second["contents"][-1]["parts"][0]["text"]
 
     rows = await db.find(AiInferenceRequest)
-    assert all(r.model == MODEL and r.node_id == "gemini" and r.status == "COMPLETED" for r in rows)
+    assert all(r.model == MODEL and r.node_id.startswith("gemini:") and r.status == "COMPLETED" for r in rows)
     assert all(r.payload is None and r.result["prompt_tokens"] == 420 for r in rows)
 
     await report(client, node, got["deployment_id"], "READY")
@@ -151,7 +108,6 @@ async def test_permanent_gemini_error_fails_the_run_and_never_logs_the_key(
         fake.replies = [400]
         _, customer = await make_user("customer")
         run = (await start(client, customer)).json()
-        await workflow.run_due()
     finally:
         logging.getLogger().removeHandler(handler)
     final = await run_of(db, run["id"])
@@ -204,21 +160,6 @@ async def test_not_configured_without_a_key(client, make_user, monkeypatch):
     assert resp.status_code == 503 and resp.json()["detail"]["code"] == "ai_not_configured"
 
 
-async def test_inference_machines_get_no_work_while_gemini_answers(client, db, make_user, monkeypatch):
-    monkeypatch.setattr(settings, "AI_INFERENCE_TOKEN", "t" * 40)
-    headers = {"Authorization": "Bearer " + "t" * 40, "X-AgentMesh-Inference-Node": "hp15"}
-    beat = await client.post(
-        "/api/v1/ai/inference/heartbeat",
-        json={"model": MODEL, "ollama_ok": True, "model_ready": True, "accepting": True},
-        headers=headers,
-    )
-    assert beat.status_code == 200 and beat.json()["accepted"] is False and beat.json()["provider"] == "gemini"
-    leased = await client.post(
-        "/api/v1/ai/inference/lease", json={"max_requests": 1, "wait_seconds": 0}, headers=headers
-    )
-    assert leased.json() == []
-
-
 def test_request_translation_merges_turns_and_keeps_system_text_out_of_contents():
     body = gemini.build_request(
         [
@@ -244,10 +185,18 @@ def test_gemini_settings_are_validated():
 
     from app.core.config import Settings
 
-    with pytest.raises(ValidationError, match="AI_PROVIDER"):
-        Settings(AI_PROVIDER="openai", ENVIRONMENT="test", _env_file=None)
-    assert Settings(AI_PROVIDER="ollama", ENVIRONMENT="test", _env_file=None).ai_model == settings.OLLAMA_MODEL
-    assert Settings(ENVIRONMENT="test", _env_file=None).AI_PROVIDER == "gemini"
+    with pytest.raises(ValidationError, match="GEMINI_TIMEOUT_SECONDS"):
+        Settings(GEMINI_TIMEOUT_SECONDS=999, ENVIRONMENT="test", _env_file=None)
+    production = {
+        "ENVIRONMENT": "production",
+        "SECRET_KEY": "x" * 40,
+        "PUBLIC_BASE_URL": "https://api.example.com",
+        "MONGODB_URL": "mongodb+srv://u:p@cluster0.example.mongodb.net/",
+        "CORS_ORIGINS": ["https://dashboard.example.com"],
+        "_env_file": None,
+    }
+    with pytest.raises(ValidationError, match="GEMINI_BASE_URL"):
+        Settings(GEMINI_BASE_URL="http://insecure.example", **production)
 
 
 def test_google_api_keys_are_redacted_from_logs():

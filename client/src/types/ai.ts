@@ -78,7 +78,7 @@ export interface AiRunEvent {
   created_at: string;
 }
 
-export type AiServiceStatus = 'available' | 'degraded' | 'unavailable' | 'not_configured';
+export type AiServiceStatus = 'available' | 'degraded' | 'not_configured';
 
 export interface AiHealth {
   status: AiServiceStatus;

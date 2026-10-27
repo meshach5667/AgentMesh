@@ -38,7 +38,8 @@ Signs: anomaly report flags (`GET /admin/anomalies`), customer complaints about 
 | A refresh token | Its first reuse ends the session automatically (`auth.session_revoked`, reason `refresh_token_reuse`). |
 | A node enrollment credential | Revoke the node (§1). With `ALLOW_LEGACY_NODE_CREDENTIALS=false`, the credential alone cannot authenticate (it also needs the node's private key). |
 | `PAYSTACK_SECRET_KEY` | Roll the key in the Paystack dashboard, update the platform secret, redeploy. Run reconciliation. |
-| `METRICS_TOKEN`, `AI_INFERENCE_TOKEN` | Replace the platform secret and redeploy (update the inference adapter too). |
+| `METRICS_TOKEN` | Replace the platform secret and redeploy. |
+| `GEMINI_API_KEY` | Delete the key in Google AI Studio, create a new one, update the platform secret and redeploy. |
 | `SECRET_KEY` | See §3. |
 | A secret committed to git | Treat as leaked whatever happens next: **rotate first.** Removing it from history afterwards does not make it safe. |
 
