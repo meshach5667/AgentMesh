@@ -60,7 +60,8 @@ def sandbox():
 
 
 def test_no_docker_socket_or_host_filesystem(sandbox):
-    paths = "/var/run/docker.sock /run/docker.sock /host /root/.ssh /etc/agentmesh /home"
+    # Paths a host mount would add; none exists in a plain Alpine image (its own /home is empty and not checked).
+    paths = "/var/run/docker.sock /run/docker.sock /host /root/.ssh /etc/agentmesh /var/lib/agentmesh"
     code, out, _ = sandbox(f'for p in {paths}; do [ -e "$p" ] && echo "PRESENT:$p"; done; echo checked')
     assert "checked" in out and "PRESENT:" not in out, out
 

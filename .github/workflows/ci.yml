@@ -72,7 +72,13 @@ jobs:
           ENVIRONMENT: test
           # Lets tests/test_worker_isolation_docker.py pull alpine and exercise real container limits.
           AGENTMESH_ISOLATION_PULL: "1"
-        run: cd server && pytest tests/ -v -rs --cov=app --cov-report=xml --cov-fail-under=60
+        run: cd server && pytest tests/ -v -rs --cov=app --cov-report=xml --cov-fail-under=60 --junitxml=pytest-report.xml
+
+      # Failing tests become annotations on the run page and a table in the job summary, so nobody has to dig
+      # through the log to see what broke.
+      - name: Report failing tests
+        if: failure()
+        run: python server/ops/ci_report_failures.py server/pytest-report.xml
         
       - name: Upload coverage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

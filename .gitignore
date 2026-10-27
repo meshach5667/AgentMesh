@@ -42,3 +42,4 @@ test-results/
 .DS_Store
 Thumbs.db
 docker-compose.override.yml
+server/pytest-report.xml
