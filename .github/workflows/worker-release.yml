@@ -43,7 +43,10 @@ jobs:
           bash -n release/uninstall.sh
           cd release && sha256sum agentmesh_worker-*.whl install.sh uninstall.sh > SHA256SUMS && cat SHA256SUMS
 
+      # GitHub supports artifact attestations in private repositories only on Enterprise Cloud, so they are made
+      # once the repository is public. SHA256SUMS still lets installers verify every asset.
       - name: Attest build provenance of the release assets
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: "release/*"
