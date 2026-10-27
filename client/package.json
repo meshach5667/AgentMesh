@@ -45,6 +45,6 @@
     "typescript": "^5"
   },
   "optionalDependencies": {
-    "@next/swc-linux-x64-gnu": "16.4.2"
+    "@next/swc-linux-x64-gnu": "16.4.3"
   }
 }
