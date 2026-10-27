@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import { A, C, Callout, Code, DocPage, List, P, Section, Table } from '@/components/docs/DocsContent';
 import { API_URL, DASHBOARD_URL, REPO_URL } from '@/lib/config';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'Operators & self-hosting' };
+export const metadata: Metadata = docMetadata('/docs/operators');
 
 export default function OperatorGuide() {
   return (

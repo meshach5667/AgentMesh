@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import { TrustNotice } from '@/components/common/Notices';
 import { A, C, Callout, DocPage, List, P, Section, StatusPill, Table } from '@/components/docs/DocsContent';
 import { REPO_URL } from '@/lib/config';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'Security & limitations' };
+export const metadata: Metadata = docMetadata('/docs/security');
 
 export default function SecurityGuide() {
   return (

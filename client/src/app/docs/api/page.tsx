@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import { A, C, Callout, Code, DocPage, H3, List, P, Section, Table } from '@/components/docs/DocsContent';
 import { API_URL } from '@/lib/config';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'API reference' };
+export const metadata: Metadata = docMetadata('/docs/api');
 
 const DEP = `${API_URL}/deployments/<deployment-id>`;
 

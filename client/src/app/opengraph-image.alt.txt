@@ -1,0 +1,1 @@
+AgentMesh: open-weight AI models on community compute

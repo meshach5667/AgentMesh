@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import { C, Callout, Code, DocPage, List, P, Section, Table } from '@/components/docs/DocsContent';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'AI deployment agent' };
+export const metadata: Metadata = docMetadata('/docs/ai-agent');
 
 
 export default function AiAgentGuide() {

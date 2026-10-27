@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import { TrustNotice } from '@/components/common/Notices';
 import { A, C, Callout, Code, DocPage, List, P, Section, Table } from '@/components/docs/DocsContent';
 import { API_URL } from '@/lib/config';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'Customer guide' };
+export const metadata: Metadata = docMetadata('/docs/customers');
 
 export default function CustomerGuide() {
   return (

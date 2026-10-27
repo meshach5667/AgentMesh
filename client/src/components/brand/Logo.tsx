@@ -1,18 +1,17 @@
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
+/** The official AgentMesh symbol (public/logos): four interlocking bars around a blue node. */
 export function LogoMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" aria-hidden className={cn('size-7', className)}>
-      <rect width="32" height="32" rx="9" className="fill-foreground" />
-      <g className="stroke-background" strokeWidth="2.2" strokeLinecap="round" fill="none">
-        <path d="M10 21.5 16 10l6 11.5H10Z" opacity="0.55" />
+    <svg viewBox="255 255 514 514" aria-hidden className={cn('size-7', className)}>
+      <g className="fill-[#090F1D] dark:fill-white">
+        <rect x="255" y="255" width="316" height="158" rx="27" />
+        <rect x="611" y="255" width="158" height="316" rx="27" />
+        <rect x="255" y="453" width="158" height="316" rx="27" />
+        <rect x="453" y="611" width="316" height="158" rx="27" />
       </g>
-      <g className="fill-background">
-        <circle cx="16" cy="10" r="3" />
-        <circle cx="10" cy="21.5" r="3" />
-      </g>
-      <circle cx="22" cy="21.5" r="3" className="fill-brand" />
+      <polygon points="512,454 570,512 512,570 454,512" fill="#2E6CFF" />
     </svg>
   );
 }

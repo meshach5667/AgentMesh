@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import { A, C, Callout, DocPage, List, P, Section, StatusPill, Table } from '@/components/docs/DocsContent';
 import { API_URL, DASHBOARD_URL, RELEASES_URL, REPO_URL } from '@/lib/config';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'Getting started' };
+export const metadata: Metadata = docMetadata('/docs/getting-started');
 
 export default function GettingStarted() {
   return (

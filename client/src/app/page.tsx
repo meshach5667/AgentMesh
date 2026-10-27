@@ -8,10 +8,15 @@ import { LiveStats } from '@/components/landing/LiveStats';
 import { PricingSection } from '@/components/landing/PricingSection';
 import { Status } from '@/components/landing/Status';
 import { SponsoredSlot } from '@/components/sponsorship/SponsoredSlot';
+import { STRUCTURED_DATA } from '@/lib/seo';
+
+// JSON.stringify output is escaped for '<' so the data cannot close the script element.
+const jsonLd = JSON.stringify(STRUCTURED_DATA).replace(/</g, '\\u003c');
 
 export default function Home() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
       <Header />
       <main className="flex-1">
         <HeroSection />

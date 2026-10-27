@@ -1,8 +1,11 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, BookOpen, Bot, Code2, Server, ShieldCheck, Users, Wrench, type LucideIcon } from 'lucide-react';
 import { TrustNotice } from '@/components/common/Notices';
 import { API_URL, DASHBOARD_URL, RELEASES_URL, REPO_URL } from '@/lib/config';
 import { DOC_PAGES } from '@/lib/docs';
+
+export const metadata: Metadata = { alternates: { canonical: '/docs' } };
 
 const ICONS: Record<string, LucideIcon> = {
   '/docs/getting-started': BookOpen,

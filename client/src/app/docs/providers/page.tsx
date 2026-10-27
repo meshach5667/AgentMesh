@@ -13,8 +13,9 @@ import {
   workerTag,
   workerWheel,
 } from '@/lib/worker';
+import { docMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = { title: 'Provider guide' };
+export const metadata: Metadata = docMetadata('/docs/providers');
 
 export default function ProviderGuide() {
   return (
