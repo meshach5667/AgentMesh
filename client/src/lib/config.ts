@@ -7,4 +7,4 @@ export const REPO_URL = 'https://github.com/meshach5667/AgentMesh';
 /** owner/name of REPO_URL, for the GitHub API. */
 export const REPO_SLUG = REPO_URL.replace('https://github.com/', '');
 export const RELEASES_URL = `${REPO_URL}/releases`;
-export const WORKER_VERSION = '0.3.0';
+export const WORKER_VERSION = '0.3.1';

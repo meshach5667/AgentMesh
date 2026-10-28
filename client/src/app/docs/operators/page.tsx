@@ -203,7 +203,7 @@ MONGODB_URL=mongodb+srv://… MONGODB_DB=agentmesh_restore ops/restore_db.sh /va
           ordered
           items={[
             <>Set <C>WORKER_VERSION</C> in <C>server/node_agent/config.py</C>, and <C>WORKER_VERSION</C> in <C>client/src/lib/config.ts</C> to match (a test checks this).</>,
-            <>Commit, then tag and push: <C>git tag worker-v0.3.0 && git push origin worker-v0.3.0</C>.</>,
+            <>Commit, then tag and push: <C>git tag worker-v0.3.1 && git push origin worker-v0.3.1</C>.</>,
             <>The <C>Worker release</C> workflow checks the tag matches, builds the wheel, checks it installs, writes <C>SHA256SUMS</C>, and creates the GitHub release with the wheel, <C>install.sh</C>, <C>uninstall.sh</C> and <C>SHA256SUMS</C>.</>,
             'Redeploy the dashboard so Add a machine points at the new version.',
           ]}

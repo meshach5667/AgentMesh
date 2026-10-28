@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-WORKER_VERSION = "0.3.0"
+WORKER_VERSION = "0.3.1"
 PROTOCOL_VERSION = 1
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
