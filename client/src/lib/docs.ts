@@ -56,6 +56,7 @@ export const DOC_PAGES: DocPageEntry[] = [
       { id: 'docker', title: 'Docker worker', keywords: 'docker compose socket root rootless' },
       { id: 'status-checks', title: 'Check the worker', keywords: 'status doctor systemctl launchctl logs' },
       { id: 'manage', title: 'Manage machines', keywords: 'pause drain resume revoke schedule' },
+      { id: 'limits', title: 'Change how much you offer', keywords: 'ram memory cpu disk limits max_ram_mb lower raise restart headroom' },
       { id: 'community-models', title: 'Community models (opt-in)', keywords: 'huggingface gguf unreviewed opt in consent' },
       { id: 'health', title: 'Health and failover', keywords: 'heartbeat degraded offline recovering benched failover drain move work off planned move' },
       { id: 'pricing', title: 'Set your prices', keywords: 'price list machine per hour tokens default currency free' },

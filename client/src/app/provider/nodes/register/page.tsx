@@ -115,13 +115,23 @@ export default function EnrollNodePage() {
                 </>
               ) : (
                 <>
-                  <Notice tone="warning" title={`Worker ${WORKER_VERSION} has not been published yet`}>
-                    Prebuilt downloads will appear on the{' '}
-                    <a href={RELEASES_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
-                      GitHub Releases page
-                    </a>
-                    . Until then, build the worker from the source repository:
-                  </Notice>
+                  {release.data === 'unpublished' ? (
+                    <Notice tone="warning" title={`Worker ${WORKER_VERSION} has not been published yet`}>
+                      Prebuilt downloads will appear on the{' '}
+                      <a href={RELEASES_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                        GitHub Releases page
+                      </a>
+                      . Until then, build the worker from the source repository:
+                    </Notice>
+                  ) : (
+                    <Notice tone="warning" title="Could not check the worker release">
+                      GitHub did not answer. If the{' '}
+                      <a href={workerReleaseUrl()} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                        worker {WORKER_VERSION} release
+                      </a>{' '}
+                      exists, reload this page; otherwise build the worker from the source repository:
+                    </Notice>
+                  )}
                   <CodeBlock code={sourceInstallCommand({ token })} />
                 </>
               )}

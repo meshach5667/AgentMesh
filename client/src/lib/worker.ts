@@ -71,6 +71,19 @@ export const statusCommand = [
   `${WORKER_BIN} doctor     # checks this machine's setup`,
 ].join('\n');
 
+export const limitsCommand = {
+  linux: [
+    'CONFIG=~/.config/agentmesh/agentmesh-worker.env',
+    "sed -i 's/^AGENTMESH_MAX_RAM_MB=.*/AGENTMESH_MAX_RAM_MB=2000/' $CONFIG     # memory in MB",
+    "sed -i 's/^AGENTMESH_MAX_CPU_CORES=.*/AGENTMESH_MAX_CPU_CORES=2/' $CONFIG  # CPU cores",
+    "sed -i 's/^AGENTMESH_MAX_DISK_MB=.*/AGENTMESH_MAX_DISK_MB=20000/' $CONFIG  # disk in MB",
+    'systemctl --user restart agentmesh-worker',
+  ].join('\n'),
+  macos: 'launchctl kickstart -k gui/$(id -u)/io.agentmesh.agentmesh-worker',
+};
+
+export const sourceUninstallCommand = 'cd AgentMesh/server && ./packaging/uninstall.sh            # add --purge-models to delete downloaded models';
+
 export const serviceLogCommands = {
   linux: 'systemctl --user status agentmesh-worker\njournalctl --user -u agentmesh-worker -f',
   macos: 'launchctl print gui/$(id -u)/io.agentmesh.agentmesh-worker\ntail -f ~/.local/share/agentmesh/agentmesh-worker/logs/agentmesh-worker.log',

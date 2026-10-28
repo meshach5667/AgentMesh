@@ -6,8 +6,10 @@ import {
   WORKER_BIN,
   agentInstallCommand,
   dockerInstallCommand,
+  limitsCommand,
   serviceLogCommands,
   sourceInstallCommand,
+  sourceUninstallCommand,
   statusCommand,
   uninstallCommand,
   workerTag,
@@ -119,6 +121,9 @@ export default function ProviderGuide() {
       <Section id="install-source" title="Install from source">
         <P>Use this before the first release is published, or to run unreleased code. It builds the same wheel locally.</P>
         <Code code={sourceInstallCommand()} />
+        <P>
+          Keep the <C>AgentMesh</C> checkout: its <C>server/packaging/uninstall.sh</C> is the uninstaller (see <A href="#uninstall">Uninstall</A>).
+        </P>
       </Section>
 
       <Section id="docker" title="Docker worker">
@@ -181,6 +186,26 @@ export default function ProviderGuide() {
           schedule on the machine), <strong>Offline</strong> (no heartbeats) or <strong>Revoked</strong>. The node page shows each runtime the worker
           reported, whether its limits are enforced or advisory, how much of your allocation is reserved, and the last reported load.
         </P>
+      </Section>
+
+      <Section id="limits" title="Change how much you offer">
+        <P>
+          The limits you passed to the installer (<C>--max-ram-mb</C>, <C>--max-cpu</C>, <C>--max-disk-mb</C>) are stored in the worker&apos;s
+          config file as <C>AGENTMESH_MAX_RAM_MB</C>, <C>AGENTMESH_MAX_CPU_CORES</C> and <C>AGENTMESH_MAX_DISK_MB</C>. Edit the values you
+          want to change and restart the worker; there is no need to enroll again. A line exists only if you set that limit when installing; add it if it is missing. On Linux:
+        </P>
+        <Code code={limitsCommand.linux} />
+        <P>
+          On macOS, edit the same file (<C>sed -i &apos;&apos;</C> instead of <C>sed -i</C>) and restart with{' '}
+          <C>{limitsCommand.macos}</C>.
+        </P>
+        <List
+          items={[
+            'The worker reports its limits with every heartbeat, so My Nodes shows the new values within seconds. Then run agentmesh-worker doctor: “Resources offered” should show them.',
+            'If doctor warns “Memory headroom: … free now but … offered”, the machine does not have that much memory free at the moment (for example because your own apps or Ollama use it). Lower the RAM limit to about what is free, or deployments fail with INSUFFICIENT_MEMORY.',
+            'Deployments already running keep their reservation; the new limits apply to new placements. Only models that fit your limits are placed on the machine: with about 2 GB of RAM, expect the smallest models, such as Qwen2.5 0.5B or TinyLlama.',
+          ]}
+        />
       </Section>
 
       <Section id="community-models" title="Community models (opt-in)">
@@ -247,6 +272,8 @@ export default function ProviderGuide() {
             ['…agentmesh-worker.env already exists', <>A worker with that name is installed. Run <C>./uninstall.sh</C> first, or use <C>--name</C> for a second worker.</>],
             ['sha256sum: … FAILED', 'A download is corrupt or incomplete. Delete the folder and download again; do not run install.sh.'],
             ['Enrollment fails', 'Tokens work once and expire after 60 minutes. Create a new token in the dashboard.'],
+            [<><C key="ct">ProtocolError: HTTP 0: ConnectTimeout</C> while enrolling</>, <>The machine could not reach the control plane (a network drop, VPN or proxy, or the server waking up). Check <C>{`curl ${API_URL.replace('/api/v1', '')}/health`}</C>. The installer stopped after writing its config, so run the uninstaller (without <C>--purge-models</C>), then the install command again; the token was not used and still works within its 60 minutes.</>],
+            [<><C key="mh">Memory headroom</C> warning in doctor</>, <>Less memory is free than you offer. Lower <C>AGENTMESH_MAX_RAM_MB</C> (see <A href="#limits">Change how much you offer</A>).</>],
             ['Node shows Offline', <>Check the service status and logs above, and that the machine can reach <C>{API_URL.replace('/api/v1', '')}</C>.</>],
           ]}
         />
@@ -264,11 +291,13 @@ export default function ProviderGuide() {
       </Section>
 
       <Section id="uninstall" title="Uninstall">
-        <Code title="Installable agent" code={uninstallCommand()} />
+        <Code title="Installed from a GitHub release" code={uninstallCommand()} />
+        <Code title="Installed from source" code={sourceUninstallCommand} />
         <P>
           This stops the service and every managed workload, and deletes the credential, config, private environment and (with{' '}
           <C>--purge-models</C>) downloaded models. Your own Ollama is left untouched. For the Docker worker run{' '}
-          <C>docker compose -f docker-compose.worker.yml down -v</C>. Then revoke the node in the dashboard.
+          <C>docker compose -f docker-compose.worker.yml down -v</C>. Then revoke the node in the dashboard. Files in{' '}
+          <C>~/.config/agentmesh</C> that the installer did not write are kept, and so is that folder while they remain.
         </P>
       </Section>
 
