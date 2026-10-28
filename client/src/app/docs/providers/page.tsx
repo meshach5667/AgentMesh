@@ -1,18 +1,15 @@
 import type { Metadata } from 'next';
 import { A, C, Callout, Code, DocPage, H3, List, P, Section, Table } from '@/components/docs/DocsContent';
-import { ReleaseStatus } from '@/components/docs/ReleaseStatus';
-import { API_URL, RELEASES_URL, WORKER_VERSION } from '@/lib/config';
+import { ReleaseCommand, ReleaseStatus } from '@/components/docs/ReleaseStatus';
+import { API_URL, RELEASES_URL } from '@/lib/config';
 import {
   WORKER_BIN,
-  agentInstallCommand,
   dockerInstallCommand,
   limitsCommand,
   serviceLogCommands,
   sourceInstallCommand,
   sourceUninstallCommand,
   statusCommand,
-  uninstallCommand,
-  workerTag,
   workerWheel,
 } from '@/lib/worker';
 import { docMetadata } from '@/lib/seo';
@@ -77,13 +74,13 @@ export default function ProviderGuide() {
       <Section id="install-release" title="Install from a GitHub release">
         <ReleaseStatus />
         <P>
-          Each worker release on <A href={RELEASES_URL}>GitHub Releases</A> is tagged <C>{workerTag()}</C> and contains{' '}
-          <C>{workerWheel()}</C>, <C>install.sh</C>, <C>uninstall.sh</C> and <C>SHA256SUMS</C>. The command below downloads the release into{' '}
-          <C>~/agentmesh-worker-{WORKER_VERSION}</C>, verifies every file against <C>SHA256SUMS</C> (stopping if any does not match), and only
+          Each worker release on <A href={RELEASES_URL}>GitHub Releases</A> contains the wheel (such as <C>{workerWheel()}</C>),{' '}
+          <C>install.sh</C>, <C>uninstall.sh</C> and <C>SHA256SUMS</C>. The command below uses the exact tag of the newest such release on
+          GitHub, downloads it into <C>~/agentmesh-worker-&lt;version&gt;</C>, verifies every file against <C>SHA256SUMS</C> (stopping if any does not match), and only
           then runs the installer. Paste your token in place of <C>&lt;enrollment-token&gt;</C>; it is passed to the installer only, never put in
           a URL.
         </P>
-        <Code title="Linux and macOS" code={agentInstallCommand()} />
+        <ReleaseCommand kind="install" title="Linux and macOS" />
         <P>The installer:</P>
         <List
           ordered
@@ -291,7 +288,7 @@ export default function ProviderGuide() {
       </Section>
 
       <Section id="uninstall" title="Uninstall">
-        <Code title="Installed from a GitHub release" code={uninstallCommand()} />
+        <ReleaseCommand kind="uninstall" title="Installed from a GitHub release" />
         <Code title="Installed from source" code={sourceUninstallCommand} />
         <P>
           This stops the service and every managed workload, and deletes the credential, config, private environment and (with{' '}

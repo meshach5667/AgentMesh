@@ -2,12 +2,20 @@ import { CONTROL_PLANE_URL, REPO_URL, WORKER_VERSION } from './config';
 
 export const workerTag = (version = WORKER_VERSION) => `worker-v${version}`;
 export const workerWheel = (version = WORKER_VERSION) => `agentmesh_worker-${version}-py3-none-any.whl`;
-export const workerReleaseUrl = (version = WORKER_VERSION) => `${REPO_URL}/releases/tag/${workerTag(version)}`;
-export const workerDownloadBase = (version = WORKER_VERSION) => `${REPO_URL}/releases/download/${workerTag(version)}`;
+export const workerReleaseUrl = (tag = workerTag()) => `${REPO_URL}/releases/tag/${encodeURIComponent(tag)}`;
+export const workerDownloadBase = (tag = workerTag()) => `${REPO_URL}/releases/download/${encodeURIComponent(tag)}`;
+
+/** A published worker release as found on GitHub: its exact tag and the version of the wheel attached to it. */
+export interface WorkerRelease {
+  tag: string;
+  version: string;
+}
 
 export interface InstallOptions {
   token?: string;
   version?: string;
+  /** Exact GitHub release tag holding the assets; defaults to worker-v<version>. */
+  tag?: string;
   controlPlane?: string;
   maxRamMb?: number;
   maxCpu?: number;
@@ -20,6 +28,7 @@ const TOKEN_PLACEHOLDER = '<enrollment-token>';
 export function agentInstallCommand({
   token,
   version = WORKER_VERSION,
+  tag = workerTag(version),
   controlPlane = CONTROL_PLANE_URL,
   maxRamMb = 8192,
   maxCpu = 4,
@@ -27,7 +36,7 @@ export function agentInstallCommand({
 }: InstallOptions = {}): string {
   return [
     `VERSION=${version}`,
-    `BASE=${workerDownloadBase(version)}`,
+    `BASE=${workerDownloadBase(tag)}`,
     'mkdir -p ~/agentmesh-worker-$VERSION && cd ~/agentmesh-worker-$VERSION',
     'for f in install.sh uninstall.sh agentmesh_worker-$VERSION-py3-none-any.whl SHA256SUMS; do',
     '  curl -fsSLO "$BASE/$f" || break',

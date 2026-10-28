@@ -1,20 +1,25 @@
 import { useQuery } from '@tanstack/react-query';
-import { WORKER_VERSION } from '../lib/config';
 
 export type WorkerReleaseState = 'published' | 'unpublished' | 'unknown';
 
-/** Asks the dashboard's own server (which asks GitHub) whether the worker release this dashboard points at is published. */
-export const useWorkerRelease = (version = WORKER_VERSION) =>
+export interface WorkerReleaseInfo {
+  state: WorkerReleaseState;
+  /** Exact GitHub tag and wheel version, when published. */
+  tag?: string;
+  version?: string;
+}
+
+/** Asks the dashboard's own server (which asks GitHub) for the newest published worker release and its exact tag. */
+export const useWorkerRelease = () =>
   useQuery({
-    queryKey: ['worker-release', version],
-    queryFn: async (): Promise<WorkerReleaseState> => {
+    queryKey: ['worker-release'],
+    queryFn: async (): Promise<WorkerReleaseInfo> => {
       try {
         const res = await fetch('/api/worker-release');
-        if (!res.ok) return 'unknown';
-        const body = (await res.json()) as { state?: WorkerReleaseState };
-        return body.state ?? 'unknown';
+        if (!res.ok) return { state: 'unknown' };
+        return (await res.json()) as WorkerReleaseInfo;
       } catch {
-        return 'unknown';
+        return { state: 'unknown' };
       }
     },
     staleTime: 10 * 60 * 1000,

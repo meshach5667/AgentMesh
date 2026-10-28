@@ -10,7 +10,8 @@ import { CodeBlock, InlineValue } from '@/components/common/CodeBlock';
 import { Notice, PageHeader } from '@/components/common/Notices';
 import { useCreateEnrollmentToken } from '@/hooks/useNodes';
 import { useWorkerRelease } from '@/hooks/useWorkerRelease';
-import { RELEASES_URL, WORKER_VERSION } from '@/lib/config';
+import { RELEASES_URL } from '@/lib/config';
+import { releaseOrDefault } from '@/components/docs/ReleaseStatus';
 import { agentInstallCommand, dockerInstallCommand, sourceInstallCommand, statusCommand, uninstallCommand, workerReleaseUrl } from '@/lib/worker';
 import { errorMessage } from '@/lib/errors';
 import { dateTime } from '@/lib/format';
@@ -23,7 +24,8 @@ export default function EnrollNodePage() {
   const token = create.data?.token;
 
   const release = useWorkerRelease();
-  const published = release.data === 'published';
+  const published = release.data?.state === 'published';
+  const { tag, version } = releaseOrDefault(release.data);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -96,27 +98,27 @@ export default function EnrollNodePage() {
                 touching your own Ollama service or models.
               </p>
               {release.isPending ? (
-                <p className="text-sm text-muted-foreground">Checking for the worker {WORKER_VERSION} release…</p>
+                <p className="text-sm text-muted-foreground">Checking GitHub for the latest worker release…</p>
               ) : published ? (
                 <>
                   <p className="text-sm text-muted-foreground">
                     Downloads the{' '}
-                    <a href={workerReleaseUrl()} className="underline underline-offset-4" target="_blank" rel="noreferrer">
-                      worker {WORKER_VERSION} release
-                    </a>
-                    , verifies it against <code className="font-mono">SHA256SUMS</code>, then installs. Your token is only
+                    <a href={workerReleaseUrl(tag)} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                      worker {version} release
+                    </a>{' '}
+                    (tag <code className="font-mono">{tag}</code>), verifies it against <code className="font-mono">SHA256SUMS</code>, then installs. Your token is only
                     passed to the installer, never put in a URL.
                   </p>
-                  <CodeBlock code={agentInstallCommand({ token })} />
+                  <CodeBlock code={agentInstallCommand({ token, tag, version })} />
                   <p className="text-xs text-muted-foreground">
-                    Keep the <code className="font-mono">~/agentmesh-worker-{WORKER_VERSION}</code> folder: it holds the
-                    uninstaller (<code className="font-mono">{uninstallCommand()}</code>).
+                    Keep the <code className="font-mono">~/agentmesh-worker-{version}</code> folder: it holds the
+                    uninstaller (<code className="font-mono">{uninstallCommand(version)}</code>).
                   </p>
                 </>
               ) : (
                 <>
-                  {release.data === 'unpublished' ? (
-                    <Notice tone="warning" title={`Worker ${WORKER_VERSION} has not been published yet`}>
+                  {release.data?.state === 'unpublished' ? (
+                    <Notice tone="warning" title="No worker release has been published yet">
                       Prebuilt downloads will appear on the{' '}
                       <a href={RELEASES_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
                         GitHub Releases page
@@ -125,11 +127,11 @@ export default function EnrollNodePage() {
                     </Notice>
                   ) : (
                     <Notice tone="warning" title="Could not check the worker release">
-                      GitHub did not answer. If the{' '}
-                      <a href={workerReleaseUrl()} className="underline underline-offset-4" target="_blank" rel="noreferrer">
-                        worker {WORKER_VERSION} release
-                      </a>{' '}
-                      exists, reload this page; otherwise build the worker from the source repository:
+                      GitHub did not answer. If a worker release is on the{' '}
+                      <a href={RELEASES_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                        GitHub Releases page
+                      </a>
+                      , reload this page; otherwise build the worker from the source repository:
                     </Notice>
                   )}
                   <CodeBlock code={sourceInstallCommand({ token })} />
