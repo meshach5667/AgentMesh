@@ -4,8 +4,8 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Activity, Banknote, BarChart3, BookOpen, Box, CreditCard, KeyRound, LayoutDashboard, LogOut, PlusCircle, Receipt, Scale,
-  Megaphone, ScrollText, Server, Settings, Sparkles, Tag, TrendingUp, Undo2, Wallet, type LucideIcon,
+  Activity, BarChart3, BookOpen, Box, Calculator, HandCoins, KeyRound, LayoutDashboard, LogOut, Megaphone, PlusCircle, ScrollText,
+  Server, Settings, Sparkles, Store, type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
@@ -24,6 +24,7 @@ export const customerSections: Section[] = [
   {
     links: [
       { href: '/customer', label: 'Overview', icon: LayoutDashboard },
+      { href: '/customer/providers', label: 'Compute providers', icon: Store },
       { href: '/customer/models', label: 'Models', icon: Box },
       { href: '/customer/deployments', label: 'Deployments', icon: Activity },
       { href: '/customer/ai', label: 'AI Deploy', icon: Sparkles },
@@ -31,11 +32,10 @@ export const customerSections: Section[] = [
     ],
   },
   {
-    title: 'Billing',
+    title: 'Usage',
     links: [
-      { href: '/customer/usage', label: 'Usage', icon: BarChart3 },
-      { href: '/customer/wallet', label: 'Wallet', icon: CreditCard },
-      { href: '/customer/transactions', label: 'Transactions', icon: Receipt },
+      { href: '/customer/usage', label: 'Requests', icon: BarChart3 },
+      { href: '/customer/costs', label: 'Estimated costs', icon: Calculator },
     ],
   },
   { title: 'Account', links: [{ href: '/customer/settings', label: 'Settings', icon: Settings }] },
@@ -51,10 +51,10 @@ export const providerSections: Section[] = [
     ],
   },
   {
-    title: 'Money',
+    title: 'Pricing & payment',
     links: [
-      { href: '/provider/earnings', label: 'Earnings & Payouts', icon: Wallet },
-      { href: '/provider/transactions', label: 'Ledger', icon: Receipt },
+      { href: '/provider/payments', label: 'Profile & payment', icon: HandCoins },
+      { href: '/provider/estimates', label: 'Estimated amounts', icon: Calculator },
     ],
   },
   { title: 'Account', links: [{ href: '/provider/settings', label: 'Settings', icon: Settings }] },
@@ -70,18 +70,7 @@ export const operatorSections: Section[] = [
       { href: '/operator/usage', label: 'Network Usage', icon: BarChart3 },
     ],
   },
-  {
-    title: 'Finance',
-    links: [
-      { href: '/operator/revenue', label: 'Revenue', icon: TrendingUp },
-      { href: '/operator/pricing', label: 'Pricing', icon: Tag },
-      { href: '/operator/payouts', label: 'Payouts', icon: Banknote },
-      { href: '/operator/refunds', label: 'Refunds', icon: Undo2 },
-      { href: '/operator/reconciliation', label: 'Reconciliation', icon: Scale },
-      { href: '/operator/transactions', label: 'Ledger', icon: Receipt },
-      { href: '/operator/sponsorships', label: 'Sponsorships', icon: Megaphone },
-    ],
-  },
+  { title: 'Partners', links: [{ href: '/operator/sponsorships', label: 'Sponsorships & referrals', icon: Megaphone }] },
   { title: 'Security', links: [{ href: '/operator/audit', label: 'Audit Log', icon: ScrollText }] },
 ];
 

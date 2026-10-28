@@ -11,7 +11,9 @@ import { useModel } from '@/hooks/useModels';
 import { errorMessage } from '@/lib/errors';
 
 function NewDeployment() {
-  const modelId = useSearchParams().get('model');
+  const params = useSearchParams();
+  const modelId = params.get('model');
+  const providerId = params.get('provider');
   const { data: model, isLoading, error } = useModel(modelId);
 
   if (!modelId) return <EmptyState action={{ href: '/customer/models', label: 'Choose a model' }}>No model selected.</EmptyState>;
@@ -20,7 +22,7 @@ function NewDeployment() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <PageHeader title={`Deploy ${model.name}`} description="AgentMesh picks a node with enough free capacity and starts the model there." />
+      <PageHeader title={`Deploy ${model.name}`} description="AgentMesh picks the cheapest suitable machine within your limits and starts the model there. You pay its provider directly." />
       {model.is_community && (
         <Notice tone="warning" title="Unreviewed community model">
           You imported this model from Hugging Face. It runs only on nodes whose providers accept community models, so
@@ -37,7 +39,7 @@ function NewDeployment() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <DeployForm model={model} />
+          <DeployForm model={model} providerId={providerId} />
         </CardContent>
       </Card>
     </div>

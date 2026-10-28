@@ -10,5 +10,5 @@ export interface User {
   mfa_required?: boolean;
   mfa_verified?: boolean;
 }
-export interface Provider { id: string; user_id: string; payout_status: string; balance: number; }
+export interface Provider { id: string; user_id: string; display_name: string | null; }
 export interface Customer { id: string; user_id: string; }

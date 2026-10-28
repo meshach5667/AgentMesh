@@ -12,12 +12,12 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import Session
 from app.core.timeutil import utcnow
-from app.documents.deployment import Deployment, DeploymentStatus
+from app.documents.deployment import Deployment, DeploymentAttempt, DeploymentEvent, DeploymentStatus
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeStatus
-from app.documents.transaction import Transaction
 from app.documents.usage import UsageRecord
 from app.documents.user import Customer, Provider, User
+from app.services.scheduler_service import health_state, schedulable
 
 # Nodes the scheduler may consider (see scheduler_service); used for "online" counts.
 ONLINE_NODE_STATUSES = [NodeStatus.ONLINE.value, NodeStatus.AVAILABLE.value, NodeStatus.BUSY.value]
@@ -97,7 +97,8 @@ async def _deployable_models(db: Session) -> int:
 
 async def public_stats(db: Session) -> dict[str, Any]:
     """Counts only: no node names, owners, locations, or hardware details."""
-    online = await db.find(Node, {"status": {"$in": ONLINE_NODE_STATUSES}, "accepting_workloads": True})
+    # Machines that can take work now, judged from health evidence (not merely marked ONLINE).
+    online = [n for n in await db.find(Node, {"mode": {"$ne": None}}) if schedulable(n)]
     runtimes = sorted(
         {
             str(r["name"])
@@ -113,9 +114,8 @@ async def public_stats(db: Session) -> dict[str, Any]:
         "models_deployable": await _deployable_models(db),
         "deployments_ready": await db.count(Deployment, {"status": DeploymentStatus.READY.value}),
         "features": {
-            "test_credits": settings.test_credits_enabled,
-            "payments": False,
-            "provider_payouts": False,
+            "direct_provider_payments": True,
+            "automatic_failover": True,
             "confidential_computing": False,
         },
         "generated_at": utcnow(),
@@ -125,19 +125,18 @@ async def public_stats(db: Session) -> dict[str, Any]:
 async def operator_overview(db: Session) -> dict[str, Any]:
     since = utcnow() - timedelta(hours=24)
     usage = await _usage(db, {"kind": "inference", "created_at": {"$gte": since}})
-    ledger = await db.aggregate(
-        Transaction,
+    attempts = await db.aggregate(
+        DeploymentAttempt,
         [
-            {
-                "$group": {
-                    "_id": {"type": "$type", "status": "$status"},
-                    "n": {"$sum": 1},
-                    "amount": {"$sum": "$amount"},
-                }
-            },
-            {"$sort": {"_id.type": 1, "_id.status": 1}},
+            {"$match": {"ended_at": {"$gte": since}}},
+            {"$group": {"_id": "$outcome", "n": {"$sum": 1}}},
         ],
     )
+    nodes = await db.find(Node, {"mode": {"$ne": None}})
+    health: dict[str, int] = {}
+    for n in nodes:
+        state = health_state(n)
+        health[state] = health.get(state, 0) + 1
     stale_cutoff = utcnow() - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
     return {
         "nodes_by_status": await _count_by(db, Node, "status"),
@@ -154,15 +153,13 @@ async def operator_overview(db: Session) -> dict[str, Any]:
         },
         "users_by_role": await _count_by(db, User, "role"),
         "usage_24h": _usage_row(usage[0] if usage else None),
-        "ledger": [
-            {
-                "type": str(r["_id"].get("type")),
-                "status": str(r["_id"].get("status")),
-                "count": int(r["n"]),
-                "amount": str(r["amount"].to_decimal() if hasattr(r["amount"], "to_decimal") else r["amount"]),
-            }
-            for r in ledger
-        ],
+        "nodes_by_health": health,
+        "recovery_24h": {
+            "attempts_ended": {str(r["_id"]): int(r["n"]) for r in attempts if r["_id"] is not None},
+            "moves": await db.count(DeploymentEvent, {"kind": "rerouted", "created_at": {"$gte": since}}),
+            "waiting_for_node": await db.count(Deployment, {"status": DeploymentStatus.PENDING.value}),
+            "needs_attention": await db.count(Deployment, {"status": DeploymentStatus.NEEDS_ATTENTION.value}),
+        },
         "generated_at": utcnow(),
     }
 
@@ -198,7 +195,7 @@ async def provider_anomalies(db: Session, hours: int = 24, min_requests: int = 2
     volume, failure rate, and how often runtime-reported token counts exceeded what the server-observed request and
     response sizes allow (those claims are capped for billing). Nodes over a threshold are flagged."""
     from app.documents.usage import UsageRecord
-    from app.services.billing_service import TEMPLATE_TOKENS
+    from app.services.cost_service import TEMPLATE_TOKENS
 
     since = utcnow() - timedelta(hours=hours)
     input_cap = {"$add": [{"$ifNull": ["$request_bytes", 1e18]}, TEMPLATE_TOKENS]}

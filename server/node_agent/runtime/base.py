@@ -34,6 +34,9 @@ class WorkloadSpec:
     # Hugging Face: {"type": "huggingface", "repo": ..., "revision": <40-hex commit>, "file": ..., "sha256": ...,
     # "size": bytes}; "file"/"sha256" are absent for full-repo runtimes such as vLLM.
     source: dict | None = None
+    # The control plane's execution attempt this workload belongs to; echoed in status reports so a report about an
+    # earlier placement is never applied. None from control planes that do not send one.
+    attempt_id: str | None = None
 
 
 @dataclass

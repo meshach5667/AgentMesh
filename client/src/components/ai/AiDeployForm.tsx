@@ -60,7 +60,7 @@ export function AiDeployForm() {
         />
         <p className="text-xs text-muted-foreground">
           The AI agent picks a model from the approved catalog. It cannot exceed the limits below: AgentMesh checks every
-          plan against them, your wallet, and current prices before anything runs.
+          plan against them and the providers&apos; current prices before anything runs.
         </p>
       </div>
 

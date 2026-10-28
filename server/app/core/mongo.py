@@ -2,7 +2,7 @@
 
 A Session works like the SQLAlchemy session it replaces: documents loaded through it or added to it are tracked
 (one in-memory instance per id), changed in memory, and written together by ``commit()`` in one transaction, so a
-ledger posting and the balance it changes are saved together or not at all. Operations that must take effect
+capacity reservation and the deployment it is for are saved together or not at all. Operations that must take effect
 immediately (``update_one``: atomic conditional updates such as reserving node capacity; ``flush``) run in that
 same transaction, which then stays open until ``commit()`` or ``rollback()``. Like SQLAlchemy's autoflush, pending
 changes are flushed before a query or an atomic update, so they see everything added or changed so far.
@@ -329,7 +329,7 @@ async def retry_transient[T](db: Session, work: Callable[[], Awaitable[T]], atte
     """Run ``work`` (which uses ``db`` and commits) again after a write conflict with a concurrent transaction.
 
     MongoDB aborts the later of two transactions writing the same document instead of making it wait as PostgreSQL
-    does, so contended writes (reserving a node's capacity, a wallet's balance) are retried here. ``work`` must have
+    does, so contended writes (reserving a node's capacity, assigning a deployment) are retried here. ``work`` must have
     no side effects outside the database before it commits, and must load the documents it changes itself: the
     rollback before a retry forgets everything the session had loaded.
     """

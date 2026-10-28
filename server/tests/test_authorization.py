@@ -4,7 +4,6 @@ import uuid
 
 import pytest
 
-from app.core.config import settings
 from app.documents import Deployment, Node, UsageRecord
 
 
@@ -166,18 +165,21 @@ async def test_heartbeat_requires_matching_node_key(client, db, make_user):
     assert (await client.post(url, headers={"Authorization": f"Bearer {a['api_key']}"})).status_code == 403
 
 
-async def test_test_credits_disabled_outside_dev(client, make_user, monkeypatch):
-    _, headers = await make_user("customer")
-    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
-    resp = await client.post("/api/v1/wallets/deposit", json={"amount": "10"}, headers=headers)
-    assert resp.status_code == 403
-
-
-async def test_test_credits_labelled_in_dev(client, make_user, monkeypatch):
-    _, headers = await make_user("customer")
-    monkeypatch.setattr(settings, "ENVIRONMENT", "dev")
-    monkeypatch.setattr(settings, "ALLOW_TEST_CREDITS", True)
-    resp = await client.post("/api/v1/wallets/deposit", json={"amount": "10"}, headers=headers)
-    assert resp.status_code == 200, resp.text
-    txs = (await client.get("/api/v1/transactions", headers=headers)).json()
-    assert txs[0]["reference"] == "test-credit"
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/api/v1/wallets/deposit"),
+        ("GET", "/api/v1/wallets"),
+        ("GET", "/api/v1/transactions"),
+        ("POST", "/api/v1/payments/topups"),
+        ("POST", "/api/v1/payments/paystack/webhook"),
+        ("GET", "/api/v1/earnings"),
+        ("GET", "/api/v1/billing/charges"),
+        ("GET", "/api/v1/admin/payouts"),
+        ("GET", "/api/v1/admin/pricing"),
+    ],
+)
+async def test_retired_payment_routes_do_not_exist(client, make_user, method, path):
+    """AgentMesh processes no payments: no wallet, top-up, payout, commission or Paystack route remains."""
+    _, headers = await make_user("operator")
+    assert (await client.request(method, path, headers=headers)).status_code in (404, 405)

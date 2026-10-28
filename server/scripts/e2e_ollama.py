@@ -201,6 +201,8 @@ def main() -> int:
 
         def ready():
             d = httpx.get(f"{cust}/api/v1/deployments/{dep['id']}", headers=customer).json()
+            if args.expect_failure and d["status"] in ("PENDING", "NEEDS_ATTENTION"):
+                return d  # a node-caused failure with no other node: handed back, waiting for one
             if d["status"] == "FAILED":
                 if args.expect_failure:
                     return d
@@ -209,10 +211,16 @@ def main() -> int:
 
         if args.expect_failure:
             dep = wait_for(ready, args.deploy_timeout, 2)
+            attempts = (
+                httpx.get(f"{cust}/api/v1/deployments/{dep['id']}/attempts", headers=customer).json() if dep else []
+            )
+            failed_code = dep["error_code"] if dep and dep["status"] == "FAILED" else None
+            if dep and dep["status"] != "FAILED" and attempts:
+                failed_code = attempts[-1]["error_code"]  # the attempt that failed; the deployment now waits
             s.check(
                 f"deployment failed with {args.expect_failure}",
-                bool(dep) and dep["status"] == "FAILED" and dep["error_code"] == args.expect_failure,
-                f"{dep['error_code']}: {(dep['error_message'] or '')[:120]}" if dep else "timed out",
+                failed_code == args.expect_failure,
+                f"{dep['status']} {failed_code}: {(dep['error_message'] or '')[:120]}" if dep else "timed out",
             )
             events = httpx.get(f"{cust}/api/v1/deployments/{dep['id']}/events", headers=customer).json()
             path = [e["to_status"] for e in events if e["to_status"]]

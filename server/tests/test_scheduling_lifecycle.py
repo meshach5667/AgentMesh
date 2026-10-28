@@ -317,7 +317,8 @@ async def test_provisioning_stall_fails_and_cleans_up(client, db, make_user, enr
     future = utcnow() + timedelta(seconds=settings.PROVISION_STALL_TIMEOUT_SECONDS + 1)
     assert await monitors.run_deployment_timeouts(now=future) == 1
     got = await _dep(db, dep["id"])
-    assert got.status == "FAILED" and got.error_code == "PROVISION_STALLED"
+    # No other node: it waits for one (PENDING), its capacity released and the stalled node told to clean up.
+    assert got.status == "PENDING" and got.error_code == "NO_ELIGIBLE_NODE"
     assert (await _node(db, node["node_id"])).reserved_ram_mb == 0
     stops = await db.find(NodeCommand, {"type": "STOP"})
     assert len(stops) == 1
@@ -345,7 +346,7 @@ async def test_unconfirmed_stop_times_out_to_pending_node_cleanup(client, db, ma
     assert hb.json()["stop_deployments"] == [dep["id"]]
 
 
-async def test_undelivered_deploy_fails_after_max_attempts(client, db, make_user, enroll_node, ollama_model):
+async def test_undelivered_deploy_is_handed_back_after_max_attempts(client, db, make_user, enroll_node, ollama_model):
     node = await enroll_node()
     _, customer = await make_user("customer")
     dep = (await _deploy(client, customer, ollama_model)).json()
@@ -355,16 +356,16 @@ async def test_undelivered_deploy_fails_after_max_attempts(client, db, make_user
     await db.commit()
     assert await monitors.run_command_leases() == 1
     got = await _dep(db, dep["id"])
-    assert got.status == "FAILED" and got.error_code == "NODE_UNRESPONSIVE"
+    assert got.status == "PENDING" and got.error_code == "NO_ELIGIBLE_NODE"
     assert (await _node(db, node["node_id"])).reserved_ram_mb == 0
 
 
-async def test_revoking_node_fails_its_deployments(client, db, make_user, enroll_node, ollama_model):
+async def test_revoking_node_releases_its_deployments(client, db, make_user, enroll_node, ollama_model):
     node = await enroll_node()
     _, customer = await make_user("customer")
     dep = (await _deploy(client, customer, ollama_model)).json()
     await _report(client, node, dep["id"], "READY")
     await client.post(f"/api/v1/nodes/{node['node_id']}/revoke", headers=node["provider_headers"])
     got = await _dep(db, dep["id"])
-    assert got.status == "FAILED" and got.error_code == "NODE_REVOKED"  # no other node to move to
+    assert got.status == "PENDING"  # no other node to move to yet: waits for one
     assert (await _node(db, node["node_id"])).reserved_ram_mb == 0

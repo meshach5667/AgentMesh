@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { reportImpression, useSponsored } from '@/hooks/useSponsorship';
-import { CATEGORY_LABEL, clickUrl, dismiss, dismissedIds } from '@/lib/sponsorship';
+import { CATEGORY_LABEL, promotionLabel, clickUrl, dismiss, dismissedIds } from '@/lib/sponsorship';
 import { cn } from '@/lib/utils';
 import type { Placement, SponsoredItem } from '@/types';
 
@@ -34,9 +34,9 @@ function Item({ item, placement, onDismiss }: { item: SponsoredItem; placement: 
   return (
     <div ref={ref} className="relative rounded-lg border border-dashed border-border bg-muted/30 p-3 text-sm" data-testid="sponsored-item">
       <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-        <span className="rounded border border-border px-1.5 py-px font-medium">Sponsored</span>
+        <span className="rounded border border-border px-1.5 py-px font-medium">{promotionLabel(item.kind)}</span>
         <span>{CATEGORY_LABEL[item.category]}</span>
-        <button type="button" onClick={onDismiss} className="ml-auto rounded p-0.5 hover:bg-muted" aria-label={`Hide sponsored item from ${item.sponsor}`}>
+        <button type="button" onClick={onDismiss} className="ml-auto rounded p-0.5 hover:bg-muted" aria-label={`Hide ${promotionLabel(item.kind).toLowerCase()} from ${item.sponsor}`}>
           <X className="size-3.5" />
         </button>
       </div>

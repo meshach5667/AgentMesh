@@ -10,13 +10,14 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.database import session_scope
+from app.core.mongo import is_transient
 from app.core.timeutil import utcnow
 from app.documents.deployment import Deployment
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.node import Node, NodeStatus
 from app.documents.worker import CommandStatus, CommandType, NodeCommand
+from app.services import audit_service, placement_service
 from app.services import deployment_lifecycle as lifecycle
-from app.services import placement_service
 from app.services.scheduler_service import release_reservation
 
 logger = logging.getLogger(__name__)
@@ -43,19 +44,91 @@ async def handle_node_loss(db, node: Node, reason: str) -> None:
 
 
 async def run_stale_nodes(now: datetime | None = None) -> int:
-    """Mark nodes without a recent heartbeat OFFLINE (see handle_node_loss). Reservations of serving
-    deployments are kept during the grace period so a brief disconnection cannot double-book the node."""
+    """Node health from heartbeats. Late (older than HEARTBEAT_DEGRADED_SECONDS): no new work, nothing moved, so
+    one slow heartbeat is not a failure. Missing for HEARTBEAT_TIMEOUT_SECONDS (several intervals): OFFLINE, and
+    its work is handled as a node loss (see handle_node_loss). Reservations of serving deployments are kept during
+    the unhealthy grace period so a brief disconnection cannot double-book the node. Returns nodes marked OFFLINE."""
     now = now or utcnow()
     cutoff = now - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
+    late_cutoff = now - timedelta(seconds=settings.HEARTBEAT_DEGRADED_SECONDS)
     async with session_scope() as db:
+        late = await db.find(
+            Node,
+            {
+                "status": NodeStatus.ONLINE.value,
+                "mode": {"$ne": None},
+                "heartbeat_late_at": None,
+                "last_heartbeat": {"$lt": late_cutoff, "$gte": cutoff},
+            },
+        )
+        for node in late:
+            node.heartbeat_late_at = now
+            audit_service.record(
+                db,
+                actor_id=None,
+                action="node.heartbeat_late",
+                resource_type="node",
+                resource_id=node.id,
+                details={"last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None},
+            )
         nodes = await db.find(
             Node, {"status": NodeStatus.ONLINE.value, "mode": {"$ne": None}, "last_heartbeat": {"$lt": cutoff}}
         )
         for node in nodes:
-            node.status = NodeStatus.OFFLINE.value
+            # Conditional, so a heartbeat that arrived meanwhile is never overwritten by this stale decision.
+            if not await db.update_one(
+                Node,
+                {"_id": node.id, "status": NodeStatus.ONLINE.value, "last_heartbeat": node.last_heartbeat},
+                {"$set": {"status": NodeStatus.OFFLINE.value, "recovery_heartbeats": 0}},
+            ):
+                continue
+            node.status, node.recovery_heartbeats = NodeStatus.OFFLINE.value, 0
+            audit_service.record(
+                db,
+                actor_id=None,
+                action="node.offline",
+                resource_type="node",
+                resource_id=node.id,
+                details={"reason": f"No heartbeat for {settings.HEARTBEAT_TIMEOUT_SECONDS} s"},
+            )
             await handle_node_loss(db, node, "Node stopped sending heartbeats")
         await db.commit()
         return len(nodes)
+
+
+async def run_pending_placements(now: datetime | None = None) -> int:
+    """Retry placing PENDING deployments whose backoff has passed. Each is claimed with a compare-and-set on its
+    next retry time first, so concurrent runners (replicas, or a restarted process) never place it twice; the
+    single-active-attempt index is the final guarantee. Returns how many were placed."""
+    now = now or utcnow()
+    placed = 0
+    async with session_scope() as db:
+        due = await db.find(
+            Deployment, {"status": S.PENDING.value, "next_placement_at": {"$lte": now}}, sort=[("next_placement_at", 1)]
+        )
+        ids = [(d.id, d.next_placement_at) for d in due]
+    for dep_id, when in ids:
+        async with session_scope() as db:
+            claim_until = now + timedelta(seconds=max(30, settings.MONITOR_INTERVAL_SECONDS * 2))
+            try:
+                if not await db.update_one(
+                    Deployment,
+                    {"_id": dep_id, "status": S.PENDING.value, "next_placement_at": when},
+                    {"$set": {"next_placement_at": claim_until}},
+                ):
+                    continue  # another runner claimed it
+                dep = await db.get(Deployment, dep_id)
+                if dep is None:
+                    continue
+                if await placement_service.retry_placement(db, dep, actor="system"):
+                    placed += 1
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001 - one deployment must not block the others
+                await db.rollback()
+                if is_transient(exc):
+                    continue  # a concurrent runner is placing it
+                logger.exception("Placement retry failed for deployment %s", dep_id)
+    return placed
 
 
 async def run_deployment_timeouts(now: datetime | None = None) -> int:
@@ -135,15 +208,14 @@ async def _is_leader(redis, owner: str) -> bool:
 
 
 RETENTION_EVERY_SECONDS = 3600
-RECONCILE_EVERY_SECONDS = 600
 
 
 async def monitor_loop(redis=None) -> None:
-    from app.services import billing_service, reconciliation_service, retention_service
+    from app.services import cost_service, retention_service
     from app.services.ai import workflow as ai_workflow
 
     owner = uuid.uuid4().hex
-    last_billing = last_reconcile = last_retention = 0.0
+    last_estimate = last_retention = 0.0
     while True:
         await asyncio.sleep(settings.MONITOR_INTERVAL_SECONDS)
         try:
@@ -156,18 +228,16 @@ async def monitor_loop(redis=None) -> None:
             run_stale_nodes,
             run_command_leases,
             run_deployment_timeouts,
+            run_pending_placements,
             ai_workflow.run_due,  # deterministic steps; needs no inference machine to be online
         ]
         now = time.monotonic()
-        if now - last_billing >= settings.BILLING_INTERVAL_SECONDS:
-            jobs.append(billing_service.run_billing)
-            last_billing = now
+        if now - last_estimate >= settings.COST_ESTIMATE_INTERVAL_SECONDS:
+            jobs.append(cost_service.run_estimates)
+            last_estimate = now
         if now - last_retention >= RETENTION_EVERY_SECONDS:
             jobs.append(retention_service.run_retention)
             last_retention = now
-        if settings.payments_enabled and now - last_reconcile >= RECONCILE_EVERY_SECONDS:
-            jobs.append(reconciliation_service.run)
-            last_reconcile = now
         for job in jobs:
             try:
                 await job()

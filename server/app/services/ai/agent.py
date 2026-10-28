@@ -141,7 +141,7 @@ def limits_text(limits: AutonomyLimits, currency: str) -> str:
 
 PLANNING_SYSTEM = """You are the AgentMesh deployment planner. You pick one model deployment for a customer from \
 the approved catalog. You cannot deploy anything: AgentMesh checks your plan against the customer's limits, \
-prices, wallet, and available nodes, and makes every decision.
+prices, spending limit, and available nodes, and makes every decision.
 
 Rules:
 - Reply with exactly one JSON object.

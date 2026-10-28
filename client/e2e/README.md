@@ -20,21 +20,10 @@ E2E_OPERATOR_EMAIL=ops@example.com E2E_OPERATOR_PASSWORD=e2e-operator-password \
   PLAYWRIGHT_CHANNEL=chrome npx playwright test
 ```
 
-Billing and payments: also start `tests/fixtures/fake_paystack_server.py` and point the API at it. The
-operator then publishes prices, the customer tops up (Paystack's hosted page is stubbed in the browser, and
-the payment is confirmed by a signed webhook), the deployment is charged, and the provider is paid out after
-operator approval:
-
-```bash
-cd server
-FAKE_PAYSTACK_SECRET=sk_test_fake0000000000000000000000 \
-  FAKE_PAYSTACK_WEBHOOK=http://127.0.0.1:8000/api/v1/payments/paystack/webhook \
-  venv/bin/uvicorn tests.fixtures.fake_paystack_server:app --port 8090
-# start the API with these as well:
-PAYSTACK_SECRET_KEY=sk_test_fake0000000000000000000000 PAYSTACK_BASE_URL=http://127.0.0.1:8090 \
-  BILLING_INTERVAL_SECONDS=60 MONITOR_INTERVAL_SECONDS=5 PAYOUT_MIN_AMOUNT=1 venv/bin/uvicorn app.main:app --port 8000
-# and run the test with E2E_FAKE_PAYSTACK=http://127.0.0.1:8090
-```
+Prices and payment: the provider publishes a profile, a payment arrangement and a price for its machine;
+the customer finds it under Compute providers, deploys with no balance (customers pay providers directly),
+and both sides then see the same payment reference next to the cost estimate. For the estimate step to
+finish quickly, start the API with `COST_ESTIMATE_INTERVAL_SECONDS=60 MONITOR_INTERVAL_SECONDS=5`.
 
 Optional: `E2E_API` (default `http://localhost:8000`), `E2E_PYTHON` (default `../server/venv/bin/python`),
 `E2E_MODEL` (catalog name, default `SmolLM2 135M`).

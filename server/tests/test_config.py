@@ -34,8 +34,18 @@ PROD = {
 }
 
 
-def test_production_disables_test_credits():
-    assert Settings(**PROD).test_credits_enabled is False
+def test_no_payment_settings_are_needed():
+    """The service starts with no payment gateway configuration at all."""
+    configured = Settings(**PROD)
+    assert not any(name.startswith(("PAYSTACK", "PAYOUT", "TOPUP")) for name in type(configured).model_fields)
+    assert configured.DEFAULT_CURRENCY == "NGN"
+
+
+def test_failover_timing_is_validated():
+    with pytest.raises(ValidationError, match="HEARTBEAT_DEGRADED_SECONDS"):
+        Settings(HEARTBEAT_DEGRADED_SECONDS=200, HEARTBEAT_TIMEOUT_SECONDS=90, _env_file=None)
+    with pytest.raises(ValidationError, match="PLACEMENT_RETRY_BASE_SECONDS"):
+        Settings(PLACEMENT_RETRY_BASE_SECONDS=600, PLACEMENT_RETRY_MAX_SECONDS=300, _env_file=None)
 
 
 def test_production_requires_a_mongodb_url():
@@ -50,7 +60,9 @@ def test_dev_allows_default_secret():
 def test_heartbeat_timeout_must_cover_several_intervals():
     with pytest.raises(ValidationError, match="HEARTBEAT_TIMEOUT_SECONDS"):
         Settings(HEARTBEAT_TIMEOUT_SECONDS=15, WORKER_HEARTBEAT_INTERVAL_SECONDS=15, _env_file=None)
-    Settings(HEARTBEAT_TIMEOUT_SECONDS=15, WORKER_HEARTBEAT_INTERVAL_SECONDS=3, _env_file=None)
+    Settings(
+        HEARTBEAT_TIMEOUT_SECONDS=15, HEARTBEAT_DEGRADED_SECONDS=8, WORKER_HEARTBEAT_INTERVAL_SECONDS=3, _env_file=None
+    )
 
 
 def test_unset_environment_fails_closed(monkeypatch):
@@ -60,4 +72,4 @@ def test_unset_environment_fails_closed(monkeypatch):
     with pytest.raises(ValidationError, match="SECRET_KEY"):
         Settings(_env_file=None)
     configured = Settings(**{k: v for k, v in PROD.items() if k != "ENVIRONMENT"})
-    assert configured.is_dev is False and configured.test_credits_enabled is False
+    assert configured.is_dev is False

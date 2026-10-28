@@ -1,20 +1,21 @@
-"""Sponsored placements: campaigns, the platform's advertising settings, and their measured views and clicks.
+"""Sponsored placements and referral links: campaigns, the platform's advertising settings, and their measured
+views and clicks.
 
-Sponsorship is a supplementary revenue stream, separate from compute billing: sponsors are invoiced outside the
-ledger, and what a campaign has earned is computed from its counted impressions and clicks.
+A lightweight foundation only: AgentMesh does not bill advertisers or track conversions. Agreements with sponsors and
+referral partners live outside the platform; what is stored here is what to show, where, when, and how often it was
+genuinely seen and clicked. Sponsored content never influences placement, health checks or any security decision.
 """
 
 import enum
 import uuid
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from pydantic import Field
 from pymongo import ASCENDING, IndexModel
 
 from app.core.timeutil import utcnow
-from app.documents.base import Doc, Money, index, unique
+from app.documents.base import Doc, index, unique
 
 
 class CampaignStatus(str, enum.Enum):  # noqa: UP042
@@ -25,15 +26,21 @@ class CampaignStatus(str, enum.Enum):  # noqa: UP042
 
 
 class SponsorCategory(str, enum.Enum):  # noqa: UP042
+    GPU_CLOUD = "gpu_cloud"
+    AI_INFERENCE = "ai_inference"
+    MODEL_HOSTING = "model_hosting"
+    CLOUD_INFRASTRUCTURE = "cloud_infrastructure"
+    DATA_CENTER = "data_center"
+    DEVELOPER_TOOLS = "developer_tools"
+    # Earlier categories, kept so existing campaigns stay valid.
     AI_TOOLS = "ai_tools"
     GPU_HARDWARE = "gpu_hardware"
     INFRASTRUCTURE = "infrastructure"
 
 
-class PricingModel(str, enum.Enum):  # noqa: UP042
-    CPM = "cpm"  # rate per 1000 impressions
-    CPC = "cpc"  # rate per click
-    FLAT = "flat"  # one fee for the campaign
+class CampaignKind(str, enum.Enum):  # noqa: UP042
+    SPONSORED = "sponsored"  # a sponsored listing, resource, tutorial or banner, labelled "Sponsored"
+    REFERRAL = "referral"  # an outbound referral or affiliate link, labelled "Referral link"
 
 
 class AdSettings(Doc):
@@ -63,9 +70,10 @@ class SponsorCampaign(Doc):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     weight: int = 1  # relative chance of being shown among eligible campaigns
-    pricing_model: str = PricingModel.CPM.value
-    rate: Money = Decimal(0)
-    budget: Money | None = None  # stops serving once the earned amount reaches it
+    kind: str = CampaignKind.SPONSORED.value
+    # Referral metadata appended to target_url on click (?ref=...&utm_campaign=...); agreed outside the platform.
+    referral_code: str | None = None
+    utm_campaign: str | None = None
     impressions: int = 0
     clicks: int = 0
     created_by: uuid.UUID | None = None

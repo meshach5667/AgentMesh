@@ -18,7 +18,7 @@ from app.documents import (
     AiRun,
     AiRunEvent,
     AuditLog,
-    Charge,
+    CostEstimate,
     Customer,
     DeploymentEvent,
     UsageRecord,
@@ -76,19 +76,14 @@ async def test_retention_purges_each_data_class_after_its_period(db):
         ]
     )
     db.add_all([AuditLog(action="x", created_at=t) for t in (old, recent)])
-    charge = Charge(
+    charge = CostEstimate(
         deployment_id=uuid.uuid4(),
         node_id=uuid.uuid4(),
-        customer_wallet_id=uuid.uuid4(),
-        provider_wallet_id=uuid.uuid4(),
-        pricing_rule_id=uuid.uuid4(),
         resource_amount=Decimal(1),
         token_amount=Decimal(0),
         period_start=old,
         period_end=old,
         amount=Decimal(1),
-        platform_fee=Decimal(0),
-        provider_amount=Decimal(1),
         currency="NGN",
         created_at=old,
     )
@@ -104,7 +99,7 @@ async def test_retention_purges_each_data_class_after_its_period(db):
     assert (await db.get(AiInferenceRequest, answered_now.id)).result == {"content": "out"}
     for doc in (UsageRecord, DeploymentEvent, AuditLog):
         assert await db.count(doc) == 1, doc.__name__
-    assert await db.get(Charge, charge.id) is not None  # financial records are never purged here
+    assert await db.get(CostEstimate, charge.id) is not None  # cost estimates are never purged here
 
 
 async def test_retention_runs_in_the_background_monitor():

@@ -18,7 +18,9 @@ client_ip_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("clie
 
 _SECRET_PATTERNS = [
     re.compile(r"\b(am_(?:sk|node|enroll)_)[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"\b((?:sk|pk)_(?:test|live)_)[A-Za-z0-9]{8,}"),  # Paystack keys
+    re.compile(
+        r"\b((?:sk|pk)_(?:test|live)_)[A-Za-z0-9]{8,}"
+    ),  # payment-provider secret keys (never expected, redacted if pasted)
     re.compile(r"\b(AIza)[0-9A-Za-z_\-]{30,}"),  # Google API keys (Gemini)
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{8,}"),
     re.compile(r"(?i)(\"?(?:password|secret|token|credential|api_key)\"?\s*[:=]\s*\"?)[^\s\",}]{4,}"),

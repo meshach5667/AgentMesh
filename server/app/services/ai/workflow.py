@@ -31,7 +31,7 @@ from app.core.database import Session, session_scope
 from app.core.logging import redact
 from app.core.timeutil import utcnow
 from app.documents.ai import AiInferenceRequest, AiRun, AiRunEvent
-from app.documents.billing import Charge
+from app.documents.billing import CostEstimate
 from app.documents.deployment import Deployment
 from app.documents.deployment import DeploymentStatus as DepStatus
 from app.documents.model import Model, ModelArtifact
@@ -40,7 +40,7 @@ from app.services import audit_service, deployment_lifecycle
 from app.services.ai import agent, gemini, inference_queue, tools
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan
 from app.services.catalog_service import artifact_problem, load_artifacts
-from app.services.ledger_service import money
+from app.services.cost_service import money
 
 logger = logging.getLogger(__name__)
 
@@ -136,14 +136,14 @@ async def actual_cost(db: Session, run: AiRun) -> Decimal:
     if not ids:
         return Decimal(0)
     rows = await db.aggregate(
-        Charge,
+        CostEstimate,
         [{"$match": {"deployment_id": {"$in": ids}}}, {"$group": {"_id": None, "amount": {"$sum": "$amount"}}}],
     )
     return money(rows[0]["amount"]) if rows else Decimal(0)
 
 
 async def projected_cost(db: Session, run: AiRun, dep: Deployment | None) -> Decimal:
-    """Rated charges plus READY time not rated yet, at the estimated hourly price."""
+    """Cost estimates so far plus READY time not estimated yet, at the estimated hourly price."""
     cost = await actual_cost(db, run)
     if dep is not None and dep.status == DepStatus.READY.value and run.estimated_hourly:
         since = dep.metered_until or dep.ready_at or dep.created_at
@@ -331,7 +331,7 @@ async def _plan(ctx: Ctx) -> None:
             return
         lines = agent.catalog_lines(catalog, run.request_text)
         run.phase = tools.PLANNING
-        run.conversation = agent.planning_messages(run, limits, lines, settings.BILLING_CURRENCY)
+        run.conversation = agent.planning_messages(run, limits, lines, settings.DEFAULT_CURRENCY)
         run.agent_steps = 0
         await _ask(ctx, tools.PLANNING)
         return
@@ -729,7 +729,7 @@ async def create_run(
         request_text=request_text,
         limits=limits.model_dump(mode="json"),
         deployment_ids=[],
-        currency=settings.BILLING_CURRENCY,
+        currency=settings.DEFAULT_CURRENCY,
         created_at=now,
         updated_at=now,
     )

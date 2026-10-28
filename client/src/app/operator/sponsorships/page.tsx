@@ -11,10 +11,9 @@ import { EmptyState, ErrorState, PageHeader } from '@/components/common/Notices'
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { useAdSettings, useCampaigns, useSaveCampaign, useSetCampaignStatus, useUpdateAdSettings } from '@/hooks/useSponsorship';
 import { errorMessage } from '@/lib/errors';
-import { dateTime, money } from '@/lib/format';
-import { CATEGORY_LABEL, pricingLabel } from '@/lib/sponsorship';
-import { usePaymentsConfig } from '@/hooks/useBilling';
-import type { AdSettings, Campaign, CampaignInput, CampaignStatus, Placement, SponsorCategory, SponsorPricingModel } from '@/types';
+import { dateTime } from '@/lib/format';
+import { CATEGORY_LABEL, NEW_CATEGORIES, promotionLabel } from '@/lib/sponsorship';
+import type { AdSettings, Campaign, CampaignInput, CampaignKind, CampaignStatus, Placement, SponsorCategory } from '@/types';
 
 const SELECT = 'h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm';
 
@@ -106,7 +105,7 @@ function SettingsCard({ settings }: { settings: AdSettings }) {
 const EMPTY: CampaignInput = {
   name: '',
   sponsor: '',
-  category: 'ai_tools',
+  category: 'gpu_cloud',
   headline: '',
   body: '',
   cta_label: 'Learn more',
@@ -116,9 +115,9 @@ const EMPTY: CampaignInput = {
   starts_at: '',
   ends_at: '',
   weight: 1,
-  pricing_model: 'cpm',
-  rate: '',
-  budget: '',
+  kind: 'sponsored',
+  referral_code: '',
+  utm_campaign: '',
 };
 
 /** datetime-local value (local time, minutes) from an ISO timestamp, and back to ISO (UTC) for the API. */
@@ -126,10 +125,18 @@ const toLocal = (iso: string | null | undefined) => (iso ? new Date(iso).toISOSt
 const toIso = (local: string | null | undefined) => (local ? new Date(local + 'Z').toISOString() : null);
 
 function fromCampaign(c: Campaign): CampaignInput {
-  return { ...c, body: c.body ?? '', image_url: c.image_url ?? '', budget: c.budget ?? '', starts_at: toLocal(c.starts_at), ends_at: toLocal(c.ends_at) };
+  return {
+    ...c,
+    body: c.body ?? '',
+    image_url: c.image_url ?? '',
+    referral_code: c.referral_code ?? '',
+    utm_campaign: c.utm_campaign ?? '',
+    starts_at: toLocal(c.starts_at),
+    ends_at: toLocal(c.ends_at),
+  };
 }
 
-function CampaignForm({ editing, placements, currency, onDone }: { editing: Campaign | null; placements: AdSettings['placements']; currency: string; onDone: () => void }) {
+function CampaignForm({ editing, placements, onDone }: { editing: Campaign | null; placements: AdSettings['placements']; onDone: () => void }) {
   const save = useSaveCampaign();
   const [form, setForm] = useState<CampaignInput>(() => (editing ? fromCampaign(editing) : EMPTY));
   const set = <K extends keyof CampaignInput>(key: K, value: CampaignInput[K]) => setForm((f) => ({ ...f, [key]: value }));
@@ -151,7 +158,8 @@ function CampaignForm({ editing, placements, currency, onDone }: { editing: Camp
           ...form,
           body: form.body?.trim() || null,
           image_url: form.image_url?.trim() || null,
-          budget: form.budget?.trim() || null,
+          referral_code: form.referral_code?.trim() || null,
+          utm_campaign: form.utm_campaign?.trim() || null,
           starts_at: toIso(form.starts_at),
           ends_at: toIso(form.ends_at),
         };
@@ -175,7 +183,7 @@ function CampaignForm({ editing, placements, currency, onDone }: { editing: Camp
             Category
           </label>
           <select id="c-category" className={SELECT} value={form.category} onChange={(e) => set('category', e.target.value as SponsorCategory)}>
-            {Object.entries(CATEGORY_LABEL).map(([k, v]) => (
+            {(editing && !NEW_CATEGORIES.includes(form.category) ? [form.category, ...NEW_CATEGORIES] : NEW_CATEGORIES).map((k) => [k, CATEGORY_LABEL[k]] as const).map(([k, v]) => (
               <option key={k} value={k}>
                 {v}
               </option>
@@ -216,30 +224,27 @@ function CampaignForm({ editing, placements, currency, onDone }: { editing: Camp
         </div>
       </fieldset>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
-          <label htmlFor="c-model" className="text-xs text-muted-foreground">
-            Pricing
+          <label htmlFor="c-kind" className="text-xs text-muted-foreground">
+            Kind (shown on the item)
           </label>
-          <select id="c-model" className={SELECT} value={form.pricing_model} onChange={(e) => set('pricing_model', e.target.value as SponsorPricingModel)}>
-            {(['cpm', 'cpc', 'flat'] as const).map((m) => (
-              <option key={m} value={m}>
-                {m.toUpperCase()}: {pricingLabel(m)}
-              </option>
-            ))}
+          <select id="c-kind" className={SELECT} value={form.kind} onChange={(e) => set('kind', e.target.value as CampaignKind)}>
+            <option value="sponsored">Sponsored listing or resource</option>
+            <option value="referral">Referral link</option>
           </select>
         </div>
         <div className="space-y-1">
-          <label htmlFor="c-rate" className="text-xs text-muted-foreground">
-            Rate ({currency})
+          <label htmlFor="c-ref" className="text-xs text-muted-foreground">
+            Referral code (optional, added as ?ref=)
           </label>
-          <Input id="c-rate" type="number" min={0} step="any" required value={form.rate} onChange={(e) => set('rate', e.target.value)} />
+          <Input id="c-ref" value={form.referral_code ?? ''} maxLength={64} onChange={(e) => set('referral_code', e.target.value)} />
         </div>
         <div className="space-y-1">
-          <label htmlFor="c-budget" className="text-xs text-muted-foreground">
-            Budget ({currency}, optional)
+          <label htmlFor="c-utm" className="text-xs text-muted-foreground">
+            Campaign tag (optional, added as utm_campaign)
           </label>
-          <Input id="c-budget" type="number" min={0} step="any" value={form.budget ?? ''} onChange={(e) => set('budget', e.target.value)} />
+          <Input id="c-utm" value={form.utm_campaign ?? ''} maxLength={64} onChange={(e) => set('utm_campaign', e.target.value)} />
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-4">
@@ -272,16 +277,14 @@ function CampaignForm({ editing, placements, currency, onDone }: { editing: Camp
 export default function OperatorSponsorshipsPage() {
   const settings = useAdSettings();
   const campaigns = useCampaigns();
-  const config = usePaymentsConfig();
   const status = useSetCampaignStatus();
   const [editing, setEditing] = useState<Campaign | 'new' | null>(null);
-  const currency = config.data?.currency ?? 'NGN';
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Sponsorships"
-        description="Optional sponsored placements for relevant AI tools, GPU hardware and infrastructure providers. Compute commission is the primary revenue; sponsorship revenue is reported separately on the Revenue page."
+        title="Sponsorships & referrals"
+        description="Optional, clearly labelled placements for GPU clouds, inference and model-hosting platforms, infrastructure and developer tools, and outbound referral links. Agreements and invoicing happen outside AgentMesh: it shows items and counts genuine views and clicks, and nothing here affects which machine runs a deployment."
       />
 
       {settings.error ? <ErrorState message={errorMessage(settings.error)} /> : settings.data ? <SettingsCard key={settings.data.updated_at} settings={settings.data} /> : <TableSkeleton />}
@@ -305,7 +308,7 @@ export default function OperatorSponsorshipsPage() {
                 key={editing === 'new' ? 'new' : editing.id}
                 editing={editing === 'new' ? null : editing}
                 placements={settings.data.placements}
-                currency={currency}
+               
                 onDone={() => setEditing(null)}
               />
             </div>
@@ -326,7 +329,6 @@ export default function OperatorSponsorshipsPage() {
                   <TableHead className="text-right">Clicks</TableHead>
                   <TableHead className="text-right">CTR</TableHead>
                   <TableHead className="text-right">Last 30 days</TableHead>
-                  <TableHead className="text-right">Earned</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
@@ -336,13 +338,13 @@ export default function OperatorSponsorshipsPage() {
                     <TableCell>
                       <div className="text-sm font-medium">{c.name}</div>
                       <div className="text-xs text-muted-foreground">
-                        {c.sponsor} · {CATEGORY_LABEL[c.category]} · {c.pricing_model.toUpperCase()} {money(c.rate, currency)}
-                        {c.budget ? ` · budget ${money(c.budget, currency)}` : ''}
+                        {c.sponsor} · {CATEGORY_LABEL[c.category] ?? c.category} · {promotionLabel(c.kind)}
+                        {c.referral_code ? ` · ref ${c.referral_code}` : ''}
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
                       <span className="capitalize">{c.status}</span>
-                      {c.status === 'active' && !c.serving && <div className="text-xs text-muted-foreground">not serving (schedule or budget)</div>}
+                      {c.status === 'active' && !c.serving && <div className="text-xs text-muted-foreground">not serving (outside its dates)</div>}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs">{c.impressions.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono text-xs">{c.clicks.toLocaleString()}</TableCell>
@@ -350,7 +352,6 @@ export default function OperatorSponsorshipsPage() {
                     <TableCell className="text-right font-mono text-xs">
                       {c.last_30_days.impressions.toLocaleString()} / {c.last_30_days.clicks.toLocaleString()}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs">{money(c.earned, currency)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         {c.status !== 'ended' && (

@@ -8,7 +8,6 @@ import os
 import uuid
 
 os.environ["ENVIRONMENT"] = "test"
-os.environ["PAYSTACK_SECRET_KEY"] = ""
 
 import pytest
 from httpx import ASGITransport, AsyncClient

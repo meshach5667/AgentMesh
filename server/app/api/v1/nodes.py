@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from app.core.config import settings
 from app.core.database import Session, get_db
 from app.core.dependencies import get_current_user, require_roles
+from app.documents.audit import AuditLog
 from app.documents.user import UserRole
 from app.schemas.billing import DefaultPricesIn, DefaultPricesOut, NodePricingOut, Prices
 from app.schemas.node import EnrollmentTokenCreate, EnrollmentTokenOut, NodeCreate, NodeOut, NodeUpdate
@@ -32,9 +32,9 @@ async def create_enrollment_token(
 
 @router.get("/pricing/default", response_model=DefaultPricesOut)
 async def default_prices(db: Session = Depends(get_db), current_user=Depends(require_roles(UserRole.provider))):
-    """The prices each machine you enroll starts with (null: the network prices until you set its own)."""
+    """The prices each machine you enroll starts with (null: new machines are free until you price them)."""
     provider = await node_pricing_service.provider_for(db, current_user)
-    return {"currency": settings.BILLING_CURRENCY, "prices": provider.default_prices}
+    return {"prices": provider.default_prices}
 
 
 @router.put("/pricing/default", response_model=DefaultPricesOut)
@@ -44,7 +44,7 @@ async def set_default_prices(
     provider = await node_pricing_service.provider_for(db, current_user)
     prices = req.model_dump(exclude={"apply_to_existing"})
     updated = await node_pricing_service.set_provider_default(db, provider, prices, req.apply_to_existing, current_user)
-    return {"currency": settings.BILLING_CURRENCY, "prices": prices, "updated_machines": updated}
+    return {"prices": prices, "updated_machines": updated}
 
 
 @router.get("", response_model=list[NodeOut])
@@ -71,9 +71,20 @@ async def update_node(id: str, req: NodeUpdate, db: Session = Depends(get_db), c
 
 @router.get("/{id}/pricing", response_model=NodePricingOut)
 async def node_pricing(id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """What this machine charges, its price history, and the network prices for comparison."""
+    """What this machine charges and its price history."""
     node = await node_service.get_node_for_user(db, id, current_user)
     return await node_pricing_service.node_pricing(db, node)
+
+
+@router.get("/{id}/events")
+async def node_events(id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Health and pricing history of this machine: going offline, reconnecting, recovering, degraded after repeated
+    failures, quarantine and price changes (newest first, at most 100)."""
+    node = await node_service.get_node_for_user(db, id, current_user)
+    rows = await db.find(
+        AuditLog, {"resource_type": "node", "resource_id": str(node.id)}, sort=[("created_at", -1)], limit=100
+    )
+    return [{"action": r.action, "details": r.details or {}, "created_at": r.created_at} for r in rows]
 
 
 @router.put("/{id}/pricing", response_model=NodePricingOut)
@@ -81,7 +92,8 @@ async def set_node_pricing(
     id: str, req: Prices, db: Session = Depends(get_db), current_user=Depends(require_roles(UserRole.provider))
 ):
     """Publish new prices for this machine, in force at once for new placements. Deployments already on it are
-    never billed above the rates they were placed at, so a decrease reaches them at once and an increase does not."""
+    never estimated above the rates they were placed at, so a decrease reaches them at once and an increase does
+    not."""
     node = await node_service.get_node_for_user(db, id, current_user)
     await node_pricing_service.set_node_price(db, node, req.model_dump(), current_user)
     return await node_pricing_service.node_pricing(db, node)

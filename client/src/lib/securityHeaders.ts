@@ -17,7 +17,7 @@ export function securityHeaders(apiUrl: string, dev: boolean): { key: string; va
     "frame-ancestors 'none'",
     "object-src 'none'",
     "base-uri 'self'",
-    // Sign-in posts to the API with fetch; Paystack checkout is a navigation, not a form post.
+    // Sign-in posts to the API with fetch; provider payment links are plain navigations to external sites.
     "form-action 'self'",
     ...(dev ? [] : ['upgrade-insecure-requests']),
   ].join('; ');

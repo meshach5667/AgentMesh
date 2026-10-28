@@ -11,8 +11,6 @@ const MODEL = process.env.E2E_MODEL || 'SmolLM2 135M';
 const OPERATOR = { email: process.env.E2E_OPERATOR_EMAIL ?? '', password: process.env.E2E_OPERATOR_PASSWORD ?? '' };
 const PASSWORD = 'e2e-password-123';
 const run = Date.now().toString(36);
-// Base URL of tests/fixtures/fake_paystack_server.py; enables the billing and payment steps.
-const FAKE_PAYSTACK = process.env.E2E_FAKE_PAYSTACK ?? '';
 
 let worker: ChildProcess | undefined;
 let workerLog = '';
@@ -70,26 +68,6 @@ test('landing page shows live, not simulated, figures', async ({ page }) => {
   await expect(page.getByText(/99\.9%|TFLOP/)).toHaveCount(0);
 });
 
-test('operator publishes a price list', async ({ browser }) => {
-  test.skip(!FAKE_PAYSTACK || !OPERATOR.email, 'billing steps need E2E_FAKE_PAYSTACK and operator credentials');
-  const page = await operator(browser);
-  await nav(page, 'Pricing');
-  await expect(page.getByText('No prices yet')).toBeVisible();
-  for (const [label, value] of [
-    ['CPU core, per hour', '600'],
-    ['Memory, per GB-hour', '300'],
-    ['GPU memory, per GB-hour', '0'],
-    ['Input tokens, per million', '2000'],
-    ['Output tokens, per million', '4000'],
-    ['Platform fee (0 to 0.5)', '0.1'],
-  ]) {
-    await page.getByLabel(label, { exact: true }).fill(value);
-  }
-  await page.getByLabel('Notes').fill('e2e prices');
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText('in force')).toBeVisible();
-});
-
 test('provider enrolls a real machine from the dashboard', async ({ browser }) => {
   provider = await signUp(browser, 'provider');
   await expect(provider.getByText('You have no nodes yet.')).toBeVisible();
@@ -133,31 +111,42 @@ test('provider can pause and resume the node', async () => {
   await expect(provider.getByText(/Ollama/).first()).toBeVisible();
 });
 
+test('provider prices the machine and publishes how to be paid', async () => {
+  await provider.getByRole('complementary').getByRole('link', { name: 'Profile & payment' }).click();
+  await provider.getByLabel('Name customers see').fill(`E2E Provider ${run}`);
+  await provider.getByRole('checkbox', { name: 'Bank transfer' }).check();
+  await provider.getByLabel('Payment instructions').fill('Bank transfer to E2E Bank, account 0123456789. Use your payment reference.');
+  // A request for secrets is refused before anything is sent.
+  await provider.getByLabel('Terms (optional)').fill('Send us the OTP you receive.');
+  await provider.getByRole('button', { name: 'Save profile and payment arrangement' }).click();
+  await expect(provider.getByText(/Never ask customers for PINs/).first()).toBeVisible();
+  await provider.getByLabel('Terms (optional)').fill('Invoiced weekly.');
+  await provider.getByRole('button', { name: 'Save profile and payment arrangement' }).click();
+  await expect(provider.getByText('Profile and payment arrangement saved')).toBeVisible();
+
+  await nav(provider, 'My Nodes');
+  await provider.getByRole('link', { name: `e2e-node-${run}` }).click();
+  await provider.getByRole('textbox', { name: 'CPU core (per hour)', exact: true }).fill('600');
+  await provider.getByRole('textbox', { name: 'Memory (per GB-hour)', exact: true }).fill('300');
+  await provider.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(provider.getByText('Prices published')).toBeVisible();
+});
+
 test('customer deploys a model and it becomes ready on the real node', async ({ browser }) => {
   customer = await signUp(browser, 'customer');
-  if (FAKE_PAYSTACK) {
-    // Prepaid: top up through the Paystack flow. Paystack's hosted page is stubbed; the payment is confirmed by a
-    // signed webhook from the fake Paystack server, then verified when the customer returns.
-    await nav(customer, 'Wallet');
-    await expect(customer.getByText('Paystack test mode: no real money')).toBeVisible();
-    await customer.route('https://checkout.paystack.com/**', (route) => route.fulfill({ body: '<h1>Paystack checkout (stub)</h1>', contentType: 'text/html' }));
-    await customer.getByLabel(/^Amount/).fill('2000');
-    await customer.getByRole('button', { name: 'Pay with Paystack' }).click();
-    await customer.waitForURL(/checkout\.paystack\.com\/fake-am-top-/);
-    const reference = customer.url().split('fake-')[1];
-    const paid = await (await customer.request.post(`${FAKE_PAYSTACK}/_test/pay/${reference}`)).json();
-    expect(paid.webhook_status).toBe(200);
-    await customer.goto(`/customer/wallet?reference=${reference}&trxref=${reference}`);
-    await expect(customer.getByTestId('stat-Balance')).toHaveText(/2,000\.00/);
-    await expect(customer).toHaveURL(/\/customer\/wallet$/);
-  }
+  // Compute discovery: the provider, its prices and how it takes payment, before choosing.
+  await nav(customer, 'Compute providers');
+  const offer = customer.getByRole('listitem').filter({ hasText: `E2E Provider ${run}` });
+  await expect(offer).toContainText('Bank transfer');
+  await offer.getByRole('link', { name: 'Prices and payment' }).click();
+  await expect(customer.getByText(/You pay E2E Provider .* directly/)).toBeVisible();
   await nav(customer, 'Models');
   await customer.getByLabel('Search models').fill(MODEL);
   const card = customer.getByTestId('model-card').filter({ hasText: MODEL });
   await card.getByRole('link', { name: 'Configure and deploy' }).click();
 
   await customer.getByRole('radio', { name: /^Ollama/ }).check();
-  if (FAKE_PAYSTACK) await expect(customer.getByTestId('hourly-ollama')).toContainText('per hour while');
+  await expect(customer.getByTestId('hourly-ollama')).toContainText('per hour while ready');
   const deploy = customer.getByRole('button', { name: 'Deploy' });
   await expect(deploy).toBeDisabled();
   await customer.getByRole('checkbox', { name: /I understand the provider can see/ }).check();
@@ -165,7 +154,7 @@ test('customer deploys a model and it becomes ready on the real node', async ({ 
 
   await expect(customer).toHaveURL(/\/customer\/deployments\/[0-9a-f-]{36}$/);
   deploymentUrl = customer.url();
-  await expect(customer.getByTestId('deployment-events')).toContainText('SCHEDULED');
+  await expect(customer.getByTestId('deployment-events')).toContainText('Assigned');
   await expect(customer.locator('[data-status="READY"]').first()).toBeVisible({ timeout: 15 * 60 * 1000 });
   await expect(customer.getByText('Verified digest')).toBeVisible();
   // Ollama reports the manifest digest as bare hex; llama.cpp as sha256:<hex>.
@@ -205,45 +194,23 @@ test('customer creates a scoped API key and calls the deployment with it', async
   await expect(row).toContainText(`Deployment ${deploymentId.slice(0, 8)}`);
   await expect(row).not.toContainText('never');
 
-  await nav(customer, 'Usage');
+  await nav(customer, 'Requests');
   await expect(customer.getByTestId('usage-chart')).toBeVisible();
   // One playground request and one API-key request.
   await expect(customer.getByTestId('stat-Requests')).toHaveText('2');
 });
 
-test('the running deployment is charged and the provider is paid out', async ({ browser }) => {
-  test.skip(!FAKE_PAYSTACK || !OPERATOR.email, 'billing steps need E2E_FAKE_PAYSTACK and operator credentials');
+test('the running deployment is estimated and both sides see the same payment reference', async () => {
   await customer.goto(deploymentUrl);
-  // The billing job rates READY time every BILLING_INTERVAL_SECONDS (60 s in this run).
-  await expect(customer.getByTestId('cost-so-far')).not.toHaveText(/^(—|NGN\s?0\.00)$/, { timeout: 4 * 60 * 1000 });
-  await expect(customer.getByTestId('charge-row').first()).toBeVisible();
+  await expect(customer.getByText(`How to pay E2E Provider ${run}`)).toBeVisible();
+  const reference = (await customer.locator('span.font-mono.font-medium').first().textContent())!.trim();
+  expect(reference).toMatch(/^[0-9A-F]{8}$/);
+  // The estimate job runs every COST_ESTIMATE_INTERVAL_SECONDS (60 s in this run).
+  await expect(customer.getByTestId('cost-so-far')).not.toHaveText(/^(—|nothing yet)$/, { timeout: 4 * 60 * 1000 });
 
-  await provider.goto('/provider/earnings');
-  await expect(provider.getByTestId('stat-Earned in total')).not.toHaveText(/^NGN\s?0\.00$/);
-  await provider.getByLabel('Bank').selectOption('001');
-  await provider.getByLabel('Account number').fill('0123456789');
-  await provider.getByRole('button', { name: 'Verify and save' }).click();
-  await expect(provider.getByTestId('payout-account')).toContainText('••••6789');
-  await provider.getByLabel('Payout amount').fill('1');
-  await provider.getByRole('button', { name: 'Request payout' }).click();
-  const row = provider.getByTestId('payout-row').first();
-  await expect(row).toContainText('REQUESTED');
-  const payoutRef = (await row.locator('td').nth(1).textContent())!.trim();
-
-  const page = await operator(browser);
-  await nav(page, 'Payouts');
-  const pending = page.getByTestId('admin-payout-row').filter({ hasText: payoutRef });
-  await pending.getByRole('button', { name: 'Approve' }).click();
-  await pending.getByRole('button', { name: 'Send transfer' }).click();
-  await page.getByLabel('Filter by status').selectOption('');
-  await expect(page.getByTestId('admin-payout-row').filter({ hasText: payoutRef })).toContainText('PENDING');
-  const done = await (await page.request.post(`${FAKE_PAYSTACK}/_test/transfer/${payoutRef}/success`)).json();
-  expect(done.webhook_status).toBe(200);
-  await provider.reload();
-  await expect(provider.getByTestId('payout-row').filter({ hasText: payoutRef })).toContainText('SUCCEEDED');
-
-  await nav(page, 'Reconciliation');
-  await expect(page.getByText('Ledger consistent')).toBeVisible();
+  await provider.goto('/provider/estimates');
+  await expect(provider.getByText('Estimates, not earnings')).toBeVisible();
+  await expect(provider.getByRole('cell', { name: reference }).first()).toBeVisible();
 });
 
 test('operator sees the whole network and the audit trail', async ({ browser }) => {
@@ -252,7 +219,7 @@ test('operator sees the whole network and the audit trail', async ({ browser }) 
   await nav(ops, 'Overview');
   await expect(ops.getByText('Network overview')).toBeVisible();
   await expect(ops.getByTestId('stat-Deployments ready')).toHaveText('1');
-  await expect(ops.getByTestId('stat-Nodes online')).toHaveText('1 / 1');
+  await expect(ops.getByTestId('stat-Healthy nodes')).toHaveText('1 / 1');
 
   await nav(ops, 'All Deployments');
   await expect(ops.getByText(`e2e-customer-${run}@example.com`)).toBeVisible();

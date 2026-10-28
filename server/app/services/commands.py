@@ -12,6 +12,7 @@ async def enqueue_command(db: Session, node_id, deployment_id, type_: CommandTyp
         existing = await db.find_one(
             NodeCommand,
             {
+                "node_id": node_id,
                 "deployment_id": deployment_id,
                 "type": CommandType.STOP.value,
                 "status": {"$in": [CommandStatus.PENDING.value, CommandStatus.LEASED.value]},

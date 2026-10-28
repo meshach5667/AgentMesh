@@ -1,4 +1,5 @@
 import { CTA } from '@/components/landing/CTA';
+import { Failover } from '@/components/landing/Failover';
 import { Features } from '@/components/landing/Features';
 import { Footer } from '@/components/landing/Footer';
 import { Header } from '@/components/landing/Header';
@@ -23,6 +24,7 @@ export default function Home() {
         <LiveStats />
         <Features />
         <HowItWorks />
+        <Failover />
         <PricingSection />
         <SponsoredSlot placement="landing" title="From our partners" className="mx-auto -mt-16 mb-16 max-w-3xl px-4 sm:px-6" />
         <Status />

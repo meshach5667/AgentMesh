@@ -1,5 +1,4 @@
-import { clickUrl, dismiss, dismissedIds, pricingLabel } from '../sponsorship';
-import { ledgerParams } from '@/hooks/useTransactions';
+import { clickUrl, dismiss, dismissedIds, promotionLabel } from '../sponsorship';
 
 const ID = '3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c';
 
@@ -57,15 +56,8 @@ describe('dismissed sponsored items', () => {
   });
 });
 
-it('describes pricing models', () => {
-  expect(pricingLabel('cpm')).toBe('per 1,000 impressions');
-  expect(pricingLabel('cpc')).toBe('per click');
-});
-
-describe('ledgerParams', () => {
-  it('repeats type and omits empty paging', () => {
-    expect(ledgerParams({ types: ['DEPOSIT', 'REFUND'] }).toString()).toBe('type=DEPOSIT&type=REFUND');
-    expect(ledgerParams({ limit: 100, offset: 200 }).toString()).toBe('limit=100&offset=200');
-    expect(ledgerParams().toString()).toBe('');
-  });
+it('labels every promoted item', () => {
+  expect(promotionLabel('sponsored')).toBe('Sponsored');
+  expect(promotionLabel('referral')).toBe('Referral link');
+  expect(promotionLabel(undefined)).toBe('Sponsored');
 });

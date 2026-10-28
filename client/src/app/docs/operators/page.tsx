@@ -34,31 +34,30 @@ export default function OperatorGuide() {
           items={[
             <><C>SECRET_KEY</C> is random and at least 32 characters (<C>openssl rand -hex 32</C>);</>,
             <><C>CORS_ORIGINS</C> lists explicit origins (JSON array or comma-separated; no <C>*</C>);</>,
-            <><C>PUBLIC_BASE_URL</C> uses <C>https://</C>;</>,
-            <><C>PAYSTACK_SECRET_KEY</C>, if set, is a test key, unless <C>PAYSTACK_ALLOW_LIVE=true</C>.</>,
+            <><C>PUBLIC_BASE_URL</C> uses <C>https://</C>.</>,
           ]}
         />
         <Table
           head={['Variable', 'Purpose']}
           rows={[
-            [<><C>MONGODB_URL</C>, <C>MONGODB_DB</C></>, <>MongoDB connection string (for example from MongoDB Atlas) and database name (default <C>agentmesh</C>). It must be a replica set, which Atlas always is: ledger postings are saved in multi-document transactions. Required outside development.</>],
+            [<><C>MONGODB_URL</C>, <C>MONGODB_DB</C></>, <>MongoDB connection string (for example from MongoDB Atlas) and database name (default <C>agentmesh</C>). It must be a replica set, which Atlas always is: placements and capacity reservations are saved in multi-document transactions. Required outside development.</>],
             [<C key="2">SECRET_KEY</C>, 'Root of the purpose-specific keys (session tokens, MFA challenges, sponsored-view tokens, command signing unless set separately, MFA-secret encryption unless set separately). Changing it signs everyone out and rotates the command-signing key; see docs/security/INCIDENT_RESPONSE.md before rotating.'],
             [<C key="2b">FORWARDED_ALLOW_IPS</C>, 'Proxy addresses (IPs or CIDRs) whose X-Forwarded-For is trusted for client addresses. Set it to your platform’s proxy range; never * when the API port is reachable directly.'],
             [<><C>STAFF_MFA_REQUIRED</C>, <C>DATA_ENCRYPTION_KEY</C></>, 'Operators and admins must use TOTP (default on). Optional dedicated base64 32-byte key for MFA secrets at rest.'],
             [<><C>ALLOW_LEGACY_NODE_CREDENTIALS</C></>, 'Accept workers older than node sessions (default on). Turn off once every worker is upgraded.'],
             [<><C>COMMAND_SIGNING_KEY</C>, <C>COMMAND_SIGNING_PREVIOUS_KEY</C></>, 'Optional explicit Ed25519 seeds for signed commands; rotate by moving the current one to PREVIOUS.'],
             [<><C>AI_RUN_RETENTION_DAYS</C>, <C>USAGE_RECORD_RETENTION_DAYS</C>, <C>AUDIT_LOG_RETENTION_DAYS</C> and others</>, 'Retention per data class (see Security & limitations).'],
-            [<><C>PUBLIC_BASE_URL</C>, <C>FRONTEND_URL</C></>, 'Public https URLs of the API and the dashboard. Paystack returns customers to $FRONTEND_URL/customer/wallet.'],
+            [<C key="3">PUBLIC_BASE_URL</C>, 'Public https URL of the API (deployment endpoints are built from it).'],
             [<C key="4">CORS_ORIGINS</C>, 'Dashboard origins allowed to call the API.'],
             [<><C>COORDINATION_BACKEND=redis</C>, <C>REDIS_URL</C></>, 'Needed only for more than one API replica. Use a password-protected Redis that is not reachable from the internet: replicas trust its messages.'],
-            [<C key="6">BILLING_CURRENCY</C>, 'One platform currency (default NGN). Choose it before taking payments.'],
-            [<><C>PAYSTACK_SECRET_KEY</C>, <C>PAYSTACK_WEBHOOK_IPS</C></>, 'Payments; empty key disables them.'],
+            [<C key="6">DEFAULT_CURRENCY</C>, 'Currency of a deployment’s price limits when the customer names none (default NGN). Providers price machines in their own currency; AgentMesh processes no payments.'],
+            [<><C>HEARTBEAT_DEGRADED_SECONDS</C>, <C>HEARTBEAT_TIMEOUT_SECONDS</C>, <C>NODE_RECOVERY_HEARTBEATS</C>, <C>NODE_FAILURE_THRESHOLD</C></>, 'Node health and failover; see Failover tuning below.'],
             [<C key="8">METRICS_TOKEN</C>, 'Bearer token for GET /metrics; empty disables it.'],
             [<C key="10">NEXT_PUBLIC_API_URL</C>, 'Dashboard build setting: your API’s /api/v1 URL. Baked in at build time.'],
           ]}
         />
         <P>
-          <C>.env.example</C> lists the minimum set. Billing intervals, payment limits and rate limits have sensible defaults; see{' '}
+          <C>.env.example</C> lists the minimum set. Failover timing, cost-estimate intervals and rate limits have sensible defaults; see{' '}
           <C>server/app/core/config.py</C> for every setting.
         </P>
       </Section>
@@ -109,73 +108,53 @@ python scripts/create_operator.py lead@example.com --role admin`}
         </P>
       </Section>
 
-      <Section id="pricing" title="Pricing">
+      <Section id="business-model" title="Payments and fees">
         <P>
-          Under <strong>Pricing</strong>, publish an immutable price version, effective now or later: CPU core-hour, memory GB-hour, GPU-memory
-          GB-hour, input and output tokens per million, and the platform commission. Until a price list exists, usage is measured but not charged. You
-          can set token prices to zero to charge for resources only.
+          AgentMesh processes no payments. Providers price their own machines and publish how customers pay them; customers pay providers
+          directly. The platform holds no balances, takes no commission, charges no subscription, and runs no payment gateway, so there are no
+          payment keys or webhooks to configure. Cost estimates (READY time and tokens at each machine&apos;s prices) are recorded so both sides
+          can see what usage comes to.
         </P>
         <P>
-          The commission is the share of each charge the platform keeps; the provider whose node served the deployment is credited the rest.
-          A version published without a rate gets <C>DEFAULT_PLATFORM_FEE_RATE</C> (10%), and no version may exceed{' '}
-          <C>MAX_PLATFORM_FEE_RATE</C> (50%). To change only the commission, use <strong>Change commission</strong> (or{' '}
-          <C>POST /admin/commission</C>): it publishes a version with the prices in force. Every charge keeps the rate it was split at, so
-          past earnings never change. The fee is rounded to the ledger&apos;s precision and the provider gets exactly the rest, so commission
-          plus provider share always equals what the customer paid. Only READY time and successful requests are charged.
+          Databases upgraded from the earlier payment system keep its collections (<C>charges</C>, <C>transactions</C>, <C>wallets</C>,{' '}
+          <C>payments</C>, <C>payouts</C>, <C>refunds</C>, <C>pricing_rules</C> and others) untouched as history; nothing reads or writes them, and
+          they can be exported with the backup script before you decide whether to archive them.
         </P>
       </Section>
 
-      <Section id="paystack" title="Payments (Paystack)">
-        <Callout tone="warning" title="Test mode only">
-          AgentMesh uses Paystack test mode unless a live key is explicitly allowed. It has been verified against a stand-in for Paystack&apos;s
-          API but not against Paystack itself. Run the smoke script below before relying on it.
-        </Callout>
-        <List
-          ordered
-          items={[
-            <>In the Paystack dashboard (test mode), copy the secret key into <C>PAYSTACK_SECRET_KEY</C> and set the webhook URL to <C>https://&lt;your-api&gt;/api/v1/payments/paystack/webhook</C>.</>,
-            <>Check the integration against Paystack&apos;s real test API: <C>PAYSTACK_SECRET_KEY=sk_test_... python scripts/paystack_smoke.py</C> (add <C>--pay</C> to pay with a test card).</>,
-            'Make a top-up from the dashboard and confirm that the webhook arrives: Reconciliation should show no open top-ups, and Ledger should show the deposit.',
-            <>Payouts use Paystack Transfers: they need a funded balance and transfer OTP turned off, or they stop at <C>OTP_REQUIRED</C>.</>,
+      <Section id="failover" title="Failover tuning">
+        <Table
+          head={['Setting (default)', 'Effect']}
+          rows={[
+            [<C key="1">WORKER_HEARTBEAT_INTERVAL_SECONDS (15)</C>, 'How often workers report.'],
+            [<C key="2">HEARTBEAT_DEGRADED_SECONDS (45)</C>, 'A node with an older heartbeat gets no new work, but nothing is moved: one slow heartbeat is not a failure.'],
+            [<C key="3">HEARTBEAT_TIMEOUT_SECONDS (90)</C>, 'A node silent this long is OFFLINE: work still starting there moves at once, serving work after UNHEALTHY_GRACE_SECONDS (180).'],
+            [<C key="4">NODE_RECOVERY_HEARTBEATS (2)</C>, 'Healthy heartbeats a node needs after an outage before it gets new work.'],
+            [<C key="5">NODE_FAILURE_THRESHOLD (3), NODE_DEGRADED_COOLDOWN_SECONDS (600)</C>, 'Failed placements in a row that bench a node, and for how long.'],
+            [<C key="6">MAX_SCHEDULE_ATTEMPTS (5)</C>, 'Placements per deployment, including the first.'],
+            [<C key="7">PLACEMENT_RETRY_BASE_SECONDS (15), PLACEMENT_RETRY_MAX_SECONDS (300), PLACEMENT_PENDING_MAX_SECONDS (3600)</C>, 'Backoff (with ±20% jitter) for deployments waiting for a node, and how long they may wait before failing.'],
           ]}
         />
         <P>
-          Top-ups are credited once, only after Paystack reports success with a matching amount and currency. Payouts are held at request time and
-          need operator approval (<strong>Payouts</strong>). Reconciliation runs every 10 minutes when payments are enabled.
+          Placement state is persisted, so restarts lose nothing: the monitor (one leader among replicas) resumes pending placements, and each is
+          claimed with a compare-and-set before it is placed. Reservations and attempts allow one active row per deployment, so two schedulers can
+          never assign the same deployment. The overview page shows node health and the last 24 hours of moves.
         </P>
       </Section>
 
-      <Section id="revenue" title="Revenue analytics">
+      <Section id="sponsorships" title="Sponsorships and referrals">
         <P>
-          <strong>Revenue</strong> charts, per day for the last 7, 30 or 90 days, what customers paid, split into the provider share and the
-          commission, together with refunds, top-ups, payouts and card refunds. <strong>Platform revenue</strong> is the commission net of reversed
-          fees, plus sponsorship revenue, which is shown as a separate figure. Every number is computed by the server from rated charges, refunds and
-          payments; nothing is estimated. The same data is available at <C>GET /analytics/revenue?scope=network&amp;days=30</C>.
-        </P>
-      </Section>
-
-      <Section id="refunds" title="Refunds">
-        <List
-          items={[
-            <>A <strong>compute charge</strong> refund (full or partial) credits the customer&apos;s wallet. The provider share and the commission are reversed in the same proportions as the original split (<C>REFUND_CLAWBACK</C> and <C>PLATFORM_FEE_REVERSAL</C> ledger entries). A provider who was already paid out can go negative; later earnings cover it.</>,
-            <>A <strong>top-up</strong> refund returns unspent wallet funds to the customer&apos;s card through Paystack. The amount is held at once; the refund settles when Paystack reports it processed (webhook or reconciliation) and the hold is released if it fails. Only one card refund per top-up can be open at a time.</>,
-            'Each refund needs a reason, which the customer sees. Refunds are audited and checked by reconciliation; a charge can never be refunded beyond what was paid.',
-          ]}
-        />
-      </Section>
-
-      <Section id="sponsorships" title="Sponsorships">
-        <P>
-          Sponsored placements are optional and <strong>off by default</strong>. Under <strong>Sponsorships</strong>, turn advertising on, choose
-          which placements show items (landing page, docs, customer and provider dashboards, 1 to 3 items each) and manage campaigns for AI tools,
-          GPU hardware and infrastructure providers. Campaigns start as drafts; drafts can be activated, active campaigns paused and resumed, and
-          any campaign ended (final). A campaign is served only while active, inside its schedule and under its budget.
+          Sponsored placements are optional and <strong>off by default</strong>. Under <strong>Sponsorships &amp; referrals</strong>, turn them on,
+          choose which placements show items (landing page, docs, customer and provider dashboards, 1 to 3 items each) and manage campaigns for GPU
+          clouds, inference and model-hosting platforms, cloud infrastructure, data centers and developer tools. A campaign is either a sponsored
+          listing or resource (labelled &ldquo;Sponsored&rdquo;) or an outbound referral link (labelled &ldquo;Referral link&rdquo;), which can carry
+          the partner&apos;s referral code and a campaign tag added to the link on click.
         </P>
         <P>
-          Items are labelled &ldquo;Sponsored&rdquo;, link only to the campaign&apos;s stored https URL with <C>rel=&quot;sponsored&quot;</C>, and can
-          be dismissed by viewers. Impressions count once per signed view token when at least half the item is visible; clicks count once per view.
-          No personal data is used to select items, and no third-party ad scripts are loaded. Pricing is CPM, CPC or a flat fee; earnings are reported
-          on the Revenue page separately from compute commission.
+          Items link only to the campaign&apos;s stored https URL with <C>rel=&quot;sponsored&quot;</C>, are shown apart from organic content, and can
+          be dismissed. Impressions count once per signed view token when at least half the item is visible; clicks count once per view. No personal
+          data is used, no third-party ad scripts load, and campaigns never influence placement, health checks or security decisions. AgentMesh does
+          not bill advertisers or track conversions: agreements and invoicing happen outside the platform.
         </P>
       </Section>
 
@@ -186,16 +165,15 @@ python scripts/create_operator.py lead@example.com --role admin`}
             [<C key="1">GET /health</C>, 'Liveness.'],
             [<C key="2">GET /health/ready</C>, 'Database (and Redis) readiness; 503 if either fails. Use for load balancers.'],
             [<C key="3">GET /metrics</C>, <>Prometheus, with <C>Authorization: Bearer $METRICS_TOKEN</C>.</>],
-            [<C key="4">GET /api/v1/admin/overview</C>, 'Operator dashboard figures, including nodes with overdue heartbeats.'],
-            [<C key="5">GET /api/v1/admin/reconciliation</C>, 'Ledger invariants and open payment items.'],
+            [<C key="4">GET /api/v1/admin/overview</C>, 'Operator dashboard figures: nodes by health, overdue heartbeats, and failover activity (moves, ended attempts, deployments waiting for a node).'],
             [<C key="6">GET /api/v1/admin/anomalies</C>, 'Providers whose token claims exceed the request and response sizes the gateway observed, or whose requests mostly fail.'],
             [<C key="7">POST /api/v1/admin/nodes/&#123;id&#125;/quarantine</C>, 'Cut a node off at once (no authentication, tunnel closed, deployments moved); release with /release. See docs/security/INCIDENT_RESPONSE.md.'],
           ]}
         />
         <P>
-          Logs are JSON lines with a request id; API keys, node credentials, bearer tokens and Paystack keys are redacted, and security events
+          Logs are JSON lines with a request id; API keys, node credentials, bearer tokens and secret keys are redacted, and security events
           (session refusals, closed tunnels, rejected commands) are logged with an allowlist of fields under <C>agentmesh.security</C>. Alert on readiness
-          failing, rising 5xx, payouts stuck <C>PENDING</C> or <C>OTP_REQUIRED</C>, reconciliation reporting <C>ok: false</C>, and{' '}
+          failing, rising 5xx, many deployments in <C>PENDING</C> or <C>NEEDS_ATTENTION</C>, many nodes degraded or offline, and{' '}
           <C>Background job … failed</C> in the logs.
         </P>
       </Section>
@@ -209,9 +187,8 @@ MONGODB_URL=mongodb+srv://… MONGODB_DB=agentmesh_restore ops/restore_db.sh /va
         <List
           items={[
             'Backups are compressed mongodump archives (mode 0600). On Atlas, also enable its scheduled backups. Store copies off the host, encrypted, and test a restore monthly. The restore script refuses a non-empty database.',
-            'After a restore: point MONGODB_DB at it, start the API, then run reconciliation to re-check open top-ups and payouts with Paystack.',
-            'API restarts lose nothing: workers reconnect and billing resumes from each deployment’s watermark without double charging.',
-            'Never refund a pending payout by hand; the transfer may still complete. Refund customers from Refunds, which reverses the provider share and commission through the ledger.',
+            'After a restore: point MONGODB_DB at it, start the API, and check the overview (node health, deployments, recovery activity) before sending traffic to it.',
+            'API restarts lose nothing: workers reconnect, pending placements resume, and cost estimates continue from each deployment’s watermark without counting anything twice.',
             <>Incident runbooks (compromised nodes, leaked credentials, key rotation, rollback) are in <A href={`${REPO_URL}/blob/main/docs/security/INCIDENT_RESPONSE.md`}>docs/security/INCIDENT_RESPONSE.md</A>.</>,
           ]}
         />

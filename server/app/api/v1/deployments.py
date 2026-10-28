@@ -4,7 +4,7 @@ from app.core.database import Session, get_db, retry_transient
 from app.core.dependencies import get_current_user, require_roles
 from app.documents.user import UserRole
 from app.schemas.billing import DeploymentPricingOut, QuoteOut
-from app.schemas.deployment import DeploymentCreate, DeploymentEventOut, DeploymentOut
+from app.schemas.deployment import DeploymentCreate, DeploymentEventOut, DeploymentOut, DeploymentUpdate
 from app.services import deployment_service
 
 router = APIRouter()
@@ -42,8 +42,29 @@ async def get_deployment(id: str, db: Session = Depends(get_db), current_user=De
 
 @router.get("/{id}/pricing", response_model=DeploymentPricingOut)
 async def deployment_pricing(id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """The rates this deployment is billed at now, and the most it can be billed on its current machine."""
+    """What this deployment is estimated at now, the most it can be estimated at on its machine, and who runs that
+    machine and how to pay them."""
     return await deployment_service.pricing_for(db, id, current_user)
+
+
+@router.patch("/{id}", response_model=DeploymentOut)
+async def update_deployment(
+    id: str, body: DeploymentUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)
+):
+    """Change price limits, currency or failover policy for the next placement."""
+    return await deployment_service.update_deployment(db, id, body, current_user)
+
+
+@router.post("/{id}/retry", response_model=DeploymentOut)
+async def retry_deployment(id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Place a deployment that is waiting for a node (PENDING or NEEDS_ATTENTION) now, if a node fits."""
+    return await retry_transient(db, lambda: deployment_service.retry_deployment(db, id, current_user))
+
+
+@router.get("/{id}/attempts")
+async def deployment_attempts(id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Every placement of this deployment: which provider ran it, when it served, and how it ended."""
+    return await deployment_service.list_attempts(db, id, current_user)
 
 
 @router.post("/{id}/stop")

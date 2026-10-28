@@ -1,17 +1,18 @@
-"""Sponsored placements: clearly labelled, optional, operator-managed promotions of AI tools, GPU hardware and
-infrastructure providers.
+"""Sponsored placements and referral links: clearly labelled, optional, operator-managed promotions of GPU clouds,
+inference and model-hosting platforms, infrastructure and data-center operators, and developer tools.
 
 * Off by default. An operator enables advertising as a whole and each placement (slot) separately, and sets how
   many items a slot shows. Slots exist where the dashboard has room for them (PLACEMENTS); nothing else is
   configurable in code.
-* A campaign is served only while it is active, inside its dates, assigned to the slot, and under its budget.
-  Among eligible campaigns the choice is random, weighted by ``weight``.
+* A campaign is served only while it is active, inside its dates, and assigned to the slot. Among eligible
+  campaigns the choice is random, weighted by ``weight``. Every item is labelled ("Sponsored" or "Referral link")
+  and shown apart from organic content; nothing here affects placement, health or security decisions.
 * Measurement: each served item carries a signed view token. The dashboard reports an impression when the item
   is shown; clicks go through /sponsored/{id}/click, which counts them and redirects to the campaign's own URL
   (never a URL from the request). Each token is counted at most once per kind, so reloading or replaying a request
   does not inflate numbers. No cookies, no third-party scripts, nothing about the viewer is stored.
-* Revenue is computed from the counts: CPM per 1000 impressions, CPC per click, or a flat fee, and reported as a
-  separate stream from compute commission.
+* No advertiser billing and no conversion tracking: agreements live outside the platform. Referral campaigns
+  carry their partner's referral code and campaign tag, added to the outbound link on click.
 """
 
 import base64
@@ -21,9 +22,8 @@ import random
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -36,8 +36,8 @@ from app.core.keys import derive_key
 from app.core.timeutil import utcnow
 from app.documents.sponsorship import (
     AdSettings,
+    CampaignKind,
     CampaignStatus,
-    PricingModel,
     SponsorCampaign,
     SponsorCategory,
     SponsorStat,
@@ -45,7 +45,6 @@ from app.documents.sponsorship import (
 )
 from app.documents.user import User
 from app.services import audit_service
-from app.services.ledger_service import money
 
 SETTINGS_ID = uuid.uuid5(uuid.NAMESPACE_URL, "agentmesh:ad-settings")
 TOKEN_TTL_SECONDS = 3600
@@ -144,9 +143,9 @@ class CampaignIn(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     weight: int = Field(1, ge=1, le=100)
-    pricing_model: PricingModel = PricingModel.CPM
-    rate: Decimal = Field(Decimal(0), ge=0, le=Decimal("100000000"), max_digits=18, decimal_places=8)
-    budget: Decimal | None = Field(None, gt=0, le=Decimal("100000000000"), max_digits=18, decimal_places=8)
+    kind: CampaignKind = CampaignKind.SPONSORED
+    referral_code: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    utm_campaign: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
 
     @field_validator("target_url")
     @classmethod
@@ -188,7 +187,7 @@ class StatusChange(BaseModel):
 async def create_campaign(db: Session, data: CampaignIn, actor: User) -> SponsorCampaign:
     campaign = SponsorCampaign(**data.model_dump(mode="python"), created_by=actor.id)
     campaign.category = data.category.value
-    campaign.pricing_model = data.pricing_model.value
+    campaign.kind = data.kind.value
     db.add(campaign)
     audit_service.record(
         db,
@@ -196,7 +195,7 @@ async def create_campaign(db: Session, data: CampaignIn, actor: User) -> Sponsor
         action="ads.campaign_created",
         resource_type="sponsor_campaign",
         resource_id=campaign.id,
-        details={"sponsor": campaign.sponsor, "placements": campaign.placements, "pricing": campaign.pricing_model},
+        details={"sponsor": campaign.sponsor, "placements": campaign.placements, "kind": campaign.kind},
     )
     await db.commit()
     return campaign
@@ -250,24 +249,6 @@ async def set_status(db: Session, campaign_id: str, status: CampaignStatus, acto
     return campaign
 
 
-def earned(campaign: SponsorCampaign) -> Decimal:
-    """Revenue earned so far from the campaign's counted impressions and clicks (or its flat fee)."""
-    rate = money(campaign.rate or 0)
-    if campaign.pricing_model == PricingModel.CPC.value:
-        return money(rate * campaign.clicks)
-    if campaign.pricing_model == PricingModel.FLAT.value:
-        return rate
-    return money(rate * campaign.impressions / 1000)
-
-
-def budget_left(campaign: SponsorCampaign) -> bool:
-    if campaign.budget is None:
-        return True
-    if campaign.pricing_model == PricingModel.FLAT.value:
-        return True  # a flat fee is agreed up front; the budget caps nothing further
-    return earned(campaign) < money(campaign.budget)
-
-
 async def list_campaigns(db: Session, status: str | None = None) -> list[SponsorCampaign]:
     return await db.find(SponsorCampaign, {"status": status} if status else {}, sort=[("created_at", -1)], limit=500)
 
@@ -304,7 +285,6 @@ def _eligible(campaign: SponsorCampaign, placement: str, now: datetime) -> bool:
         and placement in (campaign.placements or [])
         and (campaign.starts_at is None or campaign.starts_at <= now)
         and (campaign.ends_at is None or now < campaign.ends_at)
-        and budget_left(campaign)
     )
 
 
@@ -333,6 +313,8 @@ async def serve(db: Session, placement: str) -> dict[str, Any]:
         items.append(
             {
                 "id": c.id,
+                "kind": c.kind,
+                "label": "Referral link" if c.kind == CampaignKind.REFERRAL.value else "Sponsored",
                 "sponsor": c.sponsor,
                 "category": c.category,
                 "headline": c.headline,
@@ -383,7 +365,25 @@ async def click_target(db: Session, campaign_id: str, placement: str, token: str
     """Count a click (if valid) and return where to send the viewer: always the campaign's stored URL."""
     campaign = await get_campaign(db, campaign_id)
     await record(db, campaign_id, placement, token, "click")
-    return campaign.target_url
+    return outbound_url(campaign)
+
+
+def outbound_url(campaign: SponsorCampaign) -> str:
+    """The campaign's stored URL, with its referral code and campaign tag added (never anything from the request)."""
+    extra = {}
+    if campaign.referral_code:
+        extra["ref"] = campaign.referral_code
+    if campaign.utm_campaign:
+        extra |= {
+            "utm_source": "agentmesh",
+            "utm_medium": campaign.kind or "sponsored",
+            "utm_campaign": campaign.utm_campaign,
+        }
+    if not extra:
+        return campaign.target_url
+    parts = urlsplit(campaign.target_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True)) | extra
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 # --- Reporting ---------------------------------------------------------------------------------------------
@@ -400,37 +400,11 @@ async def stats(db: Session, campaign_ids: list[uuid.UUID], since: datetime) -> 
     return {r["_id"]: {"impressions": int(r["impressions"]), "clicks": int(r["clicks"])} for r in rows}
 
 
-async def revenue_by_day(db: Session, since: datetime) -> dict[str, dict[str, Decimal]]:
-    """Sponsorship revenue per UTC day: CPM and CPC from that day's counts, flat fees on the campaign's start day."""
-    campaigns = {c.id: c for c in await db.find(SponsorCampaign)}
-    out: dict[str, dict[str, Decimal]] = {}
-
-    def add(day: str, amount: Decimal) -> None:
-        if amount:
-            out.setdefault(day, {"sponsorship": Decimal(0)})["sponsorship"] += amount
-
-    for row in await db.find(SponsorStat, {"day": {"$gte": since.date().isoformat()}}):
-        c = campaigns.get(row.campaign_id)
-        if c is None:
-            continue
-        rate = money(c.rate or 0)
-        if c.pricing_model == PricingModel.CPM.value:
-            add(row.day, money(rate * row.impressions / 1000))
-        elif c.pricing_model == PricingModel.CPC.value:
-            add(row.day, money(rate * row.clicks))
-    for c in campaigns.values():
-        start = c.starts_at or c.created_at
-        if c.pricing_model == PricingModel.FLAT.value and c.status != CampaignStatus.DRAFT.value and start >= since:
-            add(start.date().isoformat(), money(c.rate or 0))
-    return out
-
-
 def campaign_view(c: SponsorCampaign, window: dict[str, int] | None = None) -> dict[str, Any]:
     ctr = round(c.clicks / c.impressions, 4) if c.impressions else None
     now = utcnow()
     return {
         **c.model_dump(exclude={"revision_id"}),
-        "earned": earned(c),
         "ctr": ctr,
         "serving": any(_eligible(c, p, now) for p in c.placements or []),
         "last_30_days": window or {"impressions": 0, "clicks": 0},

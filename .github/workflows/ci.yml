@@ -155,10 +155,10 @@ jobs:
         run: |
           cd server
           mkdir -p /tmp/agentmesh-backups
-          mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh').pricing_rules.insertOne({version: 99, currency: 'NGN'})"
+          mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh').node_prices.insertOne({version: 99, currency: 'NGN'})"
           ops/backup_db.sh /tmp/agentmesh-backups
           MONGODB_DB=agentmesh_restore ops/restore_db.sh /tmp/agentmesh-backups/agentmesh-*.archive.gz
-          test "$(mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh_restore').pricing_rules.findOne().version")" = "99"
+          test "$(mongosh "$MONGODB_URL" --quiet --eval "db.getSiblingDB('agentmesh_restore').node_prices.findOne().version")" = "99"
 
   e2e-stub-runtime:
     # Full worker -> control plane -> gateway flow on MongoDB. The model runtime is a

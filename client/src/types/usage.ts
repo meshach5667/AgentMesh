@@ -42,9 +42,8 @@ export interface PublicStats {
   models_deployable: number;
   deployments_ready: number;
   features: {
-    test_credits: boolean;
-    payments: boolean;
-    provider_payouts: boolean;
+    direct_provider_payments: boolean;
+    automatic_failover: boolean;
     confidential_computing: boolean;
   };
   generated_at: string;

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import type { AdminDeployment, AdminNode, AuditLog, Model, ModelArtifact, OperatorOverview, Transaction } from '../types';
+import type { AdminDeployment, AdminNode, AuditLog, Model, ModelArtifact, OperatorOverview } from '../types';
 
 export const useOperatorOverview = () =>
   useQuery({
@@ -28,12 +28,6 @@ export const useAdminModels = () =>
   useQuery({
     queryKey: ['admin', 'models'],
     queryFn: async () => (await api.get<Model[]>('/admin/models')).data,
-  });
-
-export const useLedger = () =>
-  useQuery({
-    queryKey: ['admin', 'transactions'],
-    queryFn: async () => (await api.get<Transaction[]>('/admin/transactions')).data,
   });
 
 export const useAuditLogs = (filters: { action?: string; resource_type?: string; resource_id?: string }) =>

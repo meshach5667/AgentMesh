@@ -125,3 +125,30 @@ describe('nodeAvailability', () => {
     expect(nodeAvailability(node({ status: 'REVOKED', accepting_workloads: false })).label).toBe('Revoked');
   });
 });
+
+describe('fieldErrors', () => {
+  it('maps a 422 response to form fields', () => {
+    const { AxiosError, AxiosHeaders } = jest.requireActual('axios');
+    const headers = new AxiosHeaders();
+    const err = new AxiosError('x', 'ERR', undefined, undefined, {
+      status: 422,
+      statusText: '',
+      headers,
+      config: { headers },
+      data: {
+        detail: [
+          { loc: ['body', 'payment', 'instructions'], msg: 'Value error, must not ask customers for PINs' },
+          { loc: ['body', 'payment', 'links', 1, 'url'], msg: 'Value error, must use https' },
+          { loc: ['body', 'display_name'], msg: 'String should have at least 2 characters' },
+        ],
+      },
+    });
+    const { fieldErrors } = jest.requireActual('../errors');
+    expect(fieldErrors(err)).toEqual({
+      instructions: 'must not ask customers for PINs',
+      'link-1': 'must use https',
+      display_name: 'String should have at least 2 characters',
+    });
+    expect(fieldErrors(new Error('x'))).toEqual({});
+  });
+});

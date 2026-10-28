@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import type { DefaultPrices, EnrollmentToken, Node, NodePricing, Prices } from '../types';
+import type { DefaultPrices, EnrollmentToken, Node, NodeEvent, NodePricing, Prices } from '../types';
 
 export const useNodes = () =>
   useQuery({
@@ -80,3 +80,12 @@ export const useSetDefaultPrices = () => {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['nodes'] }),
   });
 };
+
+/** Health and pricing history of one machine (offline, reconnected, recovered, degraded, price changes). */
+export const useNodeEvents = (id: string) =>
+  useQuery({
+    queryKey: ['nodes', id, 'events'],
+    queryFn: async () => (await api.get<NodeEvent[]>(`/nodes/${id}/events`)).data,
+    enabled: !!id,
+    refetchInterval: 30000,
+  });

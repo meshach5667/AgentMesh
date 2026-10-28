@@ -1,22 +1,24 @@
 import uuid
+from decimal import Decimal
 
+from bson import Decimal128
 from fastapi import HTTPException
 from pydantic import ValidationError
 from pymongo.errors import DuplicateKeyError
 
-from app.core.config import settings
 from app.core.database import Session
 from app.core.dependencies import is_staff
 from app.core.ids import parse_uuid
 from app.core.timeutil import utcnow
 from app.documents.api_key import ApiKey
-from app.documents.deployment import Deployment, DeploymentEvent
+from app.documents.deployment import Deployment, DeploymentAttempt, DeploymentEvent
 from app.documents.deployment import DeploymentStatus as S
+from app.documents.node import Node
 from app.documents.reservation import ResourceReservation
-from app.documents.user import Customer, User
+from app.documents.user import Customer, Provider, User
 from app.documents.worker import CommandType
-from app.schemas.deployment import DeploymentCreate
-from app.services import audit_service, billing_service, node_pricing_service, placement_service, worker_service
+from app.schemas.deployment import DeploymentCreate, DeploymentUpdate
+from app.services import audit_service, node_pricing_service, placement_service, provider_service, worker_service
 from app.services import deployment_lifecycle as lifecycle
 from app.services.catalog_service import (
     DeploymentConfig,
@@ -58,6 +60,8 @@ async def create_deployment(db: Session, deployment_data: DeploymentCreate, user
         ) from None
     model = await get_deployable_model(db, deployment_data.model_id, customer.id)
     artifacts = await deployable_artifacts(db, model, deployment_data.runtime)
+    if deployment_data.provider_id is not None:
+        await provider_service.get_provider(db, str(deployment_data.provider_id))
 
     deployment = Deployment(
         id=uuid.uuid4(),
@@ -66,8 +70,11 @@ async def create_deployment(db: Session, deployment_data: DeploymentCreate, user
         config=config.model_dump(),
         status=S.REQUESTED.value,
         idempotency_key=deployment_data.idempotency_key,
+        currency=deployment_data.currency,
         max_hourly_price=deployment_data.max_hourly_price,
         max_token_price=deployment_data.max_token_price,
+        provider_id=deployment_data.provider_id,
+        failover_policy=deployment_data.failover_policy,
     )
     db.add(deployment)
     try:
@@ -85,16 +92,12 @@ async def create_deployment(db: Session, deployment_data: DeploymentCreate, user
     failures: dict[str, dict] = {}
     for candidate in artifacts:
         candidate_req = estimate_requirements(candidate, config, community=is_unreviewed(model))
-        limits = await node_pricing_service.limits_for(
-            db,
-            deployment_data.max_hourly_price,
-            deployment_data.max_token_price,
-            candidate_req.cpu_cores,
-            candidate_req.ram_mb,
-            candidate_req.vram_mb,
+        limits = node_pricing_service.limits_for(
+            deployment_data.currency, deployment_data.max_hourly_price, deployment_data.max_token_price
         )
+        providers = {deployment_data.provider_id} if deployment_data.provider_id else None
         try:
-            node, rates = await schedule(db, deployment.id, candidate_req, limits=limits)
+            node, rates = await schedule(db, deployment.id, candidate_req, limits=limits, providers=providers)
         except NoEligibleNode as exc:
             failures[candidate.runtime] = {
                 "message": exc.evaluation.explain(),
@@ -124,19 +127,22 @@ async def create_deployment(db: Session, deployment_data: DeploymentCreate, user
             },
         ) from None
 
-    try:
-        await billing_service.require_prepaid(db, user_id, rates, req.cpu_cores, req.ram_mb, req.vram_mb)
-    except HTTPException:
-        await db.rollback()  # releases the reservation made above
-        raise
-
     deployment.runtime = artifact.runtime
     deployment.model_tag = artifact.reference
     deployment.artifact_id = artifact.id
     deployment.node_id = node.id
     deployment.schedule_attempts = 1
+    await placement_service.start_attempt(db, deployment, node, rates)
     await lifecycle.transition(
-        db, deployment, S.SCHEDULED, actor="system", message="Capacity reserved on a provider node", node_id=node.id
+        db,
+        deployment,
+        S.SCHEDULED,
+        actor="system",
+        message="Capacity reserved on a provider node",
+        kind="assigned",
+        attempt=1,
+        node_id=node.id,
+        attempt_id=deployment.attempt_id,
     )
     await worker_service.enqueue_command(
         db, node.id, deployment.id, CommandType.DEPLOY, deploy_payload(deployment, req, worker_source(artifact))
@@ -181,6 +187,13 @@ async def _stop(db: Session, deployment: Deployment, actor: str, message: str) -
     if status == S.REQUESTED:
         await lifecycle.transition(db, deployment, S.CANCELLED, actor=actor, message=message)
         return
+    if status in lifecycle.WAITING:
+        # Holds no node: nothing to clean up anywhere.
+        final = S.STOPPED if deployment.was_ready else S.CANCELLED
+        await lifecycle.transition(db, deployment, final, actor=actor, message=message, next_placement_at=None)
+        deployment.cleanup_status = "done"
+        return
+    await placement_service.end_attempt(db, deployment, "stopped")
     await lifecycle.transition(db, deployment, S.STOPPING, actor=actor, message=message)
     if status == S.SCHEDULED and await worker_service.cancel_undelivered(db, deployment.id, CommandType.DEPLOY):
         # The worker never received the deploy command, so there is nothing to clean up on the node.
@@ -237,10 +250,77 @@ async def list_events(db: Session, deployment_id: str, user: User):
     return await db.find(DeploymentEvent, {"deployment_id": deployment.id}, sort=[("created_at", 1), ("_id", 1)])
 
 
+async def update_deployment(db: Session, deployment_id: str, body: DeploymentUpdate, user: User) -> Deployment:
+    """Change price limits, currency or failover policy. They apply to the next placement (a move after a failure,
+    or a retry); a deployment already serving stays where it is."""
+    dep = await get_deployment_for_user(db, deployment_id, user)
+    if S(dep.status) in lifecycle.TERMINAL:
+        raise HTTPException(status_code=409, detail=f"Deployment is already {dep.status}")
+    changes = body.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(dep, key, value)
+    if changes:
+        stored = {k: Decimal128(str(v)) if isinstance(v, Decimal) else v for k, v in changes.items()}
+        await db.update_one(Deployment, {"_id": dep.id}, {"$set": stored})
+        audit_service.record(
+            db,
+            actor_id=user.id,
+            action="deployment.updated",
+            resource_type="deployment",
+            resource_id=dep.id,
+            details={k: str(v) for k, v in changes.items()},
+        )
+    await db.commit()
+    await db.refresh(dep)
+    return dep
+
+
+async def retry_deployment(db: Session, deployment_id: str, user: User) -> Deployment:
+    """Try to place a PENDING or NEEDS_ATTENTION deployment now (for example after raising a price limit)."""
+    dep = await get_deployment_for_user(db, deployment_id, user)
+    if S(dep.status) not in lifecycle.WAITING:
+        raise HTTPException(status_code=409, detail="Only a deployment waiting for a node can be retried")
+    await placement_service.retry_placement(db, dep, actor="customer")
+    await db.commit()
+    await db.refresh(dep)
+    return dep
+
+
+async def list_attempts(db: Session, deployment_id: str, user: User) -> list[dict]:
+    """Every placement of the deployment, oldest first, with who ran it and how it ended."""
+    dep = await get_deployment_for_user(db, deployment_id, user)
+    rows = await db.find(DeploymentAttempt, {"deployment_id": dep.id}, sort=[("number", 1)])
+    providers = {
+        p.id: p for p in await db.find(Provider, {"_id": {"$in": [r.provider_id for r in rows if r.provider_id]}})
+    }
+    out = []
+    for r in rows:
+        prov = providers.get(r.provider_id) if r.provider_id else None
+        out.append(
+            r.model_dump(
+                include={
+                    "id",
+                    "number",
+                    "active",
+                    "state",
+                    "outcome",
+                    "error_code",
+                    "error_message",
+                    "assigned_at",
+                    "ready_at",
+                    "ended_at",
+                    "rates",
+                }
+            )
+            | {"provider": provider_service.display_name(prov) if prov else None}
+        )
+    return out
+
+
 async def quote(db: Session, body: DeploymentCreate, user_id: uuid.UUID) -> dict:
-    """What a deployment would cost before creating it: per runtime, the machine placement would pick now and the
-    price limits applied. Reserves nothing."""
-    from app.services.scheduler_service import evaluate_nodes
+    """What a deployment would cost before creating it: per runtime, the machine placement would pick now within
+    the price limits, and who runs it. Reserves nothing."""
+    from app.services.scheduler_service import REASON_CURRENCY, REASON_PRICE, evaluate_nodes
 
     customer = await _get_customer(db, user_id)
     if not customer:
@@ -250,51 +330,49 @@ async def quote(db: Session, body: DeploymentCreate, user_id: uuid.UUID) -> dict
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="Invalid config") from exc
     model = await get_deployable_model(db, body.model_id, customer.id)
+    limits = node_pricing_service.limits_for(body.currency, body.max_hourly_price, body.max_token_price)
+    providers = {body.provider_id} if body.provider_id else None
     out = []
     for artifact in await deployable_artifacts(db, model, body.runtime):
         req = estimate_requirements(artifact, config, community=is_unreviewed(model))
-        limits = await node_pricing_service.limits_for(
-            db, body.max_hourly_price, body.max_token_price, req.cpu_cores, req.ram_mb, req.vram_mb
-        )
-        ev = await evaluate_nodes(db, req, limits=limits)
-        best = ev.rates[ev.eligible[0].id] if ev.eligible else None
+        ev = await evaluate_nodes(db, req, limits=limits, providers=providers)
+        best_node = ev.eligible[0] if ev.eligible else None
+        best = ev.rates[best_node.id] if best_node else None
+        provider = await db.get(Provider, best_node.owner_id) if best_node else None
         out.append(
             {
                 "runtime": artifact.runtime,
                 "requirements": req.__dict__,
                 "eligible_nodes": len(ev.eligible),
-                "over_price_limit": ev.reasons.get("over_price_limit", 0),
+                "over_price_limit": ev.reasons.get(REASON_PRICE, 0),
+                "other_currency": ev.reasons.get(REASON_CURRENCY, 0),
                 "cheapest": node_pricing_service.rates_out(best),
-                "hourly": best.hourly(req.cpu_cores, req.ram_mb, req.vram_mb) if best else None,
-                "max_hourly_price": limits.hourly,
-                "max_token_price": limits.tokens,
+                "hourly": (best.hourly(req.cpu_cores, req.ram_mb, req.vram_mb) if best else 0) if best_node else None,
+                "provider": provider_service.card(provider) if provider else None,
             }
         )
-    return {
-        "currency": settings.BILLING_CURRENCY,
-        "min_prepaid_hours": settings.BILLING_MIN_PREPAID_HOURS,
-        "by_runtime": out,
-    }
+    return {"currency": limits.currency, "by_runtime": out}
 
 
 async def pricing_for(db: Session, deployment_id: str, user: User) -> dict:
-    """The rates a deployment is billed at now on its machine, and the most it can be billed there."""
+    """What the deployment is estimated at now on its machine, the most it can be estimated at there, and who runs
+    that machine and how to pay them."""
     dep = await get_deployment_for_user(db, deployment_id, user)
     reservation = await db.find_one(ResourceReservation, {"deployment_id": dep.id, "status": "ACTIVE"})
-    rates = rule = None
+    rates = provider = None
+    placed_at = None
     if reservation is not None:
-        placed_at = await billing_service.placement_rates(db, reservation)
-        rates, rule = await node_pricing_service.billed_rates(db, reservation.node_id, placed_at, utcnow())
-    else:
-        placed_at = None
-        rule = await node_pricing_service.network_rule(db)
+        placed_at = reservation.rates
+        rates = await node_pricing_service.estimated_rates(db, reservation.node_id, placed_at, utcnow())
+        node = await db.get(Node, reservation.node_id)
+        provider = await db.get(Provider, node.owner_id) if node else None
     return {
         "deployment_id": dep.id,
-        "currency": settings.BILLING_CURRENCY,
         "rates": node_pricing_service.rates_out(rates),
         "hourly": rates.hourly(reservation.cpu_cores, reservation.ram_mb, reservation.vram_mb)
         if rates is not None and reservation is not None
-        else None,
+        else (0 if reservation is not None else None),
         "placed_at": placed_at,
-        "commission_rate": node_pricing_service.commission_rate(rule),
+        "provider": provider_service.card(provider) if provider else None,
+        "payment_reference": str(dep.customer_id)[:8].upper(),
     }

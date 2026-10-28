@@ -23,7 +23,7 @@ export default function ApiGuide() {
         <Table
           head={['Credential', 'Get it from', 'Use it for']}
           rows={[
-            ['Session token (JWT)', <><C key="a">POST /auth/register</C> or <C>POST /auth/login</C></>, 'Account actions: models, deployments, API keys, wallet, usage.'],
+            ['Session token (JWT)', <><C key="a">POST /auth/register</C> or <C>POST /auth/login</C></>, 'Account actions: models, deployments, providers, API keys, usage, cost estimates.'],
             [<>API key (<C key="b">am_sk_…</C>)</>, <><C key="c">POST /api-keys</C> or the dashboard</>, <>Calling deployments through the gateway (<C>/deployments/&#123;id&#125;/v1/…</C>, <C>/ollama/…</C>) only. The gateway also accepts a session token; that is how the dashboard&apos;s Try it works.</>],
           ]}
         />
@@ -70,9 +70,9 @@ export default function ApiGuide() {
             <>Add <C>&quot;runtime&quot;: &quot;ollama&quot;</C> (or <C>llamacpp</C>, <C>vllm</C>) to choose one; otherwise they are tried in that order.</>,
             <><C>config</C> accepts only <C>num_ctx</C> (512–8192), <C>region</C> and <C>require_gpu</C>. Anything else is rejected.</>,
             <>Retrying with the same <C>idempotency_key</C> returns the same deployment.</>,
-            <>Providers price each machine. The deployment goes to the cheapest machine that fits within <C>max_hourly_price</C> (per hour of its reservation) and <C>max_token_price</C> (per million input or output tokens); omitted limits default to the network prices. <C>POST /deployments/quote</C> takes the same body and prices it without creating anything.</>,
+            <>Providers price each machine. The deployment goes to the cheapest healthy machine that fits within <C>max_hourly_price</C> (per hour of its reservation) and <C>max_token_price</C> (per million input or output tokens), in <C>currency</C>. Optional <C>provider_id</C> restricts it to one provider; <C>failover_policy</C> is <C>any_provider</C> (default), <C>same_provider</C> or <C>manual</C>. <C>POST /deployments/quote</C> takes the same body and prices it without creating anything.</>,
+            <>When the node fails the deployment moves (new attempt) or waits: <C>PENDING</C> retries automatically with backoff; <C>NEEDS_ATTENTION</C> waits for you (manual policy, or only dearer machines). <C>PATCH /deployments/&#123;id&#125;</C> changes limits or policy; <C>POST /deployments/&#123;id&#125;/retry</C> places it now; <C>GET /deployments/&#123;id&#125;/attempts</C> lists every placement.</>,
             <>No node available: <C>503</C> with <C>{'{"detail": {"code": "no_eligible_node", "reasons": {...}, "by_runtime": {...}}}'}</C>.</>,
-            <>Not enough balance: <C>402</C> with <C>{'{"detail": {"code": "insufficient_balance", "required": ..., "balance": ...}}'}</C>.</>,
           ]}
         />
         <Table
@@ -208,19 +208,19 @@ console.log(reply.choices[0].message.content);`}
         <P>Limits apply per control-plane process.</P>
       </Section>
 
-      <Section id="usage" title="Usage and billing">
+      <Section id="usage" title="Usage, providers and cost estimates">
         <Table
           head={['Method and path', 'Returns']}
           rows={[
             [<C key="1">GET /usage/&#123;deployment_id&#125;</C>, <>One record per request: endpoint, status, duration, bytes, token counts. Newest 200 by default (<C>?limit=</C> up to 1000).</>],
             [<C key="2">GET /usage/summary?days=30</C>, 'Requests, successes, failures and tokens per day and per deployment (1–90 days).'],
-            [<C key="3">GET /billing/pricing</C>, 'The network price list in force (used by machines without their own prices, and the default price limits).'],
-            [<C key="3m">GET /billing/market</C>, 'Lowest and highest price of each unit across machines taking work; no authentication.'],
+            [<C key="3p">GET /providers</C>, 'Providers with machines taking work: capacity, runtimes, lowest prices per currency, payment methods.'],
+            [<C key="3pd">GET /providers/&#123;id&#125;</C>, 'One provider, with their full payment arrangement.'],
+            [<C key="3m">GET /billing/market</C>, 'Lowest and highest price of each unit per currency across machines taking work; no authentication.'],
             [<C key="3q">POST /deployments/quote</C>, <>Price a deployment before creating it (same body as <C>POST /deployments</C>): per runtime, the cheapest machine within your limits and the limits applied.</>],
-            [<C key="3d">GET /deployments/&#123;id&#125;/pricing</C>, 'The rates a deployment is billed at now, and the most it can be billed on its machine.'],
-            [<C key="4">GET /billing/charges?deployment_id=…</C>, 'What each billing window cost.'],
-            [<C key="5">GET /wallets</C>, 'Your balance.'],
-            [<C key="6">POST /payments/topups</C>, <>Start a Paystack checkout (test mode): <C>{'{"amount": 5000}'}</C>.</>],
+            [<C key="3d">GET /deployments/&#123;id&#125;/pricing</C>, 'What a deployment is estimated at now, who runs its machine, how to pay them, and your payment reference.'],
+            [<C key="4">GET /billing/estimates?deployment_id=…</C>, 'Estimated cost of each window of use (not payments).'],
+            [<C key="5">GET /billing/estimates/summary?days=30</C>, 'Estimated totals per currency and per day.'],
             [<C key="7">GET /stats/public</C>, 'Network counts; no authentication.'],
           ]}
         />

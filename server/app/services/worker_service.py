@@ -124,6 +124,7 @@ async def enroll(db: Session, req: EnrollRequest) -> dict:
         api_key_hash=hash_secret(credential),
         status=NodeStatus.ONLINE,
         last_heartbeat=now,
+        recovery_heartbeats=settings.NODE_RECOVERY_HEARTBEATS,  # enrollment is a full check
         mode=req.mode,
         worker_version=req.worker_version,
         protocol_version=req.protocol_version,
@@ -328,9 +329,53 @@ async def revoke_sessions(db: Session, node_id: uuid.UUID) -> int:
 # --- Heartbeat and reconciliation ----------------------------------------------------------------------
 
 
+def _response(node: Node, now, stop: list[uuid.UUID], stale: bool = False) -> HeartbeatResponse:
+    return HeartbeatResponse(
+        server_time=now.timestamp(),
+        accepting_workloads=bool(node.accepting_workloads),
+        heartbeat_interval_seconds=settings.WORKER_HEARTBEAT_INTERVAL_SECONDS,
+        stop_deployments=stop,
+        latest_worker_version=release_service.latest_version(),
+        command_signing_key=SigningKey(**signing.signing_key_info()),
+        stale=stale,
+    )
+
+
 async def heartbeat(db: Session, node: Node, req: HeartbeatRequest) -> HeartbeatResponse:
     now = utcnow()
+    if req.boot_id is not None and req.seq is not None:
+        # Apply heartbeats in order: claim this sequence number atomically, or ignore a delayed duplicate.
+        claimed = await db.update_one(
+            Node,
+            {
+                "_id": node.id,
+                "$or": [
+                    {"heartbeat_boot_id": {"$ne": req.boot_id}},
+                    {"heartbeat_seq": None},
+                    {"heartbeat_seq": {"$lt": req.seq}},
+                ],
+            },
+            {"$set": {"heartbeat_boot_id": req.boot_id, "heartbeat_seq": req.seq}},
+        )
+        if not claimed:
+            return _response(node, now, [], stale=True)
+        node.heartbeat_boot_id, node.heartbeat_seq = req.boot_id, req.seq
+    was_offline = node.status == NodeStatus.OFFLINE
+    if was_offline:
+        # Back after an outage: identity was re-checked by authentication; health is re-earned over
+        # NODE_RECOVERY_HEARTBEATS consecutive heartbeats before the node gets new work.
+        node.recovery_heartbeats = 1
+        audit_service.record(
+            db, actor_id=None, action="node.reconnected", resource_type="node", resource_id=node.id, details={}
+        )
+    elif (node.recovery_heartbeats or 0) < settings.NODE_RECOVERY_HEARTBEATS:
+        node.recovery_heartbeats = (node.recovery_heartbeats or 0) + 1
+        if node.recovery_heartbeats >= settings.NODE_RECOVERY_HEARTBEATS:
+            audit_service.record(
+                db, actor_id=None, action="node.recovered", resource_type="node", resource_id=node.id, details={}
+            )
     node.last_heartbeat = now
+    node.heartbeat_late_at = None
     node.status = NodeStatus.ONLINE
     node.worker_version = req.worker_version
     node.last_metrics = {k: float(v) for k, v in list(req.metrics.items())[:32]}
@@ -367,14 +412,7 @@ async def heartbeat(db: Session, node: Node, req: HeartbeatRequest) -> Heartbeat
         )
 
     await db.commit()
-    return HeartbeatResponse(
-        server_time=now.timestamp(),
-        accepting_workloads=bool(node.accepting_workloads),
-        heartbeat_interval_seconds=settings.WORKER_HEARTBEAT_INTERVAL_SECONDS,
-        stop_deployments=stop,
-        latest_worker_version=release_service.latest_version(),
-        command_signing_key=SigningKey(**signing.signing_key_info()),
-    )
+    return _response(node, now, stop)
 
 
 async def disconnect(db: Session, node: Node) -> None:
@@ -506,6 +544,9 @@ async def report_deployment_status(db: Session, node: Node, deployment_id: str, 
     dep = await db.get(Deployment, parse_uuid(deployment_id, "Deployment"))
     if dep is None or dep.node_id != node.id:
         raise HTTPException(status_code=404, detail="Deployment not found")
+    if report.attempt_id is not None and dep.attempt_id is not None and report.attempt_id != dep.attempt_id:
+        # A report about an earlier placement of this deployment (delayed, or from before a move): never applied.
+        raise HTTPException(status_code=409, detail="This execution attempt has been superseded")
 
     current = S(dep.status)
     now = utcnow()
@@ -575,6 +616,8 @@ async def report_deployment_status(db: Session, node: Node, deployment_id: str, 
             "endpoint": deployment_endpoint(dep),
             "started_at": dep.started_at or now,
         }
+    if target == S.READY:
+        await placement_service.mark_attempt_running(db, dep)
     if target == S.READY and dep.artifact_id:
         # Evidence that this model/runtime combination really serves, not just that it is in the catalog.
         artifact = await db.get(ModelArtifact, dep.artifact_id)

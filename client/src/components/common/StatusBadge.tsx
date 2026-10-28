@@ -17,6 +17,8 @@ const STATUS_TONE: Record<string, keyof typeof TONE> = {
   STARTING: 'blue',
   STOPPING: 'amber',
   UNHEALTHY: 'amber',
+  PENDING: 'amber',
+  NEEDS_ATTENTION: 'red',
   FAILED: 'red',
   STOPPED: 'gray',
   CANCELLED: 'gray',
@@ -27,45 +29,71 @@ const STATUS_TONE: Record<string, keyof typeof TONE> = {
   VERIFYING: 'blue',
   RECOVERING: 'amber',
   COMPLETED: 'gray',
-  // nodes
+  // nodes (status and derived health)
   ONLINE: 'green',
+  ACTIVE: 'green',
   AVAILABLE: 'green',
   BUSY: 'blue',
   REGISTERING: 'blue',
   DEGRADED: 'amber',
+  DRAINING: 'amber',
   OFFLINE: 'red',
   SUSPENDED: 'red',
+  QUARANTINED: 'red',
   REVOKED: 'red',
-  // ledger
-  SETTLED: 'green',
-  PENDING: 'amber',
-  AUTHORIZED: 'blue',
-  REFUNDED: 'gray',
-  // payments and payouts
-  INITIALIZED: 'blue',
-  SUCCEEDED: 'green',
-  ABANDONED: 'gray',
-  REVIEW: 'amber',
-  OTP_REQUIRED: 'amber',
-  REVERSED: 'red',
-  REJECTED: 'red',
+  // sponsorship campaigns
+  draft: 'gray',
+  active: 'green',
+  paused: 'amber',
+  ended: 'gray',
 };
 
-const PULSE = new Set(['REQUESTED', 'SCHEDULED', 'PROVISIONING', 'STARTING', 'STOPPING', 'PLANNING', 'SUBMITTING', 'DEPLOYING', 'VERIFYING', 'RECOVERING']);
+/** Words, not codes: status is never conveyed by colour alone. */
+const STATUS_LABEL: Record<string, string> = {
+  REQUESTED: 'Queued',
+  SCHEDULED: 'Assigned',
+  PROVISIONING: 'Provisioning',
+  STARTING: 'Starting',
+  READY: 'Running',
+  UNHEALTHY: 'Unhealthy',
+  PENDING: 'Waiting for a node',
+  NEEDS_ATTENTION: 'Needs your action',
+  STOPPING: 'Stopping',
+  STOPPED: 'Stopped',
+  FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+  ONLINE: 'Online',
+  ACTIVE: 'Active',
+  BUSY: 'Busy',
+  DEGRADED: 'Degraded',
+  DRAINING: 'Draining',
+  OFFLINE: 'Offline',
+  SUSPENDED: 'Suspended',
+  QUARANTINED: 'Quarantined',
+  REVOKED: 'Revoked',
+  REGISTERING: 'Registering',
+};
+
+export function statusLabel(status: string): string {
+  return STATUS_LABEL[status] ?? status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ');
+}
+
+const PULSE = new Set(['REQUESTED', 'SCHEDULED', 'PROVISIONING', 'STARTING', 'STOPPING', 'PENDING', 'PLANNING', 'SUBMITTING', 'DEPLOYING', 'VERIFYING', 'RECOVERING']);
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
   const tone = TONE[STATUS_TONE[status] ?? 'gray'];
   return (
     <span
       data-status={status}
+      title={status}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium tracking-wide whitespace-nowrap',
         tone,
         className,
       )}
     >
-      <span className={cn('size-1.5 rounded-full bg-current', PULSE.has(status) && 'animate-pulse')} />
-      {status}
+      <span aria-hidden className={cn('size-1.5 rounded-full bg-current', PULSE.has(status) && 'motion-safe:animate-pulse')} />
+      {statusLabel(status)}
     </span>
   );
 }

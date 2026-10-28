@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 const POINTS = [
   'OpenAI-compatible endpoints for open-weight models',
   'Placement, health checks and failover handled for you',
-  'Prepaid, itemised billing with provider payouts',
+  'Providers set their own prices; you pay them directly, with no platform fees',
 ];
 
 export function AuthShell({ children }: { children: React.ReactNode }) {

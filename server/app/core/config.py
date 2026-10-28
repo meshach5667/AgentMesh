@@ -1,10 +1,9 @@
 import base64
 import json
-from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 INSECURE_DEFAULT_SECRET = "supersecretkey"
@@ -13,16 +12,20 @@ DEFAULT_MONGODB_URL = "mongodb://127.0.0.1:27017/?replicaSet=rs0"
 
 
 class Settings(BaseSettings):
+    """Configuration from the environment. Secrets (connection strings, keys, tokens) are left out of the repr so a
+    traceback or log line that shows the settings never reveals them."""
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parents[3] / ".env"),
         extra="ignore",
     )
 
-    # MongoDB must be a replica set (Atlas always is): ledger postings commit in multi-document transactions.
-    MONGODB_URL: str = DEFAULT_MONGODB_URL
+    # MongoDB must be a replica set (Atlas always is): placement and capacity changes commit in multi-document
+    # transactions.
+    MONGODB_URL: str = Field(default=DEFAULT_MONGODB_URL, repr=False)
     MONGODB_DB: str = "agentmesh"
-    REDIS_URL: str = "redis://localhost:6379/0"
-    SECRET_KEY: str = INSECURE_DEFAULT_SECRET
+    REDIS_URL: str = Field(default="redis://localhost:6379/0", repr=False)
+    SECRET_KEY: str = Field(default=INSECURE_DEFAULT_SECRET, repr=False)
     # Access tokens are short-lived and bound to a server-side session; refresh tokens rotate on every use and the
     # session ends after REFRESH_TOKEN_TTL_DAYS however often it is refreshed.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
@@ -32,17 +35,24 @@ class Settings(BaseSettings):
     MFA_ISSUER: str = "AgentMesh"
     # Optional dedicated key (base64 of 32 random bytes) for secrets stored encrypted in the database (MFA seeds).
     # Unset: a key derived from SECRET_KEY for this purpose only.
-    DATA_ENCRYPTION_KEY: str = ""
+    DATA_ENCRYPTION_KEY: str = Field(default="", repr=False)
+    # Node health. A node whose last heartbeat is older than HEARTBEAT_DEGRADED_SECONDS gets no new work (one late
+    # heartbeat is not a failure); older than HEARTBEAT_TIMEOUT_SECONDS it is OFFLINE and its work is moved.
+    HEARTBEAT_DEGRADED_SECONDS: int = 45
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
+    # A node that comes back from OFFLINE gets new work only after this many consecutive heartbeats.
+    NODE_RECOVERY_HEARTBEATS: int = 2
+    # This many failed placements in a row (failures caused by the node) take a node out of scheduling for
+    # NODE_DEGRADED_COOLDOWN_SECONDS.
+    NODE_FAILURE_THRESHOLD: int = 3
+    NODE_DEGRADED_COOLDOWN_SECONDS: int = 600
     API_V1_PREFIX: str = "/api/v1"
     # Fail closed: an unset ENVIRONMENT means production, so the safety checks below (random SECRET_KEY, explicit
-    # MongoDB URL, https, no test credits) apply unless a developer explicitly opts in with dev/test.
+    # MongoDB URL, https) apply unless a developer explicitly opts in with dev/test.
     ENVIRONMENT: str = "production"
     LOG_LEVEL: str = "INFO"
     # Explicit origins only: credentials are allowed, so a wildcard would be unsafe.
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    # Unpaid "test credits" for local development. Never honoured outside dev/test environments.
-    ALLOW_TEST_CREDITS: bool = True
     LOG_JSON: bool = True
     # Interactive API docs (Swagger, ReDoc, OpenAPI JSON) are served in dev/test only unless this is set.
     API_DOCS_ENABLED: bool = False
@@ -65,8 +75,8 @@ class Settings(BaseSettings):
     ALLOW_LEGACY_NODE_CREDENTIALS: bool = True
     # Command authorizations (Ed25519, app.core.signing): lifetime, and optional explicit keys (base64 32-byte seeds).
     COMMAND_AUTH_TTL_SECONDS: int = 600
-    COMMAND_SIGNING_KEY: str = ""
-    COMMAND_SIGNING_PREVIOUS_KEY: str = ""
+    COMMAND_SIGNING_KEY: str = Field(default="", repr=False)
+    COMMAND_SIGNING_PREVIOUS_KEY: str = Field(default="", repr=False)
     COMMAND_MAX_ATTEMPTS: int = 3
     WORKER_MAX_BODY_BYTES: int = 256 * 1024
     # Directory holding manifest.json, manifest.sig and the release wheel (see scripts/sign_worker_release.py).
@@ -77,8 +87,14 @@ class Settings(BaseSettings):
     PROVISION_STALL_TIMEOUT_SECONDS: int = 900  # no progress report for this long -> FAILED
     PROVISION_MAX_SECONDS: int = 3600
     STOP_TIMEOUT_SECONDS: int = 300
-    UNHEALTHY_GRACE_SECONDS: int = 180  # unhealthy this long -> move to another node (or fail)
-    MAX_SCHEDULE_ATTEMPTS: int = 3  # placements per deployment, including the first
+    UNHEALTHY_GRACE_SECONDS: int = 180  # unhealthy this long -> move to another node
+    MAX_SCHEDULE_ATTEMPTS: int = 5  # placements per deployment, including the first
+    # A deployment whose node failed with no eligible replacement waits (PENDING) and is retried with exponential
+    # backoff and jitter, from PLACEMENT_RETRY_BASE_SECONDS up to PLACEMENT_RETRY_MAX_SECONDS, for at most
+    # PLACEMENT_PENDING_MAX_SECONDS before it fails.
+    PLACEMENT_RETRY_BASE_SECONDS: int = 15
+    PLACEMENT_RETRY_MAX_SECONDS: int = 300
+    PLACEMENT_PENDING_MAX_SECONDS: int = 3600
     MONITOR_INTERVAL_SECONDS: int = 15
     BACKGROUND_JOBS_ENABLED: bool = True
 
@@ -95,35 +111,13 @@ class Settings(BaseSettings):
     GATEWAY_IDLE_TIMEOUT_SECONDS: int = 120
     GATEWAY_MAX_RESPONSE_BYTES: int = 32 * 1024 * 1024
 
-    # Billing. One platform currency; wallets, prices, top-ups and payouts all use it.
-    BILLING_CURRENCY: str = "NGN"
-    BILLING_INTERVAL_SECONDS: int = 300  # how often READY time and tokens are rated into charges
-    # A deployment needs enough balance for this many hours of its reserved resources at current prices.
-    BILLING_MIN_PREPAID_HOURS: float = 1.0
-    # Platform commission: the share of each compute charge AgentMesh keeps; the node's provider is credited the
-    # rest. The rate is stored on each pricing version (and on each charge), so changing it never re-prices past
-    # usage. DEFAULT_ is what a new version gets when the operator gives no rate; MAX_ is the most any may set.
-    DEFAULT_PLATFORM_FEE_RATE: Decimal = Decimal("0.10")
-    MAX_PLATFORM_FEE_RATE: Decimal = Decimal("0.50")
+    # Prices. Providers price each machine in a currency of their choice; this is the currency a deployment's price
+    # limits use when the customer names none. AgentMesh never processes payments: customers pay providers directly.
+    DEFAULT_CURRENCY: str = "NGN"
+    COST_ESTIMATE_INTERVAL_SECONDS: int = 300  # how often READY time and tokens are turned into cost estimates
 
-    # Paystack (https://paystack.com/docs/api). Test-mode keys (sk_test_...) unless PAYSTACK_ALLOW_LIVE.
-    PAYSTACK_SECRET_KEY: str = ""
-    PAYSTACK_BASE_URL: str = "https://api.paystack.co"
-    PAYSTACK_ALLOW_LIVE: bool = False
-    PAYSTACK_TIMEOUT_SECONDS: float = 20.0
-    # Paystack's webhook source addresses; empty disables the check (e.g. behind a proxy that rewrites IPs).
-    PAYSTACK_WEBHOOK_IPS: list[str] = []
-    # Where Paystack sends the customer after checkout (the dashboard verifies the reference on return).
-    FRONTEND_URL: str = "http://localhost:3000"
-    TOPUP_MIN_AMOUNT: Decimal = Decimal("100")
-    TOPUP_MAX_AMOUNT: Decimal = Decimal("1000000")
-    PAYOUT_MIN_AMOUNT: Decimal = Decimal("1000")
-    PAYOUTS_REQUIRE_APPROVAL: bool = True
-    # Payments/payouts still unresolved after this long are checked against Paystack by reconciliation.
-    RECONCILE_AFTER_MINUTES: int = 30
-
-    # Retention (app.services.retention_service, run hourly by the background monitor). Financial records (charges,
-    # ledger, payments, refunds, payouts) are kept and never purged by it.
+    # Retention (app.services.retention_service, run hourly by the background monitor). Cost estimates and records
+    # left from the retired payment system are kept and never purged by it.
     AI_INFERENCE_RESULT_RETENTION_HOURS: int = 24
     AI_RUN_RETENTION_DAYS: int = 90
     USAGE_RECORD_RETENTION_DAYS: int = 400
@@ -131,11 +125,11 @@ class Settings(BaseSettings):
     AUDIT_LOG_RETENTION_DAYS: int = 365
 
     # Bearer token for GET /metrics. Empty disables the endpoint.
-    METRICS_TOKEN: str = ""
+    METRICS_TOKEN: str = Field(default="", repr=False)
 
     # AI deployment agent: the Gemini API answers its planning and recovery questions. Empty GEMINI_API_KEY disables
     # the agent (its endpoints answer 503 ai_not_configured).
-    GEMINI_API_KEY: str = ""
+    GEMINI_API_KEY: str = Field(default="", repr=False)
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
     GEMINI_TIMEOUT_SECONDS: float = 60.0
@@ -191,20 +185,6 @@ class Settings(BaseSettings):
     def api_docs_enabled(self) -> bool:
         return self.is_dev or self.API_DOCS_ENABLED
 
-    @property
-    def test_credits_enabled(self) -> bool:
-        return self.is_dev and self.ALLOW_TEST_CREDITS
-
-    @property
-    def payments_enabled(self) -> bool:
-        return bool(self.PAYSTACK_SECRET_KEY)
-
-    @property
-    def payments_mode(self) -> str | None:
-        if not self.PAYSTACK_SECRET_KEY:
-            return None
-        return "live" if self.PAYSTACK_SECRET_KEY.startswith("sk_live_") else "test"
-
     @model_validator(mode="after")
     def _check_heartbeat_timing(self) -> "Settings":
         # Workers heartbeat at the interval the control plane gives them. A timeout shorter than a few
@@ -214,6 +194,19 @@ class Settings(BaseSettings):
                 "HEARTBEAT_TIMEOUT_SECONDS must be at least 3x WORKER_HEARTBEAT_INTERVAL_SECONDS "
                 f"(got {self.HEARTBEAT_TIMEOUT_SECONDS}s vs {self.WORKER_HEARTBEAT_INTERVAL_SECONDS}s)"
             )
+        if (
+            not self.WORKER_HEARTBEAT_INTERVAL_SECONDS
+            < self.HEARTBEAT_DEGRADED_SECONDS
+            < self.HEARTBEAT_TIMEOUT_SECONDS
+        ):
+            raise ValueError(
+                "HEARTBEAT_DEGRADED_SECONDS must be between WORKER_HEARTBEAT_INTERVAL_SECONDS and "
+                "HEARTBEAT_TIMEOUT_SECONDS"
+            )
+        if self.NODE_RECOVERY_HEARTBEATS < 1 or self.NODE_FAILURE_THRESHOLD < 1:
+            raise ValueError("NODE_RECOVERY_HEARTBEATS and NODE_FAILURE_THRESHOLD must be at least 1")
+        if not 0 < self.PLACEMENT_RETRY_BASE_SECONDS <= self.PLACEMENT_RETRY_MAX_SECONDS:
+            raise ValueError("Need 0 < PLACEMENT_RETRY_BASE_SECONDS <= PLACEMENT_RETRY_MAX_SECONDS")
         return self
 
     @model_validator(mode="after")
@@ -296,16 +289,13 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _check_payments(self) -> "Settings":
-        key = self.PAYSTACK_SECRET_KEY
-        if key and not key.startswith(("sk_test_", "sk_live_")):
-            raise ValueError("PAYSTACK_SECRET_KEY must be a Paystack secret key (sk_test_... or sk_live_...)")
-        if key.startswith("sk_live_") and not self.PAYSTACK_ALLOW_LIVE:
-            raise ValueError("A live Paystack key needs PAYSTACK_ALLOW_LIVE=true (payments default to test mode)")
-        if len(self.BILLING_CURRENCY) != 3 or not self.BILLING_CURRENCY.isupper():
-            raise ValueError("BILLING_CURRENCY must be an ISO 4217 code such as NGN")
-        if not 0 <= self.DEFAULT_PLATFORM_FEE_RATE <= self.MAX_PLATFORM_FEE_RATE < 1:
-            raise ValueError("Platform fee rates need 0 <= DEFAULT_PLATFORM_FEE_RATE <= MAX_PLATFORM_FEE_RATE < 1")
+    def _check_currency(self) -> "Settings":
+        if (
+            len(self.DEFAULT_CURRENCY) != 3
+            or not self.DEFAULT_CURRENCY.isalpha()
+            or not self.DEFAULT_CURRENCY.isupper()
+        ):
+            raise ValueError("DEFAULT_CURRENCY must be an ISO 4217 code such as NGN")
         return self
 
 

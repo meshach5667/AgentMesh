@@ -5,7 +5,7 @@ import { LoginForm } from '@/components/auth/LoginForm';
 
 export const metadata: Metadata = {
   title: 'Sign in',
-  description: 'Sign in to your AgentMesh account to manage deployments, API keys, machines and payouts.',
+  description: 'Sign in to your AgentMesh account to manage deployments, API keys, machines, prices and payment details.',
   alternates: { canonical: '/login' },
 };
 

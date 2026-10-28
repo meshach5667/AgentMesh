@@ -48,14 +48,12 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY to a random value of at least 32 characters}
       - ENVIRONMENT=production
-      - ALLOW_TEST_CREDITS=false
       # https URL customers and workers use to reach this API (behind your TLS-terminating proxy)
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the public https URL of the API}
       - FRONTEND_URL=${FRONTEND_URL:?Set FRONTEND_URL to the public URL of the dashboard}
       - CORS_ORIGINS=["${FRONTEND_URL}"]
-      # Paystack test key (sk_test_...). Payments stay disabled while unset.
-      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
-      - BILLING_CURRENCY=${BILLING_CURRENCY:-NGN}
+      # Currency of price limits when a customer names none (providers price machines in their own currency).
+      - DEFAULT_CURRENCY=${DEFAULT_CURRENCY:-NGN}
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       # Client addresses (rate limits, audit log, webhook IP checks) come from X-Forwarded-For only when the
       # connection comes from these proxy addresses (IPs or CIDRs), e.g. the compose network gateway your proxy

@@ -42,12 +42,16 @@ export function newIdempotencyKey(): string {
 
 export const STATUS_HELP: Record<DeploymentStatus, string> = {
   REQUESTED: 'Waiting for a node with enough free capacity.',
+  PENDING:
+    'Its node failed and no other eligible node is free right now. AgentMesh keeps retrying automatically, with growing intervals, and starts it on the first suitable node. Nothing is lost.',
+  NEEDS_ATTENTION:
+    'Automatic recovery is paused and waiting for you: either your failover policy is manual, or the only nodes available cost more than you approved. Raise your price limit or retry.',
   SCHEDULED: 'Capacity is reserved on a node; waiting for its worker to pick up the job.',
   PROVISIONING: 'The node is starting the runtime and downloading the model. Large models can take several minutes.',
   STARTING: 'The model is loading. A test generation must succeed before the deployment is marked ready.',
   READY: 'Serving requests. The test generation succeeded.',
   UNHEALTHY:
-    'The node stopped reporting or its health check failed. Requests return 503. If it does not recover within a few minutes, AgentMesh moves the deployment to another node.',
+    'The node stopped reporting or its health check failed. Requests return 503. If it does not recover within a few minutes, AgentMesh restarts the deployment on another eligible node (a restart from the model source, not a live migration).',
   STOPPING: 'The node is stopping the runtime and removing the workload.',
   STOPPED: 'Stopped. Resources on the node were released.',
   FAILED: 'Failed. See the error below.',

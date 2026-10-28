@@ -8,20 +8,20 @@ const TRACKS = [
     href: '/register',
     cta: 'Deploy a model',
     steps: [
-      ['Pick a model', 'Browse approved open-weight models with their runtimes, memory needs and hourly price.'],
-      ['Deploy', 'AgentMesh reserves capacity on a node, downloads and verifies the model, and runs a test generation.'],
-      ['Call it', 'Create a scoped API key and use any OpenAI client. Watch requests, tokens and charges live.'],
+      ['Find compute', 'Compare providers by capacity, GPUs, runtimes, prices and payment terms, or let AgentMesh pick the cheapest suitable machine.'],
+      ['Deploy', 'AgentMesh reserves capacity on a healthy node, downloads and verifies the model, and runs a test generation.'],
+      ['Call it and pay the provider', 'Use any OpenAI client with a scoped API key. Watch requests and cost estimates, and pay the provider directly on their terms.'],
     ],
   },
   {
     eyebrow: 'For providers',
-    title: 'Turn idle machines into income',
+    title: 'Offer your machines, on your terms',
     href: '/register?role=provider',
     cta: 'Become a provider',
     steps: [
       ['Install the worker', 'A per-user agent or a Docker worker. Outbound connections only; no ports to open.'],
-      ['Set your limits', 'Cap CPU, memory and disk, set availability hours, and pause or drain any time.'],
-      ['Get paid', 'Earn your share of every charge for the deployments you serve, paid out to your bank via Paystack.'],
+      ['Set limits and prices', 'Cap CPU, memory and disk, set availability hours, and price each machine in your own currency. Participation is free.'],
+      ['Get paid directly', 'Publish how customers pay you. AgentMesh shows usage estimates per customer reference and never takes a cut.'],
     ],
   },
 ];

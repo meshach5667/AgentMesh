@@ -19,7 +19,15 @@ export interface OperatorOverview {
   models: { total: number; approved: number; deployable: number };
   users_by_role: Record<string, number>;
   usage_24h: UsageTotals;
-  ledger: { type: string; status: string; count: number; amount: string }[];
+  /** Machines by derived health (ACTIVE, BUSY, DEGRADED, DRAINING, OFFLINE, ...). */
+  nodes_by_health: Record<string, number>;
+  /** Failover activity over the last 24 hours. */
+  recovery_24h: {
+    attempts_ended: Record<string, number>;
+    moves: number;
+    waiting_for_node: number;
+    needs_attention: number;
+  };
   generated_at: string;
 }
 

@@ -15,11 +15,11 @@ export default function GettingStarted() {
         </P>
         <List
           items={[
-            'Placement: it reserves CPU, memory, disk and GPU on a node that fits, and explains why when none does.',
+            'Placement: it reserves CPU, memory, disk and GPU on the cheapest healthy machine that fits your price limits, and explains why when none does.',
             'Readiness: a deployment only becomes READY after a real test generation succeeds.',
-            'Failover: when a node goes offline or fails, the deployment moves to another node with the same id, endpoint and keys.',
+            'Failover: health is judged from heartbeats; when a node goes offline or fails, the deployment is restarted on another suitable node with the same id, endpoint and keys.',
             'Keys and metering: scoped API keys, and per-request usage records that never store prompts or responses.',
-            'Billing: prepaid wallets, charges for READY time and tokens, and payouts to providers.',
+            'Direct payments: providers set their own prices and publish how they are paid; customers pay them directly. AgentMesh takes no commission and shows cost estimates.',
           ]}
         />
       </Section>
@@ -29,9 +29,9 @@ export default function GettingStarted() {
           head={['Role', 'What they do', 'Guide']}
           rows={[
             ['Customers', 'Deploy models and call them from their applications.', <A key="c" href="/docs/customers">Customer guide</A>],
-            ['Providers', 'Run the worker on their machines and earn a share of what customers pay.', <A key="p" href="/docs/providers">Provider guide</A>],
+            ['Providers', 'Run the worker on their machines, set their prices, and are paid directly by customers.', <A key="p" href="/docs/providers">Provider guide</A>],
             ['Developers', 'Integrate deployments with the API and OpenAI SDKs.', <A key="a" href="/docs/api">API reference</A>],
-            ['Operators', 'Run the network: catalog, prices, payouts, monitoring. Or self-host a separate instance.', <A key="o" href="/docs/operators">Operator guide</A>],
+            ['Operators', 'Run the network: catalog, monitoring, failover settings, sponsorships. Or self-host a separate instance.', <A key="o" href="/docs/operators">Operator guide</A>],
           ]}
         />
       </Section>
@@ -65,15 +65,14 @@ export default function GettingStarted() {
           head={['Area', 'Status', 'Notes']}
           rows={[
             ['Deploying approved models on Ollama or llama.cpp, OpenAI-compatible API with streaming', <StatusPill key="1" status="working" />, 'Verified end to end on real models.'],
-            ['Automatic placement, readiness checks, moving deployments off failed nodes', <StatusPill key="2" status="working" />, ''],
+            ['Health monitoring, cheapest-first placement, readiness checks, automatic failover with attempt history', <StatusPill key="2" status="working" />, 'Failover restarts the model on a replacement node; it is not a live migration.'],
             ['API keys, per-deployment scoping, per-request usage metering', <StatusPill key="3" status="working" />, 'Token counts come from the runtime on the provider’s machine and are not independently verified.'],
             ['Installable worker for Linux', <StatusPill key="4" status="working" />, 'Installer, service, pause/drain, signed updates and real inference verified on Linux.'],
             ['Installable worker on macOS', <StatusPill key="5" status="unverified" />, 'Service files are generated and unit-tested but not run on a Mac. Resource limits are advisory on macOS.'],
             ['Docker worker', <StatusPill key="6" status="unverified" />, 'Unit-tested with a fake Docker client; not yet run against a real Docker daemon.'],
             ['Prebuilt worker downloads (GitHub Releases)', <StatusPill key="7" status="planned" />, <>The release workflow exists; downloads work once the first <C>worker-v*</C> release is published on <A href={RELEASES_URL}>GitHub Releases</A>.</>],
             ['vLLM on GPU nodes', <StatusPill key="8" status="unverified" />, 'Built and unit-tested; not run on real GPU hardware.'],
-            ['Prepaid billing, Paystack top-ups, provider payouts, reconciliation', <StatusPill key="9" status="test-mode" />, 'Paystack test mode only. Verified against a stand-in for Paystack’s API, not yet against Paystack itself.'],
-            ['Live (real-money) payments', <StatusPill key="10" status="planned" />, <>Needs a live key, <C>PAYSTACK_ALLOW_LIVE=true</C>, and a review.</>],
+            ['Provider prices, payment arrangements and cost estimates', <StatusPill key="9" status="working" />, 'Customers pay providers directly; AgentMesh records estimates and processes no payments.'],
             ['Confidential computing', <StatusPill key="11" status="planned" />, 'Not implemented. Providers can see the data their machines process.'],
           ]}
         />

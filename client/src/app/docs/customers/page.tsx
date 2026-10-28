@@ -60,20 +60,29 @@ export default function CustomerGuide() {
         </P>
       </Section>
 
+      <Section id="providers" title="Choose a provider">
+        <P>
+          <strong>Compute providers</strong> lists the independent providers with machines taking work right now: how many machines, GPUs,
+          runtimes, their lowest prices per currency, and how they take payment. Open a provider to see their full payment arrangement, and
+          use <strong>Deploy on …</strong> to run only on their machines. Or let AgentMesh pick the cheapest suitable machine from any
+          provider. Listings never depend on sponsorships.
+        </P>
+      </Section>
+
       <Section id="deploy" title="Deploy a model">
         <List
           ordered
           items={[
             'Open a model and choose a runtime, or Automatic (tries Ollama, then llama.cpp, then vLLM, and uses the first that fits on a node).',
             'Set the context window (512 to 8192 tokens) and, optionally, a region or a GPU requirement. The form shows what the scheduler will reserve and the price of the cheapest machine that can take it.',
-            'Optionally set price limits: the most per hour while ready, and the most per million tokens. Leave them empty to use the network prices as your limits.',
+            'Optionally choose a provider, set price limits (the most per hour while ready, and per million tokens, in a currency), and choose what happens if the node fails.',
             'Read and confirm the trust notice, then press Deploy.',
           ]}
         />
         <P>
           If no node can take it, the form explains why for each runtime, for example &ldquo;runtime not installed on the node&rdquo; or
-          &ldquo;not enough free CPU, memory, disk or GPU memory&rdquo;, or &ldquo;charges more than your price limit&rdquo;. Deploying needs
-          enough wallet balance for one hour of the reservation at the chosen machine&apos;s price (see <A href="#billing">billing</A>).
+          &ldquo;not enough free CPU, memory, disk or GPU memory&rdquo;, or &ldquo;charges more than your price limit&rdquo;. No balance or
+          prepayment is needed: you pay the provider directly (see <A href="#payment">payment</A>).
         </P>
       </Section>
 
@@ -82,21 +91,36 @@ export default function CustomerGuide() {
         <Table
           head={['Status', 'Meaning']}
           rows={[
-            [<C key="1">SCHEDULED</C>, 'Capacity reserved on a node.'],
+            [<C key="1">SCHEDULED</C>, 'Assigned: capacity reserved on a node.'],
             [<C key="2">PROVISIONING</C>, 'Runtime starting and model downloading.'],
             [<C key="3">STARTING</C>, 'Model loading; a test generation is run.'],
             [<C key="4">READY</C>, 'The test generation succeeded. The endpoint is live.'],
             [<C key="5">UNHEALTHY</C>, 'The node stopped reporting or the health check fails; requests get 503. If it does not recover within 3 minutes, the deployment moves to another node.'],
             [<><C>STOPPING</C> → <C>STOPPED</C> / <C>CANCELLED</C></>, 'Stopped after (or before) it was ready.'],
+            [<C key="8">PENDING</C>, 'Waiting for a node: its node failed and no eligible replacement is free yet. Retried automatically with growing intervals for up to an hour.'],
+            [<C key="9">NEEDS_ATTENTION</C>, 'Waiting for you: your failover policy is manual, or only machines that cost more than its previous placement are available.'],
             [<C key="7">FAILED</C>, 'See the error code and message on the page.'],
           ]}
         />
         <P>
-          When a node goes offline, is revoked, or runs out of memory or disk, the deployment moves to another eligible node automatically.
-          Its id, endpoint and API keys stay the same. A deployment is tried on at most 3 nodes. Model problems, such as a model that cannot
-          answer a test prompt, are not retried elsewhere. <strong>Restart</strong> reloads a serving deployment on its current node from the
-          cached model.
+          <strong>Restart</strong> reloads a serving deployment on its current node from the cached model.
         </P>
+      </Section>
+
+      <Section id="failover" title="When a node fails">
+        <List
+          items={[
+            'Every machine sends a heartbeat about every 15 seconds. One late heartbeat stops new work going to it; after 90 seconds of silence it is marked offline.',
+            'A deployment still starting on a failed node moves at once; a serving one becomes UNHEALTHY and moves if the node does not recover within 3 minutes.',
+            'The replacement is the cheapest healthy machine with the same requirements (runtime, memory, GPU, region), within your price limits and provider choice, and never a machine that already failed this deployment.',
+            'Without price limits of your own, a move never costs more than the placement it replaces; if only dearer machines are free, the deployment waits for you (NEEDS_ATTENTION) until you raise the limit and retry.',
+            'With no suitable machine free it waits (PENDING) and is retried automatically; after an hour, or after 5 placements in total, it fails with a clear reason.',
+            'A move restarts the model on the new machine from its pinned source and verifies it again. It is not a live migration: requests in flight on the failed node are lost and can be retried. The id, endpoint and API keys stay the same.',
+            'Failures caused by the model itself, such as a model that cannot answer a test prompt, are not retried elsewhere because another node would fail the same way.',
+            'Failover policy: "any provider" (default), "same provider only", or "ask me first" (never moved automatically). Change it, and your price limits, on the deployment page.',
+            'The deployment page lists every attempt: which provider ran it, when it served, and why it ended.',
+          ]}
+        />
       </Section>
 
       <Section id="api-keys" title="API keys">
@@ -141,29 +165,20 @@ print(reply.choices[0].message.content)`}
       <Section id="stop" title="Stop and delete">
         <P>
           <strong>Stop</strong> ends a deployment and releases its capacity. <strong>Delete</strong> also hides it and revokes keys scoped to
-          it; usage records are kept. Charges stop when a deployment leaves READY.
+          it; usage records are kept. Cost estimates stop when a deployment leaves READY.
         </P>
       </Section>
 
-      <Section id="billing" title="Pricing, wallet and billing">
-        <Callout tone="warning" title="Payments run in Paystack test mode">
-          Top-ups use Paystack in test mode: pay with a{' '}
-          <A href="https://paystack.com/docs/payments/test-payments/">Paystack test card</A>. No real money moves. The integration has been
-          verified against a stand-in for Paystack&apos;s API, not yet against Paystack itself.
-        </Callout>
+      <Section id="payment" title="Prices, payment and cost estimates">
         <List
           items={[
-            <>Deployments are <strong>prepaid</strong>. Add funds under <strong>Wallet</strong>; you return to the wallet after checkout and the top-up is credited once Paystack confirms it.</>,
-            'Each machine has its own prices, set by its provider: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. Machines without their own prices charge the network prices set by the operator.',
-            'Your deployment goes to the cheapest machine that fits and is within your price limits; if it later moves after a failure, it only moves to a machine within those limits. Without limits of your own, the network prices are the limit.',
-            'You are never charged more than the prices in force when your deployment was placed on its machine. If the provider lowers them, you pay the lower price from then on; if they raise them, the rise only applies to new deployments. The deployment page shows the price you are paying now.',
-            'Every few minutes while a deployment is READY, you are charged for its reserved resources multiplied by READY time, plus its tokens. Downloads, startup and unhealthy time are free.',
-            'Each deployment lists its charges, and the wallet lists them all, each split into the platform commission and the share paid to the provider whose machine ran it. Requests that fail are not charged for tokens.',
-            <>When your balance runs out, your deployments are stopped with <C>INSUFFICIENT_FUNDS</C>. The balance can dip below zero by at most one billing interval.</>,
-            'A machine with no prices of its own on a network with no price list is free: usage is measured but not charged.',
-            'If an operator refunds a charge, the amount returns to your wallet and appears under Refunds with the reason. Unspent funds from a top-up can be refunded to your card by an operator.',
-            <>Transactions lists every ledger entry with filters; <strong>Export CSV</strong> downloads them (up to 10,000 rows).</>,
-            'Dashboards may show an item labelled “Sponsored” if the operator enabled sponsorships. It is chosen without using your personal data, and you can dismiss it.',
+            'Each machine has its own prices, set by its provider in their own currency: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. A machine without prices is free.',
+            'Your deployment goes to the cheapest machine that fits within your price limits. Machines priced in a different currency from your limits are used only if they are free.',
+            'You are never estimated above the prices in force when your deployment was placed on its machine. If the provider lowers them, the lower price applies; a rise only applies to new placements.',
+            <>You pay the provider <strong>directly</strong>. The deployment page shows who runs it, how they take payment (bank transfer, payment links, terms, minimums) and your payment reference to quote. AgentMesh does not process, verify, hold or refund payments and takes no commission.</>,
+            <><strong>Estimated costs</strong> shows what your deployments come to: reserved resources multiplied by READY time, plus tokens, per currency. Downloads, startup and unhealthy time are not counted, nor are failed requests. These are estimates, not bills or payments.</>,
+            'AgentMesh never stops a deployment for lack of funds: payment terms, including what happens if a payment is late, are between you and the provider.',
+            'Dashboards may show items labelled “Sponsored” or “Referral link” if the operator enabled them. They are chosen without your personal data, never affect where your deployment runs, and you can dismiss them.',
           ]}
         />
       </Section>

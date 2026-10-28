@@ -1,8 +1,7 @@
-"""Phase 6 read APIs behind the dashboards: public stats, usage summaries, operator views, provider earnings."""
+"""Read APIs behind the dashboards: public stats, usage summaries and operator views."""
 
 import uuid
 
-from app.documents import Deployment
 from app.documents.usage import UsageRecord
 from tests.mfa_support import enroll_mfa
 
@@ -33,9 +32,8 @@ async def test_public_stats_are_counts_only(client, enroll_node, make_user, olla
     assert empty["nodes_online"] == 0 and empty["deployments_ready"] == 0
     assert empty["models_deployable"] == 1
     assert empty["features"] == {
-        "test_credits": True,
-        "payments": False,
-        "provider_payouts": False,
+        "direct_provider_payments": True,
+        "automatic_failover": True,
         "confidential_computing": False,
     }
 
@@ -110,7 +108,7 @@ async def test_usage_summary_is_scoped_to_the_caller(client, db, enroll_node, ma
 async def test_operator_endpoints_require_staff(client, make_user):
     for role in ("customer", "provider"):
         _, headers = await make_user(role)
-        for path in ("overview", "nodes", "deployments", "models", "transactions"):
+        for path in ("overview", "nodes", "deployments", "models", "anomalies"):
             assert (await client.get(f"/api/v1/admin/{path}", headers=headers)).status_code == 403, (role, path)
     assert (await client.get("/api/v1/admin/overview")).status_code == 401
 
@@ -120,7 +118,6 @@ async def test_operator_views_show_the_whole_network(client, db, enroll_node, ma
     node = await enroll_node(provider=provider)
     customer_user, customer = await make_user("customer")
     dep = await _deploy(client, customer, ollama_model)
-    await client.post("/api/v1/wallets/deposit", json={"amount": 5}, headers=customer)
     _, operator = await make_user("operator")
 
     nodes = (await client.get("/api/v1/admin/nodes", headers=operator)).json()
@@ -134,10 +131,9 @@ async def test_operator_views_show_the_whole_network(client, db, enroll_node, ma
     assert overview["nodes_by_status"] == {"ONLINE": 1}
     assert overview["deployments_by_status"] == {"SCHEDULED": 1}
     assert overview["models"] == {"total": 1, "approved": 1, "deployable": 1}
-    assert {"type": "DEPOSIT", "status": "SETTLED", "count": 1} == {
-        k: v for k, v in overview["ledger"][0].items() if k != "amount"
-    }
-    assert len((await client.get("/api/v1/admin/transactions", headers=operator)).json()) == 1
+    assert overview["nodes_by_health"] == {"BUSY": 1}
+    assert overview["recovery_24h"] == {"attempts_ended": {}, "moves": 0, "waiting_for_node": 0, "needs_attention": 0}
+    assert "ledger" not in overview
 
     # Unapproved models appear only in the operator catalog.
     ollama_model.is_approved = False
@@ -146,22 +142,6 @@ async def test_operator_views_show_the_whole_network(client, db, enroll_node, ma
     assert [m["id"] for m in (await client.get("/api/v1/admin/models", headers=operator)).json()] == [
         str(ollama_model.id)
     ]
-
-
-async def test_provider_earnings_count_hosted_deployments(client, db, enroll_node, make_user, ollama_model):
-    _, provider = await make_user("provider")
-    await enroll_node(provider=provider)
-    _, customer = await make_user("customer")
-    dep = await _deploy(client, customer, ollama_model)
-    earnings = (await client.get("/api/v1/earnings", headers=provider)).json()
-    assert earnings["total_deployments"] == 1 and earnings["active_deployments"] == 1
-
-    row = await db.get(Deployment, uuid.UUID(dep["id"]))
-    row.status = "STOPPED"
-    await db.commit()
-    earnings = (await client.get("/api/v1/earnings", headers=provider)).json()
-    assert earnings["total_deployments"] == 1 and earnings["active_deployments"] == 0
-    assert (await client.get("/api/v1/earnings/history", headers=provider)).json() == []
 
 
 async def test_create_operator_script_provisions_and_promotes(client, make_user):

@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.core.timeutil import utcnow
-from app.documents.base import ZERO, Doc, Money, unique
+from app.documents.base import Doc, unique
 
 
 class UserRole(str, enum.Enum):  # noqa: UP042
@@ -39,9 +39,13 @@ class User(Doc):
 
 class Provider(Doc):
     user_id: uuid.UUID
-    payout_status: str | None = "pending"
-    balance: Money | None = ZERO
-    # Prices given to each machine this provider enrolls (strings, keyed by price field); none: network prices.
+    # Public profile shown to customers choosing where to run, and on their deployments.
+    display_name: str | None = None
+    description: str | None = None
+    # How customers pay this provider (methods, instructions, links, terms; see app.schemas.provider). AgentMesh shows
+    # it and processes nothing.
+    payment_profile: dict | None = None
+    # Price list (strings keyed by price field, plus "currency") given to each machine this provider enrolls.
     default_prices: dict[str, str] | None = None
     created_at: datetime | None = Field(default_factory=utcnow)
 

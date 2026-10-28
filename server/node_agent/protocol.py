@@ -179,6 +179,7 @@ class ControlPlaneClient:
         message: str | None = None,
         error_code: str | None = None,
         model_digest: str | None = None,
+        attempt_id: str | None = None,
     ) -> dict | None:
         payload = {
             "state": state,
@@ -186,6 +187,8 @@ class ControlPlaneClient:
             "error_code": error_code,
             "model_digest": model_digest,
         }
+        if attempt_id:
+            payload["attempt_id"] = attempt_id
         try:
             return await self._post(f"/deployments/{deployment_id}/status", payload, retries=5)
         except ProtocolError as exc:

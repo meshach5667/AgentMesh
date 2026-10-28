@@ -8,8 +8,23 @@ import type { Model, ModelArtifact } from '@/types';
 
 const push = jest.fn();
 jest.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
-jest.mock('@/lib/api', () => ({ __esModule: true, default: { post: jest.fn() } }));
+jest.mock('@/lib/api', () => ({ __esModule: true, default: { post: jest.fn(), get: jest.fn() } }));
 const post = api.post as jest.Mock;
+const get = api.get as jest.Mock;
+const OFFERS = [
+  {
+    id: 'prov-1',
+    display_name: 'Lagos GPU Co',
+    description: null,
+    machines_available: 2,
+    gpu_machines: 0,
+    runtimes: ['ollama'],
+    free_machines: 0,
+    prices: [{ currency: 'NGN', cpu_core_hour: '3' }],
+    payment_methods: ['bank_transfer'],
+    accepts_payment_arrangement: true,
+  },
+];
 // POST /deployments creates; POST /deployments/quote prices it. Tests set what the create call does.
 const deploy = jest.fn();
 const quote = jest.fn();
@@ -30,11 +45,11 @@ const QUOTE = {
         vram_gb_hour: '0',
         input_tokens_per_million: '500',
         output_tokens_per_million: '900',
-        source: 'node',
+        currency: 'NGN',
       },
       hourly: '23',
-      max_hourly_price: '30',
-      max_token_price: '2000',
+      other_currency: 0,
+      provider: { id: 'prov-1', display_name: 'Lagos GPU Co', description: null, payment: null },
     },
     {
       runtime: 'llamacpp',
@@ -43,8 +58,8 @@ const QUOTE = {
       over_price_limit: 2,
       cheapest: null,
       hourly: null,
-      max_hourly_price: '25',
-      max_token_price: '2000',
+      other_currency: 0,
+      provider: null,
     },
   ],
 };
@@ -88,6 +103,8 @@ beforeEach(() => {
   deploy.mockReset();
   quote.mockReset();
   quote.mockResolvedValue({ data: QUOTE });
+  get.mockReset();
+  get.mockResolvedValue({ data: OFFERS });
   post.mockImplementation((url: string, body: unknown) => (url === '/deployments/quote' ? quote(body) : deploy(body)));
 });
 
@@ -164,10 +181,9 @@ it('refuses models without an enabled artifact', () => {
 it('shows the cheapest machine price per runtime and why a runtime has none', async () => {
   renderForm();
   expect(await screen.findByTestId('hourly-ollama')).toHaveTextContent(
-    /NGN\s?23\.00 per hour while ready, plus NGN\s?500\.00 in \/ NGN\s?900\.00 out per million tokens, on the cheapest of 3 machines/,
+    /NGN\s?23\.00 per hour while ready, plus NGN\s?500\.00 in \/ NGN\s?900\.00 out per million tokens, on the cheapest of 3 machines within your limits \(Lagos GPU Co\)/,
   );
   expect(screen.getByTestId('hourly-llamacpp')).toHaveTextContent('2 machines fit but charge more than your price limits');
-  expect(screen.getByLabelText('Most per hour while ready')).toHaveAttribute('placeholder', expect.stringMatching(/30\.00/));
 });
 
 it('sends price limits with the quote and the deployment', async () => {
@@ -187,4 +203,17 @@ it('refuses an invalid price limit', () => {
   fireEvent.change(screen.getByLabelText('Most per hour while ready'), { target: { value: '-3' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }));
   expect(screen.getByRole('button', { name: 'Deploy' })).toBeDisabled();
+});
+
+it('sends the chosen provider, currency and failover policy', async () => {
+  deploy.mockResolvedValue({ data: { id: 'dep-4' } });
+  renderForm();
+  expect(await screen.findByRole('option', { name: /Lagos GPU Co · 2 machines available/ })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+  fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'usd' } });
+  fireEvent.click(screen.getByRole('radio', { name: /Ask me first/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+  await waitFor(() => expect(deploy).toHaveBeenCalled());
+  expect(deployCalls()[0][1]).toMatchObject({ provider_id: 'prov-1', currency: 'USD', failover_policy: 'manual' });
 });

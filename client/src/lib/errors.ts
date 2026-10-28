@@ -59,3 +59,23 @@ export function errorMessage(err: unknown, fallback = 'Something went wrong'): s
   }
   return err instanceof Error ? err.message : fallback;
 }
+
+/**
+ * Field-level messages from a 422 response, keyed by the last named field of each error location (list items become
+ * "<list>-<index>", e.g. a bad payment link URL at payment.links[0].url becomes "link-0"). Empty for other errors.
+ */
+export function fieldErrors(err: unknown): Record<string, string> {
+  if (!isAxiosError(err) || err.response?.status !== 422) return {};
+  const detail = err.response.data?.detail;
+  if (!Array.isArray(detail)) return {};
+  const out: Record<string, string> = {};
+  for (const d of detail as { loc?: (string | number)[]; msg?: string }[]) {
+    const loc = (d.loc ?? []).filter((p) => p !== 'body');
+    const idx = loc.findIndex((p) => typeof p === 'number');
+    let key: string | undefined;
+    if (idx > 0) key = `${String(loc[idx - 1]).replace(/s$/, '')}-${loc[idx]}`;
+    else key = [...loc].reverse().find((p) => typeof p === 'string') as string | undefined;
+    if (key && d.msg) out[key] = d.msg.replace(/^Value error, /, '');
+  }
+  return out;
+}

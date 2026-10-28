@@ -1,15 +1,15 @@
-"""Billing integrity (security tests 6 and 7, G-22): exactly one charge however often or concurrently billing runs,
-unsuccessful requests and interrupted deployments never billed or revived, and provider-reported token counts
-treated as claims bounded by what the server observed."""
+"""Usage-accounting integrity (security tests 6 and 7, G-22): exactly one estimate per window however often or
+concurrently estimates run, unsuccessful requests and interrupted deployments never counted or revived, and
+provider-reported token counts treated as claims bounded by what the server observed."""
 
 import asyncio
 import uuid
 from datetime import timedelta
 
 from app.core.timeutil import utcnow
-from app.documents import Charge, Deployment, Transaction, UsageRecord
-from app.services import billing_service
-from tests.test_billing import _price, _ready_deployment, _set_ready_at
+from app.documents import CostEstimate, Deployment, UsageRecord
+from app.services import cost_service
+from tests.test_cost_estimates import _ready_deployment, _set_ready_at
 from tests.test_gateway import ready_deployment  # noqa: F401  (fixture)
 
 
@@ -29,25 +29,21 @@ def _usage(dep, node, at, **over) -> UsageRecord:
     return UsageRecord(**(fields | over))
 
 
-async def test_concurrent_and_repeated_billing_runs_produce_exactly_one_charge(
+async def test_concurrent_and_repeated_estimate_runs_produce_exactly_one_estimate(
     client, db, enroll_node, make_user, ollama_model
 ):
-    await _price(db)
     dep, node, *_ = await _ready_deployment(client, db, enroll_node, make_user, ollama_model)
     start = utcnow() - timedelta(hours=1)
     await _set_ready_at(db, dep["id"], start)
     db.add(_usage(dep, node, start + timedelta(minutes=5)))
     await db.commit()
     end = start + timedelta(minutes=30)
-    await asyncio.gather(*[billing_service.run_billing(end) for _ in range(4)], return_exceptions=True)
-    await billing_service.run_billing(end)  # and once more afterwards
-    charges = await db.find(Charge, {"deployment_id": uuid.UUID(dep["id"])})
-    periods = [(c.node_id, c.period_start) for c in charges]
-    assert len(periods) == len(set(periods)) and charges, "a period was charged twice"
-    charged_tokens = sum(c.input_tokens for c in charges)
-    assert charged_tokens == 10
-    keys = [t.idempotency_key for t in await db.find(Transaction, {"type": "COMPUTE_CHARGE"})]
-    assert len(keys) == len(set(keys))
+    await asyncio.gather(*[cost_service.run_estimates(end) for _ in range(4)], return_exceptions=True)
+    await cost_service.run_estimates(end)  # and once more afterwards
+    estimates = await db.find(CostEstimate, {"deployment_id": uuid.UUID(dep["id"])})
+    periods = [(c.node_id, c.period_start) for c in estimates]
+    assert len(periods) == len(set(periods)) and estimates, "a period was counted twice"
+    assert sum(c.input_tokens for c in estimates) == 10
 
 
 async def test_duplicate_metering_of_one_request_is_counted_once(db):
@@ -64,31 +60,33 @@ async def test_duplicate_metering_of_one_request_is_counted_once(db):
         pass
 
 
-async def test_failed_cancelled_and_timed_out_requests_are_never_billed(
+async def test_failed_cancelled_and_timed_out_requests_are_never_counted(
     client, db, enroll_node, make_user, ollama_model
 ):
-    await _price(db, cpu_core_hour="0", ram_gb_hour="0")
-    dep, node, *_ = await _ready_deployment(client, db, enroll_node, make_user, ollama_model)
+    dep, node, *_ = await _ready_deployment(
+        client, db, enroll_node, make_user, ollama_model, cpu_core_hour="0", ram_gb_hour="0"
+    )
     start = utcnow() - timedelta(hours=1)
     await _set_ready_at(db, dep["id"], start)
     for outcome in ("runtime_error", "cancelled", "timeout", "node_unavailable"):
         db.add(_usage(dep, node, start + timedelta(minutes=2), outcome=outcome, input_tokens=500, output_tokens=500))
     await db.commit()
-    await billing_service.run_billing(start + timedelta(hours=1))
-    assert sum(c.input_tokens + c.output_tokens for c in await db.find(Charge)) == 0
+    await cost_service.run_estimates(start + timedelta(hours=1))
+    assert sum(c.input_tokens + c.output_tokens for c in await db.find(CostEstimate)) == 0
 
 
 async def test_input_token_claims_are_capped_by_the_forwarded_request(client, db, enroll_node, make_user, ollama_model):
-    await _price(db, cpu_core_hour="0", ram_gb_hour="0")
-    dep, node, *_ = await _ready_deployment(client, db, enroll_node, make_user, ollama_model)
+    dep, node, *_ = await _ready_deployment(
+        client, db, enroll_node, make_user, ollama_model, cpu_core_hour="0", ram_gb_hour="0"
+    )
     start = utcnow() - timedelta(hours=1)
     await _set_ready_at(db, dep["id"], start)
-    # A runtime claiming a million prompt tokens for a 200-byte request is billed at most 200 + template allowance.
+    # A runtime claiming a million prompt tokens for a 200-byte request is counted as at most 200 + the template.
     db.add(_usage(dep, node, start + timedelta(minutes=1), input_tokens=1_000_000, output_tokens=0))
     await db.commit()
-    await billing_service.run_billing(start + timedelta(hours=1))
-    charge = await db.find_one(Charge)
-    assert charge.input_tokens == 200 + billing_service.TEMPLATE_TOKENS
+    await cost_service.run_estimates(start + timedelta(hours=1))
+    estimate = await db.find_one(CostEstimate)
+    assert estimate.input_tokens == 200 + cost_service.TEMPLATE_TOKENS
     raw = await db.find_one(UsageRecord)
     assert raw.input_tokens == 1_000_000 and raw.token_source is None  # the claim is kept as reported, for audits
 

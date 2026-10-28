@@ -2,12 +2,12 @@ import { Check, ShieldAlert } from 'lucide-react';
 
 const WORKING = [
   'Deploy approved open-weight models (Ollama, llama.cpp) and call them through an OpenAI-compatible API, with streaming',
-  'Automatic placement on a node with enough free capacity, and automatic moves when a node fails',
+  'Health monitoring from heartbeats, with late, offline, recovering and repeatedly failing nodes kept out of scheduling',
   'API keys, per-key deployment scoping, and per-request usage metering (no prompt or response content stored)',
   'A Docker worker and an installable agent for Linux and macOS with resource limits, pause, drain and availability schedules',
   'Provider, customer and operator dashboards backed by live data, with an audit log',
-  'Prepaid billing: versioned prices, charges for READY time and tokens, Paystack top-ups and provider payouts (Paystack test mode)',
-  'Providers set the price of each machine; deployments go to the cheapest machine within your price limits',
+  'Providers price each machine in their own currency and publish how they are paid; customers pay them directly, with itemised cost estimates',
+  'Deployments go to the cheapest healthy machine within your price limits; when a node fails they restart on another suitable one',
 ];
 
 export function Status() {

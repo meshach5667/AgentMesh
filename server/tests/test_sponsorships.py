@@ -1,10 +1,9 @@
-"""Phase 3: optional sponsored placements: settings, campaign validation and lifecycle, serving, measurement,
-budgets and revenue."""
+"""Optional sponsored placements and referral links: settings, campaign validation and lifecycle, serving,
+labelling and measurement. No advertiser billing: AgentMesh counts views and clicks and invents nothing else."""
 
 import time
 import uuid
 from datetime import timedelta
-from decimal import Decimal
 
 import pytest
 
@@ -15,13 +14,11 @@ from app.services import sponsorship_service
 CAMPAIGN = {
     "name": "GPU spring promo",
     "sponsor": "Acme GPUs",
-    "category": "gpu_hardware",
+    "category": "gpu_cloud",
     "headline": "Rent an H100 by the hour",
     "body": "Bare-metal GPUs for inference.",
     "target_url": "https://acme.example/gpus?ref=agentmesh",
     "placements": ["landing", "customer_dashboard"],
-    "pricing_model": "cpm",
-    "rate": "1000",
 }
 
 
@@ -95,7 +92,9 @@ async def test_advertising_is_off_until_an_operator_enables_it(client, make_user
         {"placements": []},
         {"category": "gambling"},
         {"headline": "x"},
-        {"rate": "-1"},
+        {"rate": "1000"},  # advertiser billing is not part of the platform
+        {"kind": "banner-popup"},
+        {"referral_code": "bad code!"},
         {"starts_at": "2026-12-02T00:00:00", "ends_at": "2026-12-01T00:00:00"},
     ],
 )
@@ -171,16 +170,16 @@ async def test_clicks_redirect_to_the_campaign_url_and_count_once(client, db, op
     assert unknown.status_code == 404
 
 
-async def test_budget_stops_serving(client, operator):
+async def test_served_items_are_labelled_and_counted_once(client, operator):
     await _enable(client, operator)
-    campaign = await _campaign(client, operator, pricing_model="cpc", rate="10", budget="20")
-    for _ in range(2):
-        item = (await _serve(client))["items"][0]
+    campaign = await _campaign(client, operator)
+    item = (await _serve(client))["items"][0]
+    assert item["kind"] == "sponsored" and item["label"] == "Sponsored"
+    for _ in range(2):  # the same view token is counted once
         await client.get(item["click_path"], follow_redirects=False)
-    assert (await _serve(client))["items"] == []
     listed = (await client.get("/api/v1/admin/ads/campaigns", headers=operator)).json()
     row = next(c for c in listed if c["id"] == campaign["id"])
-    assert Decimal(row["earned"]) == Decimal(20) and row["serving"] is False and row["last_30_days"]["clicks"] == 2
+    assert row["serving"] is True and row["last_30_days"]["clicks"] == 1
 
 
 async def test_slot_shows_distinct_campaigns_up_to_its_limit(client, operator):
@@ -191,16 +190,25 @@ async def test_slot_shows_distinct_campaigns_up_to_its_limit(client, operator):
     assert len(items) == 2 and len({i["id"] for i in items}) == 2
 
 
-async def test_sponsorship_revenue_is_a_separate_stream(client, operator):
+async def test_referral_links_carry_their_code_and_no_revenue_is_reported(client, operator):
+    """Referral campaigns are labelled, add their code and campaign tag to the outbound link, and AgentMesh reports
+    only genuinely counted views and clicks (no advertiser billing, no invented revenue)."""
     await _enable(client, operator)
-    campaign = await _campaign(client, operator)  # CPM 1000: 1 per impression
-    for _ in range(3):
-        item = (await _serve(client))["items"][0]
-        await client.post(
-            f"/api/v1/sponsored/{campaign['id']}/impression", json={"placement": "landing", "token": item["token"]}
-        )
-    await _campaign(client, operator, pricing_model="flat", rate="500", placements=["docs"])
-    network = (await client.get("/api/v1/analytics/revenue?scope=network", headers=operator)).json()
-    assert Decimal(network["totals"]["sponsorship"]) == Decimal(503)
-    assert Decimal(network["totals"]["platform_revenue"]) == Decimal(503)  # no compute charges in this test
-    assert Decimal(network["totals"]["gross"]) == 0
+    campaign = await _campaign(
+        client, operator, kind="referral", referral_code="agentmesh01", utm_campaign="gpu-launch"
+    )
+    item = (await _serve(client))["items"][0]
+    assert item["kind"] == "referral" and item["label"] == "Referral link"
+    resp = await client.get(f"/api/v1/sponsored/{campaign['id']}/click?placement=landing&token={item['token']}")
+    assert resp.status_code in (302, 307)
+    location = resp.headers["location"]
+    assert (
+        "ref=agentmesh01" in location and "utm_campaign=gpu-launch" in location and "utm_source=agentmesh" in location
+    )
+    view = next(
+        c
+        for c in (await client.get("/api/v1/admin/ads/campaigns", headers=operator)).json()
+        if c["id"] == campaign["id"]
+    )
+    assert view["clicks"] == 1 and "earned" not in view and "rate" not in view
+    assert (await client.get("/api/v1/analytics/revenue?scope=network", headers=operator)).status_code == 404

@@ -11,7 +11,7 @@ import { DeploymentTimeline } from '@/components/deployments/DeploymentTimeline'
 import { Playground } from '@/components/deployments/Playground';
 import { InlineValue } from '@/components/common/CodeBlock';
 import { ConfirmButton } from '@/components/common/ConfirmButton';
-import { StatusBadge } from '@/components/common/StatusBadge';
+import { StatusBadge, statusLabel } from '@/components/common/StatusBadge';
 import { ErrorState, Notice, PageHeader, TrustNotice } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import {
@@ -24,13 +24,15 @@ import {
   useStopDeployment,
 } from '@/hooks/useDeployments';
 import { useModel } from '@/hooks/useModels';
-import { useCharges } from '@/hooks/useBilling';
-import { ChargesTable } from '@/components/billing/ChargesTable';
-import { sumAmounts } from '@/lib/billing';
+import { useEstimates } from '@/hooks/useBilling';
+import { EstimatesTable } from '@/components/billing/EstimatesTable';
+import { RecoveryCard } from '@/components/deployments/RecoveryCard';
+import { PaymentArrangement } from '@/components/providers/PaymentArrangement';
+import { totalsByCurrency } from '@/lib/billing';
 import { STATUS_HELP } from '@/lib/deployments';
 import { errorMessage } from '@/lib/errors';
 import { ago, count, dateTime, money, runtimeLabel, shortId } from '@/lib/format';
-import { IN_PROGRESS_STATUSES, TERMINAL_STATUSES, type Deployment, type DeploymentPricing } from '@/types';
+import { IN_PROGRESS_STATUSES, TERMINAL_STATUSES, type DeploymentPricing } from '@/types';
 
 export default function DeploymentDetailPage() {
   const id = useParams<{ id: string }>().id;
@@ -40,7 +42,7 @@ export default function DeploymentDetailPage() {
   const events = useDeploymentEvents(id, live);
   const usage = useDeploymentUsage(id);
   const model = useModel(dep?.model_id ?? null);
-  const charges = useCharges(id);
+  const estimates = useEstimates(id);
   const pricing = useDeploymentPricing(id);
   const stop = useStopDeployment();
   const restart = useRestartDeployment();
@@ -94,8 +96,8 @@ export default function DeploymentDetailPage() {
             <StatusBadge status={dep.status} />
           </Field>
           <Field label="Runtime">{runtimeLabel(dep.runtime)}</Field>
-          <Field label="Node">
-            <span className="font-mono">{shortId(dep.node_id)}</span>
+          <Field label="Provider">
+            {pricing.data?.provider?.display_name ?? (dep.node_id ? <span className="font-mono">{shortId(dep.node_id)}</span> : 'none yet')}
             {dep.schedule_attempts > 1 && <span className="text-muted-foreground"> · attempt {dep.schedule_attempts}</span>}
           </Field>
           <Field label={dep.ready_at ? 'Ready since' : 'Created'}>{dateTime(dep.ready_at ?? dep.created_at)}</Field>
@@ -107,15 +109,24 @@ export default function DeploymentDetailPage() {
           </Field>
           <Field label="Context window">{dep.config?.num_ctx?.toLocaleString() ?? '—'} tokens</Field>
           <Field label="Restarts">{dep.restart_count}</Field>
-          <Field label="Charged so far">
+          <Field label="Estimated cost so far">
             <span data-testid="cost-so-far">
-              {charges.data ? money(sumAmounts(charges.data), charges.data[0]?.currency) : '—'}
+              {estimates.data
+                ? estimates.data.length
+                  ? totalsByCurrency(estimates.data)
+                      .map((t) => money(t.amount, t.currency))
+                      .join(' + ')
+                  : 'nothing yet'
+                : '—'}
             </span>
           </Field>
         </CardContent>
       </Card>
 
-      <Notice tone={dep.status === 'FAILED' ? 'danger' : dep.status === 'UNHEALTHY' ? 'warning' : 'info'} title={dep.status}>
+      <Notice
+        tone={dep.status === 'FAILED' || dep.status === 'NEEDS_ATTENTION' ? 'danger' : dep.status === 'UNHEALTHY' || dep.status === 'PENDING' ? 'warning' : 'info'}
+        title={statusLabel(dep.status)}
+      >
         {STATUS_HELP[dep.status]}
         {dep.error_message && (
           <span className="mt-1 block">
@@ -161,7 +172,9 @@ export default function DeploymentDetailPage() {
         </>
       )}
 
-      <ChargesCard charges={charges} pricing={pricing.data} limits={dep} />
+      <RecoveryCard dep={dep} />
+
+      <CostsCard estimates={estimates} pricing={pricing.data} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -218,50 +231,50 @@ export default function DeploymentDetailPage() {
   );
 }
 
-function ChargesCard({
-  charges,
+function CostsCard({
+  estimates,
   pricing,
-  limits,
 }: {
-  charges: ReturnType<typeof useCharges>;
+  estimates: ReturnType<typeof useEstimates>;
   pricing: DeploymentPricing | undefined;
-  limits: Pick<Deployment, 'max_hourly_price' | 'max_token_price'>;
 }) {
   const rates = pricing?.rates;
+  const provider = pricing?.provider;
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Charges</CardTitle>
-        <CardDescription>Rated every few minutes from READY time and runtime-reported tokens.</CardDescription>
+        <CardTitle>Cost and payment</CardTitle>
+        <CardDescription>
+          Estimates at the provider&apos;s published prices, from READY time and runtime-reported tokens. You pay the
+          provider directly; AgentMesh processes no payments.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {pricing && (
-          <div className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-3" data-testid="deployment-pricing">
+          <div className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-2" data-testid="deployment-pricing">
             <Field label="Price on its machine now">
               {pricing.placed_at === null
                 ? 'Not on a machine right now'
-                : pricing.hourly != null && Number(pricing.hourly) > 0
-                  ? `${money(pricing.hourly, pricing.currency)} per hour while ready`
-                  : 'Free per hour'}
+                : rates && pricing.hourly != null && Number(pricing.hourly) > 0
+                  ? `${money(pricing.hourly, rates.currency)} per hour while ready`
+                  : 'Free'}
             </Field>
             <Field label="Tokens (per million)">
-              {rates
-                ? `${money(rates.input_tokens_per_million, pricing.currency)} in · ${money(rates.output_tokens_per_million, pricing.currency)} out`
-                : '—'}
+              {rates ? `${money(rates.input_tokens_per_million, rates.currency)} in · ${money(rates.output_tokens_per_million, rates.currency)} out` : '—'}
             </Field>
-            <Field label="Your price limits">
-              {limits.max_hourly_price ? `${money(limits.max_hourly_price, pricing.currency)}/h` : 'network prices'}
-              {' · '}
-              {limits.max_token_price ? `${money(limits.max_token_price, pricing.currency)}/M tokens` : 'network prices'}
-            </Field>
-            <p className="text-xs text-muted-foreground sm:col-span-3">
-              {rates?.source === 'node' ? "The machine's provider set these prices. " : rates ? 'The machine charges the network prices. ' : ''}
-              You never pay more than the prices in force when the deployment was placed on this machine; if the provider
-              lowers them, you pay the lower price.
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              You are never estimated above the prices in force when the deployment was placed on this machine; if the
+              provider lowers them, the lower price applies.
             </p>
           </div>
         )}
-        <ChargesTable charges={charges.data ?? []} empty="No charges for this deployment yet." />
+        {provider && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">How to pay {provider.display_name}</p>
+            <PaymentArrangement payment={provider.payment} providerName={provider.display_name} reference={pricing?.payment_reference} />
+          </div>
+        )}
+        <EstimatesTable estimates={estimates.data ?? []} empty="No estimates for this deployment yet." />
       </CardContent>
     </Card>
   );

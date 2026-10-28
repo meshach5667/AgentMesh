@@ -5,62 +5,51 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Pill } from '@/components/common/StatusBadge';
 import { PriceListForm } from '@/components/pricing/PriceListForm';
 import { useNodePricing, useSetNodePricing } from '@/hooks/useNodes';
-import { percent } from '@/lib/billing';
+import { isFree } from '@/lib/billing';
 import { errorMessage } from '@/lib/errors';
 import { dateTime, money } from '@/lib/format';
 import { PRICE_FIELDS } from '@/types';
 
-/** A machine's own prices: what it charges, the network prices it is compared to, history, and an editor. */
+/** A machine's own prices: what it charges, history, and an editor. */
 export function NodePricingCard({ nodeId, editable }: { nodeId: string; editable: boolean }) {
   const { data, isLoading, error } = useNodePricing(nodeId);
   const save = useSetNodePricing(nodeId);
+  const free = !data?.charging || isFree(data.charging);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          Pricing
-          {data && (
-            <Pill tone={data.charging?.source === 'node' ? 'green' : 'gray'}>
-              {data.charging?.source === 'node' ? 'your prices' : data.charging ? 'network prices' : 'free'}
-            </Pill>
-          )}
+          Pricing {data && <Pill tone={free ? 'gray' : 'green'}>{free ? 'free' : data.charging?.currency}</Pill>}
         </CardTitle>
         <CardDescription>
-          What customers pay to run on this machine, before the platform commission
-          {data ? ` of ${percent(data.commission_rate)}` : ''}. Placement prefers the cheapest machine that fits, and by
-          default customers are only placed on machines at or below the network prices.
+          What customers pay you to run on this machine. Placement prefers the cheapest machine that fits a
+          customer&apos;s limits, so your price affects how often it is chosen.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         {isLoading && <p className="text-sm text-muted-foreground">Loading prices…</p>}
-        {error && <p className="text-sm text-destructive">{errorMessage(error)}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(error)}
+          </p>
+        )}
         {data && (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-4 font-medium">Unit</th>
-                    <th className="py-2 pr-4 font-medium">Charging now</th>
-                    <th className="py-2 font-medium">Network price</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {PRICE_FIELDS.map(({ key, label, unit }) => (
-                    <tr key={key}>
-                      <td className="py-2 pr-4">
-                        {label} <span className="text-xs text-muted-foreground">{unit}</span>
-                      </td>
-                      <td className="py-2 pr-4 tabular-nums">{data.charging ? money(data.charging[key], data.currency) : '—'}</td>
-                      <td className="py-2 tabular-nums text-muted-foreground">
-                        {data.network ? money(data.network[key], data.currency) : 'not set'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {free ? (
+              <p className="text-sm text-muted-foreground">This machine is free to use: it has no prices of its own.</p>
+            ) : (
+              <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                {PRICE_FIELDS.map(({ key, label, unit }) => (
+                  <div key={key} className="flex justify-between gap-4 border-b border-border py-1.5">
+                    <dt className="text-muted-foreground">
+                      {label} <span className="text-xs">{unit}</span>
+                    </dt>
+                    <dd className="tabular-nums">{money(data.charging![key], data.charging!.currency)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
 
             {editable && (
               <div className="space-y-2">
@@ -69,8 +58,6 @@ export function NodePricingCard({ nodeId, editable }: { nodeId: string; editable
                   key={data.history[0]?.id ?? 'none'}
                   idPrefix={`node-${nodeId}`}
                   initial={data.charging}
-                  currency={data.currency}
-                  commissionRate={data.commission_rate}
                   submitLabel="Publish prices"
                   pending={save.isPending}
                   onSubmit={(prices) =>
@@ -81,8 +68,8 @@ export function NodePricingCard({ nodeId, editable }: { nodeId: string; editable
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  New prices apply at once to new placements. Deployments already on this machine never pay more than
-                  the prices they were placed at, so a cut reaches them immediately and a rise does not.
+                  New prices apply at once to new placements. Deployments already on this machine are never estimated
+                  above the prices they were placed at, so a cut reaches them immediately and a rise does not.
                 </p>
               </div>
             )}
@@ -97,8 +84,9 @@ export function NodePricingCard({ nodeId, editable }: { nodeId: string; editable
                         Version {v.version} <span className="text-muted-foreground">· {dateTime(v.effective_from)}</span>
                       </span>
                       <span className="text-xs tabular-nums text-muted-foreground">
-                        CPU {money(v.cpu_core_hour, v.currency)}/h · RAM {money(v.ram_gb_hour, v.currency)}/GB-h · tokens{' '}
-                        {money(v.input_tokens_per_million, v.currency)}/{money(v.output_tokens_per_million, v.currency)} per M
+                        CPU {money(v.cpu_core_hour, v.currency)}/h · RAM {money(v.ram_gb_hour, v.currency)}/GB-h · GPU{' '}
+                        {money(v.vram_gb_hour, v.currency)}/GB-h · tokens {money(v.input_tokens_per_million, v.currency)} in /{' '}
+                        {money(v.output_tokens_per_million, v.currency)} out per M
                       </span>
                     </li>
                   ))}

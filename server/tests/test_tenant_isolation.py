@@ -78,15 +78,20 @@ async def test_api_keys_and_ai_runs_are_private(client, alice_world):
     assert (await client.get(f"/api/v1/ai/deployments/{run_id}", headers=w["alice"])).status_code == 200
 
 
-async def test_money_views_are_scoped_to_the_caller(client, alice_world):
+async def test_cost_estimates_are_scoped_to_the_caller(client, alice_world):
     w, bob = alice_world, alice_world["bob"]
-    await client.post("/api/v1/wallets/deposit", json={"amount": "50"}, headers=w["alice"])
-    assert (await client.get("/api/v1/transactions", headers=bob)).json() == []
-    assert (await client.get("/api/v1/billing/charges", headers=bob)).json() == []
-    assert (await client.get("/api/v1/billing/refunds", headers=bob)).json() == []
+    assert (await client.get("/api/v1/billing/estimates", headers=bob)).json() == []
+    dep_id = w["dep"]["id"]
+    assert (await client.get(f"/api/v1/billing/estimates?deployment_id={dep_id}", headers=bob)).json() == []
+    for path in ("pricing", "attempts"):
+        assert (await client.get(f"/api/v1/deployments/{dep_id}/{path}", headers=bob)).status_code == 404
+    assert (await client.post(f"/api/v1/deployments/{dep_id}/retry", headers=bob)).status_code == 404
+    assert (
+        await client.patch(f"/api/v1/deployments/{dep_id}", json={"failover_policy": "manual"}, headers=bob)
+    ).status_code == 404
     for scope in ("network", "provider"):
-        assert (await client.get(f"/api/v1/billing/summary?scope={scope}", headers=bob)).status_code == 403
-        assert (await client.get(f"/api/v1/analytics/revenue?scope={scope}", headers=bob)).status_code == 403
+        assert (await client.get(f"/api/v1/billing/estimates?scope={scope}", headers=bob)).status_code == 403
+        assert (await client.get(f"/api/v1/billing/estimates/summary?scope={scope}", headers=bob)).status_code == 403
 
 
 async def test_provider_cannot_manage_or_impersonate_another_providers_node(client, db, alice_world, enroll_node):

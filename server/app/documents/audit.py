@@ -19,4 +19,4 @@ class AuditLog(Doc):
 
     class Settings(Doc.Settings):
         name = "audit_logs"
-        indexes = [index("created_at"), index("user_id")]
+        indexes = [index("created_at"), index("user_id"), index("resource_type", "resource_id", "created_at")]

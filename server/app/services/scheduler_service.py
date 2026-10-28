@@ -1,4 +1,11 @@
-"""Resource- and price-aware node selection and capacity reservation."""
+"""Centralized node selection and capacity reservation, for first placements and for moves after a failure.
+
+Eligibility is decided from evidence, never from a node record existing: the node must be ONLINE with a recent
+heartbeat (newer than HEARTBEAT_DEGRADED_SECONDS), have completed its recovery heartbeats after an outage, not be in a
+failure cooldown, accept work (provider and worker both), and have the free capacity, runtime, hardware, region and
+provider the deployment requires. Price limits come last. Among eligible nodes the ranking is deterministic:
+cheapest first, then the most free memory, then reputation, then node id. Sponsorships play no part.
+"""
 
 from collections import Counter
 from dataclasses import dataclass, field
@@ -21,6 +28,9 @@ REASON_REGION = "region_mismatch"
 REASON_PREVIOUSLY_FAILED = "previously_failed"  # nodes this deployment already failed on
 REASON_COMMUNITY = "community_not_accepted"  # provider has not opted in to unreviewed community models
 REASON_PRICE = "over_price_limit"  # the node charges more than the deployment's price limits
+REASON_CURRENCY = "other_currency"  # priced in a currency other than the deployment's, so not comparable
+REASON_PROVIDER = "other_provider"  # not run by the provider the deployment is restricted to
+REASON_DEGRADED = "node_degraded"  # late heartbeats, recovering from an outage, or repeated recent failures
 
 REASON_TEXT = {
     REASON_UNAVAILABLE: "nodes are offline, paused, or not reporting heartbeats",
@@ -31,6 +41,9 @@ REASON_TEXT = {
     REASON_PREVIOUSLY_FAILED: "nodes already failed this deployment",
     REASON_COMMUNITY: "nodes do not accept community models (providers must opt in)",
     REASON_PRICE: "nodes charge more than your price limit (raise max_hourly_price or max_token_price)",
+    REASON_CURRENCY: "nodes are priced in another currency",
+    REASON_PROVIDER: "nodes belong to other providers than the one you chose",
+    REASON_DEGRADED: "nodes are degraded (late heartbeats, recovering, or failing repeatedly)",
 }
 
 
@@ -58,10 +71,52 @@ def _free(node: Node, resource: str) -> int:
 
 
 def node_is_fresh(node: Node, now: datetime | None = None) -> bool:
+    """Heartbeat within the timeout: the node counts as connected (it may still be too late for new work)."""
     now = now or utcnow()
     if node.last_heartbeat is None:
         return False
     return now - node.last_heartbeat <= timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
+
+
+def _degraded(node: Node, now: datetime) -> bool:
+    late = node.last_heartbeat is None or now - node.last_heartbeat > timedelta(
+        seconds=settings.HEARTBEAT_DEGRADED_SECONDS
+    )
+    recovering = (node.recovery_heartbeats or 0) < settings.NODE_RECOVERY_HEARTBEATS
+    cooling = node.degraded_until is not None and node.degraded_until > now
+    return late or recovering or cooling
+
+
+def schedulable(node: Node, now: datetime | None = None) -> bool:
+    """May receive new work now, judged from health evidence (not just because the node exists)."""
+    now = now or utcnow()
+    return (
+        node.status == NodeStatus.ONLINE
+        and bool(node.accepting_workloads)
+        and bool(node.worker_available)
+        and node_is_fresh(node, now)
+        and not _degraded(node, now)
+    )
+
+
+def health_state(node: Node, now: datetime | None = None) -> str:
+    """ACTIVE, BUSY, DEGRADED, DRAINING or OFFLINE (or the operator's SUSPENDED/QUARANTINED/REVOKED) for display.
+
+    ACTIVE takes work; BUSY runs work and takes more while capacity lasts; DEGRADED gets no new work until its
+    heartbeats are timely again, it finishes recovering, or its failure cooldown ends; DRAINING was paused by the
+    provider (running work continues); OFFLINE is out of contact and its work is being moved."""
+    now = now or utcnow()
+    if node.status in (NodeStatus.SUSPENDED, NodeStatus.QUARANTINED, NodeStatus.REVOKED, NodeStatus.REGISTERING):
+        return str(node.status.value if isinstance(node.status, NodeStatus) else node.status)
+    if node.status == NodeStatus.OFFLINE or not node_is_fresh(node, now):
+        return "OFFLINE"
+    if not node.accepting_workloads or not node.worker_available:
+        return "DRAINING"
+    if _degraded(node, now):
+        return "DEGRADED"
+    if any((getattr(node, f"reserved_{r}") or 0) > 0 for r in ("cpu_cores", "ram_mb", "vram_mb")):
+        return "BUSY"
+    return "ACTIVE"
 
 
 def offers_runtime(node: Node, runtime: str) -> bool:
@@ -69,15 +124,22 @@ def offers_runtime(node: Node, runtime: str) -> bool:
 
 
 async def evaluate_nodes(
-    db: Session, req: ResourceRequest, exclude: set | None = None, limits: PriceLimits | None = None
+    db: Session,
+    req: ResourceRequest,
+    exclude: set | None = None,
+    limits: PriceLimits | None = None,
+    providers: set | None = None,
 ) -> Evaluation:
-    """Nodes that can take ``req`` within ``limits``, cheapest first."""
+    """Nodes that can take ``req`` within ``limits`` (and of one of ``providers``, if given), cheapest first."""
     nodes = await db.find(Node, {"mode": {"$ne": None}})
     ev = Evaluation()
     now = utcnow()
+    limits = limits or PriceLimits(settings.DEFAULT_CURRENCY)
     for node in nodes:
         if exclude and node.id in exclude:
             ev.reasons[REASON_PREVIOUSLY_FAILED] += 1
+        elif providers is not None and node.owner_id not in providers:
+            ev.reasons[REASON_PROVIDER] += 1
         elif (
             node.status != NodeStatus.ONLINE
             or not node.accepting_workloads
@@ -85,6 +147,8 @@ async def evaluate_nodes(
             or not node_is_fresh(node, now)
         ):
             ev.reasons[REASON_UNAVAILABLE] += 1
+        elif _degraded(node, now):
+            ev.reasons[REASON_DEGRADED] += 1
         elif req.community and not node.accepts_community_models:
             ev.reasons[REASON_COMMUNITY] += 1
         elif req.region and node.region != req.region:
@@ -103,19 +167,24 @@ async def evaluate_nodes(
         else:
             ev.eligible.append(node)
     ev.rates = await rates_at(db, [n.id for n in ev.eligible], now)
-    if limits is not None:
-        within = [n for n in ev.eligible if limits.allows(ev.rates[n.id], req.cpu_cores, req.ram_mb, req.vram_mb)]
-        if len(within) < len(ev.eligible):
-            ev.reasons[REASON_PRICE] += len(ev.eligible) - len(within)
-        ev.eligible = within
+    within = []
+    for n in ev.eligible:
+        rates = ev.rates[n.id]
+        if rates is not None and not rates.is_free() and rates.currency != limits.currency:
+            ev.reasons[REASON_CURRENCY] += 1
+        elif not limits.allows(rates, req.cpu_cores, req.ram_mb, req.vram_mb):
+            ev.reasons[REASON_PRICE] += 1
+        else:
+            within.append(n)
+    ev.eligible = within
 
-    # Cheapest first (hourly price of this reservation, then token prices); among equal prices, the node with the
-    # most free memory, then reputation, which spreads load across providers.
+    # Cheapest first (hourly price of this reservation, then token prices; all in the limits' currency or free);
+    # among equal prices the node with the most free memory, then reputation, then id, so ties are deterministic.
     def rank(n: Node):
         rates = ev.rates[n.id] or Rates.free()
         tokens = rates.input_tokens_per_million + rates.output_tokens_per_million
         hourly = rates.hourly(req.cpu_cores, req.ram_mb, req.vram_mb)
-        return (hourly, tokens, -_free(n, "ram_mb"), -float(n.reputation_score or 0))
+        return (hourly, tokens, -_free(n, "ram_mb"), -float(n.reputation_score or 0), str(n.id))
 
     ev.eligible.sort(key=rank)
     return ev
@@ -156,10 +225,16 @@ async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceReque
 
 
 async def schedule(
-    db: Session, deployment_id, req: ResourceRequest, exclude: set | None = None, limits: PriceLimits | None = None
+    db: Session,
+    deployment_id,
+    req: ResourceRequest,
+    exclude: set | None = None,
+    limits: PriceLimits | None = None,
+    providers: set | None = None,
 ) -> tuple[Node, Rates | None]:
-    """Reserve capacity on the cheapest eligible node; returns it and the rates it charges."""
-    ev = await evaluate_nodes(db, req, exclude, limits)
+    """Reserve capacity on the cheapest eligible node; returns it and the rates it charges. A node that fills up
+    between evaluation and reservation is skipped for the next one."""
+    ev = await evaluate_nodes(db, req, exclude, limits, providers)
     for node in ev.eligible:
         if await try_reserve(db, node, deployment_id, req, ev.rates[node.id]):
             return node, ev.rates[node.id]

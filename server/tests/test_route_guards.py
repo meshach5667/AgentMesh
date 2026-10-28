@@ -19,11 +19,9 @@ PUBLIC = {
     ("POST", "/api/v1/auth/register"): "self-service sign-up (customer/provider only)",
     ("POST", "/api/v1/auth/refresh"): "authenticated by the single-use refresh token in its body",
     ("POST", "/api/v1/auth/mfa/verify"): "authenticated by the short-lived MFA challenge token and a TOTP code",
-    ("GET", "/api/v1/billing/pricing"): "published price list",
     ("GET", "/api/v1/billing/market"): "aggregate node price ranges (no node identities)",
     ("GET", "/api/v1/models"): "public model catalog",
     ("GET", "/api/v1/models/{id}"): "public model catalog",
-    ("GET", "/api/v1/payments/config"): "whether payments are enabled (no secrets)",
     ("GET", "/api/v1/sponsored"): "sponsored slot contents (no personal data)",
     ("POST", "/api/v1/sponsored/{campaign_id}/impression"): "signed view token in the body",
     ("GET", "/api/v1/sponsored/{campaign_id}/click"): "signed view token in the query",
@@ -39,7 +37,6 @@ SELF_AUTHENTICATING = {
     ("POST", "/api/v1/deployments/{deployment_id}/ollama/{path:path}"): "API key or user token",
     ("GET", "/api/v1/deployments/{deployment_id}/v1/{path:path}"): "API key or user token",
     ("POST", "/api/v1/deployments/{deployment_id}/v1/{path:path}"): "API key or user token",
-    ("POST", "/api/v1/payments/paystack/webhook"): "Paystack HMAC signature",
     ("GET", "/metrics"): "METRICS_TOKEN",
     ("POST", "/api/v1/nodes/{id}/heartbeat"): "legacy node API key",
     ("WS", "/api/v1/worker/tunnel"): "node credential",
@@ -118,7 +115,6 @@ async def test_anonymous_and_forged_callers_are_refused(client, monkeypatch, met
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "METRICS_TOKEN", "m" * 40)
-    monkeypatch.setattr(settings, "PAYSTACK_SECRET_KEY", "sk_test_" + "k" * 32)  # so the webhook checks signatures
     headers = {} if credential == "none" else {"Authorization": f"Bearer {_forged_token()}"}
     if path.startswith("/api/v1/worker/"):
         headers["X-AgentMesh-Node-Id"] = str(uuid.uuid4())

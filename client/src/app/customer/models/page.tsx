@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +18,17 @@ import { errorMessage } from '@/lib/errors';
 import { ago, mb, runtimeLabel } from '@/lib/format';
 
 export default function ModelCatalogPage() {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <ModelCatalog />
+    </Suspense>
+  );
+}
+
+function ModelCatalog() {
+  // Arriving from a provider's page: deploy links keep that provider as the placement choice.
+  const provider = useSearchParams().get('provider');
+  const providerParam = provider && /^[0-9a-f-]{36}$/.test(provider) ? `&provider=${provider}` : '';
   const { data: models, isLoading, error, refetch } = useModels();
   const stats = usePublicStats();
   const [query, setQuery] = useState('');
@@ -100,7 +112,7 @@ export default function ModelCatalogPage() {
                 </CardContent>
                 <CardFooter>
                   {artifacts.length > 0 ? (
-                    <Link href={`/customer/deployments/new?model=${m.id}`} className={buttonVariants({ className: 'w-full' })}>
+                    <Link href={`/customer/deployments/new?model=${m.id}${providerParam}`} className={buttonVariants({ className: 'w-full' })}>
                       Configure and deploy
                     </Link>
                   ) : (

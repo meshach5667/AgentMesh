@@ -8,7 +8,7 @@ import pytest
 from app.background import monitors
 from app.core.config import settings
 from app.core.timeutil import utcnow
-from app.documents import Deployment, Node, NodeCommand, ResourceReservation
+from app.documents import Deployment, DeploymentEvent, Node, NodeCommand, ResourceReservation
 
 
 async def _deploy(client, headers, model):
@@ -84,15 +84,17 @@ async def test_model_failures_are_not_moved(client, db, make_user, two_nodes, ol
     assert (await _dep(db, dep["id"])).schedule_attempts == 1
 
 
-async def test_no_other_node_means_failed_with_explanation(client, db, make_user, enroll_node, ollama_model):
+async def test_no_other_node_means_waiting_with_explanation(client, db, make_user, enroll_node, ollama_model):
+    """With no eligible replacement the deployment is never dropped: it waits (PENDING) and is retried."""
     node = await enroll_node()
     _, customer = await make_user("customer")
     dep = await _deploy(client, customer, ollama_model)
     await _poll(client, node)
     await _report(client, node, dep["id"], "FAILED", error_code="INSUFFICIENT_DISK", message="disk full")
     got = await _dep(db, dep["id"])
-    assert got.status == "FAILED" and got.error_code == "INSUFFICIENT_DISK"
-    assert "already failed this deployment" in got.error_message
+    assert got.status == "PENDING" and got.node_id is None and got.next_placement_at is not None
+    event = await db.find_one(DeploymentEvent, {"deployment_id": got.id, "kind": "no_replacement"})
+    assert "already failed this deployment" in event.message and "Retrying in" in event.message
     assert await _reserved(db, node) == 0
 
 

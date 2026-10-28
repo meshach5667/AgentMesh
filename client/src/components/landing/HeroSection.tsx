@@ -9,7 +9,7 @@ const PIPELINE = [
 ] as const;
 
 const EVENTS = [
-  ['Scheduled', 'Capacity reserved on a matching node'],
+  ['Scheduled', 'Cheapest healthy machine that fits'],
   ['Model verified', 'Weights pinned and checked by digest'],
   ['Ready', 'Test generation passed, endpoint live'],
 ] as const;
@@ -33,8 +33,9 @@ export function HeroSection() {
             <br className="hidden sm:block" /> compute you don&apos;t manage.
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground">
-            Deploy open-weight models onto a network of independent machines and call them through an
-            OpenAI-compatible API. Placement, health checks, failover and billing are handled for you.
+            Deploy open-weight models onto machines run by independent providers and call them through an
+            OpenAI-compatible API. AgentMesh handles placement, health checks and failover; providers set their own
+            prices, and you pay them directly.
           </p>
           <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
             <Link
@@ -51,7 +52,7 @@ export function HeroSection() {
             </Link>
           </div>
           <ul className="mt-7 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px] text-muted-foreground">
-            {['OpenAI-compatible', 'Automatic failover', 'Pay only while serving'].map((t) => (
+            {['OpenAI-compatible', 'Automatic failover', 'No platform fees'].map((t) => (
               <li key={t} className="flex items-center gap-1.5">
                 <Check className="size-3.5 text-brand" /> {t}
               </li>

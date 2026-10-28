@@ -1,56 +1,42 @@
-import type { Charge, Prices } from '@/types';
+import type { CostEstimate, Prices } from '@/types';
 
 /** Same formula as Rates.hourly on the server (decimal strings are parsed as numbers for display). */
-export function hourlyResourcePrice(rule: Prices, cpuCores: number, ramMb: number, vramMb: number): number {
+export function hourlyResourcePrice(rates: Prices, cpuCores: number, ramMb: number, vramMb: number): number {
   return (
-    Number(rule.cpu_core_hour) * cpuCores +
-    (Number(rule.ram_gb_hour) * ramMb) / 1024 +
-    (Number(rule.vram_gb_hour) * vramMb) / 1024
+    Number(rates.cpu_core_hour) * cpuCores +
+    (Number(rates.ram_gb_hour) * ramMb) / 1024 +
+    (Number(rates.vram_gb_hour) * vramMb) / 1024
   );
 }
 
-export function isFree(rule: Prices | null | undefined): boolean {
-  if (!rule) return true;
-  return [rule.cpu_core_hour, rule.ram_gb_hour, rule.vram_gb_hour, rule.input_tokens_per_million, rule.output_tokens_per_million].every(
+export function isFree(rates: Prices | null | undefined): boolean {
+  if (!rates) return true;
+  return [rates.cpu_core_hour, rates.ram_gb_hour, rates.vram_gb_hour, rates.input_tokens_per_million, rates.output_tokens_per_million].every(
     (v) => Number(v) === 0,
   );
 }
 
-/** A commission rate such as "0.1000" as "10%" (one decimal place only when needed). */
-export function percent(rate: string | number | null | undefined): string {
-  if (rate == null || rate === '') return '—';
-  const p = Math.round(Number(rate) * 1000) / 10;
-  return `${Number.isInteger(p) ? p.toFixed(0) : p.toFixed(1)}%`;
+/** Totals of estimates per currency (prices are in each provider's own currency, so they are never added across). */
+export function totalsByCurrency(estimates: CostEstimate[]): { currency: string; amount: number }[] {
+  const totals = new Map<string, number>();
+  for (const e of estimates) totals.set(e.currency, (totals.get(e.currency) ?? 0) + Number(e.amount));
+  return [...totals.entries()].map(([currency, amount]) => ({ currency, amount })).sort((a, b) => a.currency.localeCompare(b.currency));
 }
 
-/** The provider's share of a charge at a given commission rate, e.g. "0.1" -> "90%". */
-export function providerShare(rate: string | number | null | undefined): string {
-  return rate == null || rate === '' ? '—' : percent(1 - Number(rate));
-}
-
-/** The rate a charge was split at; older charges without a recorded rate get it from their own amounts. */
-export function chargeFeeRate(charge: Charge): number | null {
-  if (charge.platform_fee_rate != null) return Number(charge.platform_fee_rate);
-  return Number(charge.amount) > 0 ? Number(charge.platform_fee) / Number(charge.amount) : null;
-}
-
-export function sumAmounts(charges: Charge[], field: 'amount' | 'provider_amount' | 'platform_fee' = 'amount'): number {
-  return charges.reduce((t, c) => t + Number(c[field]), 0);
-}
-
-/** Paystack appends ?reference=...&trxref=... when it returns the customer to the callback URL. */
-export function returnedReference(params: URLSearchParams): string | null {
-  const ref = params.get('reference') || params.get('trxref');
-  return ref && /^am-top-[0-9a-f]{24}$/.test(ref) ? ref : null;
-}
-
-/** Only send customers to Paystack's own checkout (never to a URL an attacker could have planted). */
-export function isPaystackCheckout(url: string | null | undefined): url is string {
-  if (!url) return false;
+/**
+ * A provider's payment link, re-checked before it is rendered (the server validates it too): https to a public host
+ * name, no credentials, standard port. Returns the URL or null.
+ */
+export function safeExternalUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
   try {
-    const u = new URL(url);
-    return u.protocol === 'https:' && (u.hostname === 'checkout.paystack.com' || u.hostname.endsWith('.paystack.com'));
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return null;
+    if (!host.includes('.') || host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':') || host.endsWith('.local') || host.endsWith('.internal'))
+      return null;
+    return u.toString();
   } catch {
-    return false;
+    return null;
   }
 }

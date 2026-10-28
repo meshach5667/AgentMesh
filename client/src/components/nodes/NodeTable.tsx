@@ -22,7 +22,7 @@ export function NodeTable({
           <TableHead>Node</TableHead>
           {showOwner && <TableHead>Owner</TableHead>}
           <TableHead>Status</TableHead>
-          <TableHead>Availability</TableHead>
+          <TableHead>Health</TableHead>
           <TableHead>Runtimes</TableHead>
           <TableHead>Memory reserved</TableHead>
           <TableHead>Last heartbeat</TableHead>

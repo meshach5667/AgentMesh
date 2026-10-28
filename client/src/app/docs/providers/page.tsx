@@ -23,8 +23,8 @@ export default function ProviderGuide() {
       <Section id="how-it-works" title="How hosting works">
         <P>
           The AgentMesh worker runs open-weight models on your machine for customers&apos; deployments. It connects <strong>outbound</strong> to
-          the control plane over HTTPS and a WebSocket, so you do not open any ports. You earn a share of what customers pay while your
-          node serves their deployments.
+          the control plane over HTTPS and a WebSocket, so you do not open any ports. You set the price of each machine and customers pay
+          you directly; joining is free and AgentMesh takes no commission.
         </P>
         <List
           items={[
@@ -199,29 +199,37 @@ export default function ProviderGuide() {
         />
       </Section>
 
-      <Section id="pricing" title="Set your prices">
+      <Section id="health" title="Health and failover">
         <List
           items={[
-            'Each machine has its own price list: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. Set it on the machine\'s page under Pricing; the form shows what you keep after the platform commission.',
-            'Under Settings, set default prices that every machine you enroll starts with, and optionally publish them on all your active machines at once.',
-            'A machine without its own prices charges the network prices set by the operator.',
-            'Customers are placed on the cheapest machine that fits. Unless a customer raises their price limit, they are only placed on machines at or below the network prices, so pricing above them means fewer placements.',
-            'New prices apply at once to new placements. Deployments already on your machine never pay more than the prices they were placed at: a cut reaches them immediately, a rise only applies to deployments placed after it.',
-            'Every price change is kept as a version with its time, and each charge records the prices it was rated at.',
+            'Your machine gets new work only while its heartbeats are on time. A late heartbeat (over 45 seconds) pauses new placements; after 90 seconds of silence it is marked offline and its deployments are restarted on other machines.',
+            'When it comes back, it must send a couple of healthy heartbeats before it gets new work again. Work that moved away while it was gone is not given back: if your worker still runs it, the control plane tells it to stop.',
+            'Three failed placements in a row (for example out of memory, or a runtime that will not start) bench the machine for 10 minutes.',
+            'Each machine page shows its health (Active, Busy, Degraded, Draining, Offline) and a history of these events. Pausing or draining a machine stops new placements; running work continues until it stops or you drain it.',
           ]}
         />
       </Section>
 
-      <Section id="earnings" title="Earnings and payouts">
-        <Callout tone="warning" title="Paystack test mode">Payouts run through Paystack in test mode. No real money is transferred yet.</Callout>
+      <Section id="pricing" title="Set your prices">
         <List
           items={[
-            'You are credited your share of each charge for deployments your nodes served: everything except the platform commission (10% unless the operator set another rate; the wallet page shows the rate in force). Earnings & Payouts shows each charge with what the customer paid, the commission and your share, plus totals for the last 30 days.',
-            'Add a bank account there. Paystack verifies it, and only its last four digits are stored. Then request a payout.',
-            'The amount is held from your balance at once. An operator approves the payout and Paystack transfers it. A failed or rejected payout returns the money.',
+            "Each machine has its own price list, in the currency you choose: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. Set it on the machine's page under Pricing. All zeros (or no price list) makes the machine free.",
+            'Under Profile & payment, set default prices that every machine you enroll starts with, and optionally publish them on all your active machines at once.',
+            'Customers are placed on the cheapest machine that fits their requirements and price limits; customers who set limits in another currency only use your machines if they are free.',
+            'New prices apply at once to new placements. Deployments already on your machine are never estimated above the prices they were placed at: a cut reaches them immediately, a rise only applies to deployments placed after it.',
+            'Every price change is kept as a version with its time, and each cost estimate records the prices it used.',
+          ]}
+        />
+      </Section>
+
+      <Section id="payment" title="Get paid directly">
+        <List
+          items={[
+            'Under Profile & payment, set the name customers see and your payment arrangement: methods (bank transfer, payment links, mobile money, invoice), currencies, instructions, links, minimums and terms. Signed-in customers see it on the providers page and on deployments that run on your machines.',
+            'Links must be plain https addresses of public websites. Instructions must never ask customers for PINs, one-time codes, passwords or card details; AgentMesh rejects them.',
+            'Estimated amounts lists what work on your machines comes to at your prices, per customer reference. Customers see the same reference on their deployment and quote it when they pay you.',
+            'AgentMesh does not collect, hold, split or pay out money, takes no commission, and does not record or verify payments. Agree what happens if a payment is late with your customers in your terms.',
             'Served Usage shows the requests your nodes answered.',
-            'If an operator refunds a charge your node earned, your share of the refunded amount is reversed (a Refund clawback entry). If you were already paid out, your balance can go negative until later earnings cover it.',
-            'Earnings over time charts your share and the commission per day; Transactions can be filtered and exported as CSV.',
           ]}
         />
       </Section>

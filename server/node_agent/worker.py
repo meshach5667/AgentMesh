@@ -12,6 +12,7 @@ import contextlib
 import functools
 import logging
 import re
+import secrets
 from dataclasses import asdict
 from datetime import datetime
 
@@ -101,6 +102,9 @@ def parse_deploy_payload(payload: dict) -> WorkloadSpec:
     res = payload.get("resources") or {}
     if not UUID_RE.fullmatch(dep_id):
         raise WorkloadError("INVALID_COMMAND", "Invalid deployment id")
+    attempt_id = payload.get("attempt_id")
+    if attempt_id is not None and not UUID_RE.fullmatch(str(attempt_id)):
+        raise WorkloadError("INVALID_COMMAND", "Invalid attempt id")
     if runtime not in KNOWN_RUNTIMES:
         raise WorkloadError("UNSUPPORTED_RUNTIME", "Unsupported runtime")
     source = None
@@ -123,6 +127,7 @@ def parse_deploy_payload(payload: dict) -> WorkloadSpec:
             gpu=bool(res.get("gpu", False)),
             runtime=runtime,
             source=source,
+            attempt_id=str(attempt_id) if attempt_id is not None else None,
         )
     except (KeyError, TypeError, ValueError):
         raise WorkloadError("INVALID_COMMAND", "Invalid resource specification") from None
@@ -147,6 +152,8 @@ class Worker:
             runtimes = {runtime.name: runtime} if runtime is not None else make_runtimes(settings)
         self.runtimes: dict[str, WorkloadRuntime] = runtimes
         self.runtime = next(iter(runtimes.values()))  # primary runtime (kept for callers that expect one)
+        self.boot_id = secrets.token_hex(8)
+        self._heartbeat_seq = 0
         creds = self.state.load_credentials()
         self.keys = KeyRing(settings.data_path)
         if client is None:
@@ -272,7 +279,7 @@ class Worker:
 
         async def progress(msg: str) -> None:
             with contextlib.suppress(ProtocolError):
-                await self.client.report(dep_id, "PROVISIONING", msg)
+                await self._report(dep_id, "PROVISIONING", msg)
 
         try:
             free_disk = psutil.disk_usage(self.settings.DATA_DIR).free // (1024 * 1024)
@@ -283,18 +290,16 @@ class Worker:
                 raise WorkloadError(
                     "INSUFFICIENT_MEMORY", f"Only {available_ram} MB RAM available; {spec.ram_mb} MB needed"
                 )
-            await self.client.report(
-                dep_id, "PROVISIONING", "Restarting runtime" if restart else "Starting isolated runtime"
-            )
+            await self._report(dep_id, "PROVISIONING", "Restarting runtime" if restart else "Starting isolated runtime")
             w["handle"] = await self._rt(spec).start(spec)
             self._persist(dep_id)
             await self._pull_with_retries(w["handle"], spec, progress)
-            await self.client.report(dep_id, "STARTING", "Loading model and running a test generation")
+            await self._report(dep_id, "STARTING", "Loading model and running a test generation")
             w["state"] = "starting"
             digest = await self._rt(spec).verify_ready(w["handle"], spec)
             w["state"], w["healthy"] = "running", True
             self._persist(dep_id)
-            await self.client.report(dep_id, "READY", "Model verified with a test generation", model_digest=digest)
+            await self._report(dep_id, "READY", "Model verified with a test generation", model_digest=digest)
             logger.info("Workload %s ready (%s)", dep_id, spec.model_tag)
         except asyncio.CancelledError:
             raise  # whoever cancelled (stop_workload / shutdown) owns cleanup
@@ -308,7 +313,7 @@ class Worker:
             self.workloads.pop(dep_id, None)
             self._persist(dep_id)
             with contextlib.suppress(ProtocolError, CredentialRevoked):
-                await self.client.report(dep_id, "FAILED", message, error_code=code)
+                await self._report(dep_id, "FAILED", message, error_code=code)
         except Exception:  # noqa: BLE001
             # A bug must not strand the deployment in PROVISIONING until the stall timeout: clean up and report.
             logger.exception("Workload %s failed unexpectedly", dep_id)
@@ -318,7 +323,7 @@ class Worker:
             self.workloads.pop(dep_id, None)
             self._persist(dep_id)
             with contextlib.suppress(ProtocolError, CredentialRevoked):
-                await self.client.report(dep_id, "FAILED", "Unexpected worker error", error_code="WORKER_ERROR")
+                await self._report(dep_id, "FAILED", "Unexpected worker error", error_code="WORKER_ERROR")
         finally:
             self.deploy_tasks.pop(dep_id, None)
 
@@ -358,7 +363,7 @@ class Worker:
         self._persist(dep_id)
         if report:
             with contextlib.suppress(ProtocolError):
-                await self.client.report(
+                await self._report(
                     dep_id, "STOPPED", message or "Workload stopped and cleaned up", error_code=error_code
                 )
 
@@ -387,7 +392,7 @@ class Worker:
             if spec.runtime not in self.runtimes:
                 self.state.mark_processed(cmd_id)
                 await ack(cmd_id, "accepted")
-                await self.client.report(
+                await self._report(
                     spec.deployment_id,
                     "FAILED",
                     f"Runtime '{spec.runtime}' is not available here",
@@ -399,7 +404,7 @@ class Worker:
                 # Raced with a local pause/drain or the end of the schedule: hand it back for placement elsewhere.
                 self.state.mark_processed(cmd_id)
                 await ack(cmd_id, "accepted")
-                await self.client.report(
+                await self._report(
                     spec.deployment_id, "FAILED", f"Node unavailable ({reason})", error_code="NODE_UNAVAILABLE"
                 )
                 return
@@ -444,6 +449,19 @@ class Worker:
 
     # --- loops -------------------------------------------------------------------------------------
 
+    def _next_heartbeat_seq(self) -> int:
+        self._heartbeat_seq += 1
+        return self._heartbeat_seq
+
+    async def _report(self, dep_id: str, *args, **kwargs) -> dict | None:
+        """Report a workload's state, naming the execution attempt it belongs to."""
+        w = self.workloads.get(dep_id)
+        spec = w.get("spec") if w else None
+        attempt_id = getattr(spec, "attempt_id", None)
+        if attempt_id:
+            kwargs["attempt_id"] = attempt_id
+        return await self.client.report(dep_id, *args, **kwargs)
+
     async def heartbeat_once(self) -> dict:
         available, reason, drain = self.availability()
         if (available, reason) != self._last_availability:
@@ -461,6 +479,9 @@ class Worker:
             ],
             "available": available,
             "unavailable_reason": reason,
+            # Lets the control plane ignore a heartbeat that arrives after a newer one.
+            "boot_id": self.boot_id,
+            "seq": self._next_heartbeat_seq(),
         }
         resp = await self.client.heartbeat(payload)
         self.state.record_heartbeat()

@@ -219,7 +219,7 @@ PROD = {
 
 def test_production_turns_debug_features_off():
     prod = Settings(**PROD)
-    assert prod.api_docs_enabled is False and prod.test_credits_enabled is False and prod.is_dev is False
+    assert prod.api_docs_enabled is False and prod.is_dev is False
     assert Settings(**PROD, API_DOCS_ENABLED=True).api_docs_enabled is True  # explicit opt-in only
     for cors in (["*"], []):
         with pytest.raises(ValueError):

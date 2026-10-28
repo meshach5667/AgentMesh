@@ -1,7 +1,7 @@
 """Deterministic policy for autonomous deployments.
 
 Everything the model proposes is checked here against the catalog, the customer's autonomy limits, platform
-ceilings, current prices, and the customer's wallet. None of these checks depend on the model's output being
+ceilings, current prices, and the customer's spending limit. None of these checks depend on the model's output being
 truthful: the model only chooses among options the application then verifies.
 """
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.core.config import settings
 from app.core.database import Session
 from app.documents.model import Model, ModelArtifact
-from app.services import ledger_service, node_pricing_service
+from app.services import node_pricing_service
 from app.services.catalog_service import (
     MAX_NUM_CTX,
     RUNTIME_PREFERENCE,
@@ -25,7 +25,7 @@ from app.services.catalog_service import (
     deployable_artifacts,
     estimate_requirements,
 )
-from app.services.ledger_service import money
+from app.services.cost_service import money
 from app.services.scheduler_service import evaluate_nodes
 
 Runtime = Literal["ollama", "llamacpp", "vllm"]
@@ -37,7 +37,12 @@ class AutonomyLimits(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_spend: Decimal = Field(gt=0, le=Decimal("100000000"), description="Most this deployment may cost in total")
+    max_spend: Decimal = Field(
+        gt=0,
+        le=Decimal("100000000"),
+        description="Most this deployment may cost in total at the providers' published prices (in DEFAULT_CURRENCY); "
+        "the customer pays the provider directly",
+    )
     max_duration_hours: float = Field(gt=0, description="The deployment is stopped after this long")
     max_cpu_cores: int = Field(4, ge=1, le=256)
     max_ram_mb: int = Field(16384, ge=512, le=2_097_152)
@@ -91,7 +96,7 @@ class PlanCheck:
     violations: list[str] = field(default_factory=list)
     model: Model | None = None
     candidates: list[Candidate] = field(default_factory=list)
-    currency: str = settings.BILLING_CURRENCY
+    currency: str = settings.DEFAULT_CURRENCY
     priced: bool = False
     hourly: Decimal = Decimal(0)
     total: Decimal = Decimal(0)
@@ -125,23 +130,19 @@ def resource_violations(req: ResourceRequest, limits: AutonomyLimits) -> list[st
 
 
 async def hourly_cost(db: Session, req: ResourceRequest) -> tuple[bool, str, Decimal]:
-    """(priced, currency, hourly price) for a reservation on the node placement would pick now: the cheapest that
-    fits within the network price limits. With no such node, the most those limits allow."""
-    limits = await node_pricing_service.limits_for(db, None, None, req.cpu_cores, req.ram_mb, req.vram_mb)
-    ev = await evaluate_nodes(db, req, limits=limits)
-    if ev.eligible:
-        rates = ev.rates[ev.eligible[0].id]
-        if rates is None or rates.is_free():
-            return False, settings.BILLING_CURRENCY, Decimal(0)
-        return True, settings.BILLING_CURRENCY, money(rates.hourly(req.cpu_cores, req.ram_mb, req.vram_mb))
-    if not limits.hourly:
-        return False, settings.BILLING_CURRENCY, Decimal(0)
-    return True, settings.BILLING_CURRENCY, money(limits.hourly)
+    """(priced, currency, hourly price) for a reservation on the machine placement would pick now: the cheapest that
+    fits, priced in DEFAULT_CURRENCY or free."""
+    currency = settings.DEFAULT_CURRENCY
+    ev = await evaluate_nodes(db, req, limits=node_pricing_service.limits_for(currency, None, None))
+    if not ev.eligible:
+        return False, currency, Decimal(0)
+    rates = ev.rates[ev.eligible[0].id]
+    if rates is None or rates.is_free():
+        return False, currency, Decimal(0)
+    return True, currency, money(rates.hourly(req.cpu_cores, req.ram_mb, req.vram_mb))
 
 
-async def check_plan(
-    db: Session, plan: DeploymentPlan, limits: AutonomyLimits, user_id: uuid.UUID, *, check_balance: bool = True
-) -> PlanCheck:
+async def check_plan(db: Session, plan: DeploymentPlan, limits: AutonomyLimits, user_id: uuid.UUID) -> PlanCheck:
     """Validate a proposed plan. Candidates are the runtimes that satisfy every limit, in preference order."""
     check = PlanCheck(ok=False)
     try:
@@ -186,13 +187,6 @@ async def check_plan(
             f"estimated cost {check.total} {check.currency} for {plan.duration_hours:g} h exceeds the "
             f"authorized maximum of {money(limits.max_spend)}"
         )
-    if check_balance and check.priced:
-        wallet = await ledger_service.wallet_for_user(db, user_id)
-        have = await ledger_service.balance(db, wallet.id)
-        if have < check.total:
-            check.violations.append(
-                f"wallet balance {money(have)} {check.currency} does not cover the estimated {check.total}"
-            )
     # Violations about other runtimes do not block a plan that still has a valid runtime; cost and duration do.
     blocking = [v for v in check.violations if v.split(":", 1)[0] not in RUNTIME_PREFERENCE]
     check.ok = not blocking

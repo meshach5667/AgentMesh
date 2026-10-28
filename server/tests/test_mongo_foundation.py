@@ -12,7 +12,7 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 from app.core import mongo as mongo_core
 from app.core.mongo import Session
 from app.core.timeutil import utcnow
-from app.documents import DOCUMENTS, Node, ResourceReservation, Transaction, User, Wallet
+from app.documents import DOCUMENTS, CostEstimate, Deployment, Node, ResourceReservation, User
 
 
 def _user(email="a@example.com") -> User:
@@ -37,6 +37,19 @@ async def test_every_collection_and_declared_index_exists(mongo):
             assert actual.get(keys) == bool(declared.document.get("unique")), (doc.__name__, keys)
 
 
+def _estimate(amount=Decimal("1")) -> CostEstimate:
+    now = utcnow()
+    return CostEstimate(
+        deployment_id=uuid.uuid4(),
+        period_start=now,
+        period_end=now,
+        resource_amount=amount,
+        token_amount=Decimal(0),
+        amount=amount,
+        currency="NGN",
+    )
+
+
 async def test_unique_email(mdb):
     mdb.add(_user())
     await mdb.commit()
@@ -46,10 +59,11 @@ async def test_unique_email(mdb):
 
 
 async def test_nullable_unique_allows_many_nulls_like_sql(mdb):
-    mdb.add_all([Transaction(amount=Decimal("1")), Transaction(amount=Decimal("2"))])
-    mdb.add_all([Transaction(amount=Decimal("1"), idempotency_key="k")])
+    customer = uuid.uuid4()
+    mdb.add_all([Deployment(customer_id=customer), Deployment(customer_id=customer)])
+    mdb.add_all([Deployment(customer_id=customer, idempotency_key="k")])
     await mdb.commit()
-    mdb.add(Transaction(amount=Decimal("1"), idempotency_key="k"))
+    mdb.add(Deployment(customer_id=customer, idempotency_key="k"))
     with pytest.raises(DuplicateKeyError):
         await mdb.commit()
 
@@ -65,27 +79,28 @@ async def test_one_active_reservation_per_deployment(mdb):
 
 
 async def test_money_and_ids_are_stored_exactly(mongo, mdb):
-    wallet = Wallet(user_id=uuid.uuid4(), balance=Decimal("1234567890.12345678"))
-    mdb.add(wallet)
+    estimate = _estimate(amount=Decimal("1234567890.12345678"))
+    mdb.add(estimate)
     await mdb.commit()
-    raw = await mongo.wallets.find_one({"_id": wallet.id})
-    assert isinstance(raw["balance"], Decimal128)
-    assert raw["_id"] == wallet.id  # decoded as a UUID, i.e. stored as a standard BSON UUID
-    stored = await mongo.wallets.find_one({"_id": Binary(wallet.id.bytes, UUID_SUBTYPE)})
+    raw = await mongo.cost_estimates.find_one({"_id": estimate.id})
+    assert isinstance(raw["amount"], Decimal128)
+    assert raw["_id"] == estimate.id  # decoded as a UUID, i.e. stored as a standard BSON UUID
+    stored = await mongo.cost_estimates.find_one({"_id": Binary(estimate.id.bytes, UUID_SUBTYPE)})
     assert stored is not None
-    loaded = await Session().get(Wallet, wallet.id)
-    assert loaded.balance == Decimal("1234567890.12345678")
+    loaded = await Session().get(CostEstimate, estimate.id)
+    assert loaded.amount == Decimal("1234567890.12345678")
 
 
 async def test_commit_is_all_or_nothing(mdb):
-    mdb.add(Transaction(amount=Decimal("1"), idempotency_key="dup"))
+    customer = uuid.uuid4()
+    mdb.add(Deployment(customer_id=customer, idempotency_key="dup"))
     await mdb.commit()
-    wallet = Wallet(balance=Decimal("10"))
-    mdb.add(wallet)
-    mdb.add(Transaction(amount=Decimal("1"), idempotency_key="dup"))
+    estimate = _estimate()
+    mdb.add(estimate)
+    mdb.add(Deployment(customer_id=customer, idempotency_key="dup"))
     with pytest.raises(DuplicateKeyError):
         await mdb.commit()
-    assert await Wallet.get(wallet.id) is None
+    assert await CostEstimate.get(estimate.id) is None
 
 
 async def test_identity_map_and_change_tracking(mdb):
@@ -151,8 +166,8 @@ async def test_refresh_reloads_but_keeps_local_changes(mdb):
 
 
 async def test_transient_conflict_is_replayed(mdb, monkeypatch):
-    wallet = Wallet(balance=Decimal("5"))
-    mdb.add(wallet)
+    estimate = _estimate(amount=Decimal("5"))
+    mdb.add(estimate)
     real_write, calls = Session._write, []
 
     async def flaky(self, txn):
@@ -164,7 +179,7 @@ async def test_transient_conflict_is_replayed(mdb, monkeypatch):
     monkeypatch.setattr(Session, "_write", flaky)
     await mdb.commit()
     assert len(calls) == 2
-    assert (await Wallet.get(wallet.id)).balance == Decimal("5")
+    assert (await CostEstimate.get(estimate.id)).amount == Decimal("5")
 
 
 async def test_not_initialised_is_an_error():

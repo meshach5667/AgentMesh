@@ -24,7 +24,7 @@ async def test_metrics_need_a_token(client, monkeypatch, make_user):
     assert resp.status_code == 200
     body = resp.text
     assert "agentmesh_up 1" in body and 'agentmesh_http_requests_total{method="GET",status="4xx"}' in body
-    assert "# TYPE agentmesh_payouts gauge" in body
+    assert "# TYPE agentmesh_deployments gauge" in body and "payout" not in body and "payment" not in body
 
 
 async def test_login_is_throttled_per_account(client, make_user, monkeypatch):

@@ -19,6 +19,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.core.config import settings
 from app.core.database import Session
 from app.core.logging import redact
 from app.documents.ai import AiRun
@@ -26,12 +27,12 @@ from app.documents.deployment import Deployment, DeploymentEvent
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.user import Customer, User
 from app.schemas.deployment import DeploymentCreate
-from app.services import audit_service, deployment_service, node_pricing_service, placement_service
+from app.services import audit_service, deployment_service, placement_service
 from app.services import deployment_lifecycle as lifecycle
 from app.services.ai import probe
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan, resource_violations
 from app.services.catalog_service import DeploymentConfig, deployable_artifacts, estimate_requirements
-from app.services.ledger_service import money
+from app.services.cost_service import money
 from app.services.scheduler_service import evaluate_nodes
 
 logger = logging.getLogger(__name__)
@@ -187,13 +188,13 @@ async def find_compatible_nodes(ctx: ToolContext, args: Placement) -> dict:
 
 async def estimate_deployment_cost(ctx: ToolContext, args: CostInput) -> dict:
     plan = DeploymentPlan(**args.model_dump())
-    check = await check_plan(ctx.db, plan, ctx.limits, ctx.user.id, check_balance=False)
+    check = await check_plan(ctx.db, plan, ctx.limits, ctx.user.id)
     cost: dict = check.summary()["cost"]
     return cost | {"duration_hours": args.duration_hours}
 
 
 async def create_deployment_plan(ctx: ToolContext, args: PlanInput) -> dict:
-    """Validate a plan against the catalog, limits, prices, and wallet. Does not create anything."""
+    """Validate a plan against the catalog, limits and prices. Does not create anything."""
     check = await check_plan(ctx.db, args.plan, ctx.limits, ctx.user.id)
     return check.summary() | {"plan": args.plan.model_dump(mode="json")}
 
@@ -209,23 +210,20 @@ async def submit_deployment(ctx: ToolContext, args: PlanInput) -> dict:
     # plain values first.
     run_id, user_id = ctx.run.id, ctx.user.id
     attempt = len(ctx.run.deployment_ids or [])
-    # Placement may not pick a node dearer than the network prices or than the authorized spend allows per hour.
-    spend_cap = min(money(ctx.limits.max_spend / Decimal(str(args.plan.duration_hours))), Decimal(1_000_000))
-    caps = []
-    for c in check.candidates:
-        default = await node_pricing_service.limits_for(
-            ctx.db, None, None, c.req.cpu_cores, c.req.ram_mb, c.req.vram_mb
-        )
-        caps.append(min(spend_cap, default.hourly) if default.hourly is not None else spend_cap)
+    # Placement may not pick a machine dearer than the authorized spend allows per hour (in DEFAULT_CURRENCY).
+    cap = min(money(ctx.limits.max_spend / Decimal(str(args.plan.duration_hours))), Decimal(1_000_000))
     runtimes = [c.artifact.runtime for c in check.candidates]
     failures = []
-    for runtime, cap in zip(runtimes, caps, strict=True):
+    for runtime in runtimes:
         body = DeploymentCreate(
             model_id=args.plan.model_id,
             runtime=runtime,  # type: ignore[arg-type]
             config={"num_ctx": args.plan.num_ctx, "region": args.plan.region, "require_gpu": args.plan.require_gpu},
             idempotency_key=f"ai:{run_id}:{attempt}:{runtime}",
+            currency=settings.DEFAULT_CURRENCY,
             max_hourly_price=cap,
+            provider_id=None,
+            failover_policy="any_provider",
         )
         try:
             dep = await deployment_service.create_deployment(ctx.db, body, user_id)
@@ -353,7 +351,7 @@ TOOLS: dict[str, Tool] = {
         ),
         Tool(
             "create_deployment_plan",
-            "Check a plan against the catalog, the customer's limits, prices, and wallet without deploying.",
+            "Check a plan against the catalog, the customer's limits and prices without deploying.",
             PlanInput,
             create_deployment_plan,
             frozenset({PLANNING}),

@@ -8,7 +8,7 @@ import { ErrorState, Notice, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { useOperatorOverview } from '@/hooks/useAdmin';
 import { errorMessage } from '@/lib/errors';
-import { count, dateTime, money, runtimeLabel } from '@/lib/format';
+import { count, dateTime, runtimeLabel } from '@/lib/format';
 
 const sum = (o: Record<string, number>, keys?: string[]) =>
   Object.entries(o).reduce((t, [k, v]) => (!keys || keys.includes(k) ? t + v : t), 0);
@@ -18,14 +18,20 @@ export default function OperatorOverview() {
   if (isLoading) return <PageSkeleton />;
   if (error || !data) return <ErrorState message={errorMessage(error)} retry={() => refetch()} />;
 
-  const online = sum(data.nodes_by_status, ['ONLINE', 'AVAILABLE', 'BUSY']);
+  const healthy = sum(data.nodes_by_health, ['ACTIVE', 'BUSY']);
+  const rec = data.recovery_24h;
   const u = data.usage_24h;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Network overview" description={`Live from the database · ${dateTime(data.generated_at)}`} />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="Nodes online" value={`${online} / ${sum(data.nodes_by_status)}`} hint={`${data.nodes_paused} paused`} icon={Server} />
+        <StatCard
+          title="Healthy nodes"
+          value={`${healthy} / ${sum(data.nodes_by_health)}`}
+          hint={`${data.nodes_by_health.DEGRADED ?? 0} degraded · ${data.nodes_by_health.OFFLINE ?? 0} offline`}
+          icon={Server}
+        />
         <StatCard
           title="Deployments ready"
           value={data.deployments_by_status.READY ?? 0}
@@ -50,35 +56,48 @@ export default function OperatorOverview() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <BreakdownCard title="Nodes by status" data={data.nodes_by_status} badges />
+        <BreakdownCard title="Nodes by health" data={data.nodes_by_health} badges />
         <BreakdownCard title="Deployments by status" data={data.deployments_by_status} badges />
         <BreakdownCard title="Users by role" data={data.users_by_role} />
       </div>
 
+      {(rec.needs_attention > 0 || rec.waiting_for_node > 0) && (
+        <Notice tone="warning" title="Deployments waiting for a node">
+          {rec.waiting_for_node} waiting and retrying automatically; {rec.needs_attention} waiting for their customer (manual
+          failover policy, or only dearer nodes available).
+        </Notice>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle>Ledger totals</CardTitle>
+          <CardTitle>Failover in the last 24 hours</CardTitle>
         </CardHeader>
-        <CardContent>
-          {data.ledger.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No ledger entries.</p>
-          ) : (
-            <ul className="divide-y divide-border text-sm">
-              {data.ledger.map((l) => (
-                <li key={`${l.type}-${l.status}`} className="flex items-center justify-between py-2">
-                  <span className="flex items-center gap-2">
-                    {l.type} <StatusBadge status={l.status} />
-                  </span>
-                  <span className="tabular-nums">
-                    {l.count} · {money(l.amount)}
-                  </span>
-                </li>
-              ))}
+        <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-muted-foreground">Deployments moved to another node</p>
+            <p className="text-2xl font-semibold tabular-nums">{rec.moves}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Attempts ended</p>
+            <ul className="mt-1 space-y-0.5">
+              {Object.keys(rec.attempts_ended).length === 0 ? (
+                <li className="text-muted-foreground">none</li>
+              ) : (
+                Object.entries(rec.attempts_ended).map(([outcome, n]) => (
+                  <li key={outcome} className="flex justify-between gap-4">
+                    <span>{outcome.replace(/_/g, ' ')}</span>
+                    <span className="tabular-nums">{n}</span>
+                  </li>
+                ))
+              )}
             </ul>
-          )}
-          <p className="mt-3 text-xs text-muted-foreground">
-            Deposits are Paystack top-ups, or unpaid test credits in development. See Reconciliation for consistency checks.
-          </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Waiting now</p>
+            <p className="tabular-nums">
+              {rec.waiting_for_node} retrying · {rec.needs_attention} need their customer
+            </p>
+          </div>
         </CardContent>
       </Card>
     </div>

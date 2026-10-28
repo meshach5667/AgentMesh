@@ -31,13 +31,13 @@ export default function SecurityGuide() {
             ['Passwords', 'Only as Argon2id hashes.'],
             ['Two-factor secrets', 'Encrypted (AES-256-GCM), bound to your account.'],
             ['Sign-in sessions', 'IP address and browser for each session, deleted when the session expires (14 days at most).'],
-            ['Bank accounts (providers)', 'Only the last four digits; Paystack holds the rest.'],
-            ['Paystack webhook payloads', 'No. They contain customer contact and card details.'],
+            ['Provider payment arrangements', 'What providers publish for customers (methods, instructions, links, terms). No card numbers, PINs, one-time codes or passwords: these are rejected.'],
+            ['Customer payments', 'No. Customers pay providers directly; AgentMesh never sees card or bank credentials.'],
             ['Provider hardware', 'CPU model and cores, RAM, free disk, OS, architecture, GPU model and VRAM. Public statistics show counts only.'],
           ]}
         />
         <P>
-          Logs redact API keys, node credentials, bearer tokens and Paystack keys, and tests check that prompts, outputs and credentials never
+          Logs redact API keys, node credentials, bearer tokens and secret keys, and tests check that prompts, outputs and credentials never
           appear in them, including on error paths.
         </P>
       </Section>
@@ -51,7 +51,8 @@ export default function SecurityGuide() {
             ['Per-request usage records', '400 days', <C key="3">USAGE_RECORD_RETENTION_DAYS</C>],
             ['Deployment events', '180 days', <C key="4">DEPLOYMENT_EVENT_RETENTION_DAYS</C>],
             ['Audit log', '365 days', <C key="5">AUDIT_LOG_RETENTION_DAYS</C>],
-            ['Charges, ledger, payments, refunds, payouts', 'Kept (financial records)', '—'],
+            ['Cost estimates', 'Kept', '—'],
+            ['Records from the retired payment system (if any)', 'Kept untouched as history', '—'],
           ]}
         />
         <P>
@@ -82,13 +83,12 @@ export default function SecurityGuide() {
             'Access tokens last 15 minutes and belong to a server-side session: signing out ends it everywhere at once. Refresh tokens work once; reusing one ends the whole session.',
             'Operators and admins must use a TOTP authenticator app; without it, no operator feature or other customer’s data is reachable.',
             'Operators can quarantine a node instantly (no authentication, tunnel closed, deployments moved) and release it later. Open tunnels re-check their node every 15 seconds, so a revoked or quarantined node is cut off within 15 seconds even if the disconnect message is lost.',
-            'Production startup refuses insecure settings: weak SECRET_KEY, wildcard CORS, non-https public URL, or an unapproved live Paystack key.',
+            'Production startup refuses insecure settings: weak SECRET_KEY, wildcard CORS, or a non-https public URL. Secrets never appear in the settings’ text form, so tracebacks cannot leak them.',
             'Security headers on the API and dashboard (nosniff, frame denial, referrer policy, HSTS). The dashboard’s Content-Security-Policy lets it load scripts only from itself and send data only to itself and the API.',
             'Unset ENVIRONMENT counts as production, so a forgotten setting cannot run with development defaults.',
-            'Paystack webhooks are checked with an HMAC-SHA512 signature in constant time, processed once, and credited only on matching amount and currency.',
-            'All balance changes go through ledger entries with idempotency keys; reconciliation checks balances against the ledger.',
-            'The dashboard redirects to checkout only on Paystack’s own domain.',
-            'Token counts reported by provider machines are treated as claims: billable output tokens are capped by the response bytes and input tokens by the request size the gateway counted itself. Operators see providers whose claims exceed what was observed.',
+            'Provider payment links must be plain https addresses of public hosts (no credentials, IP addresses or internal names); the dashboard re-checks them before rendering, and opens them with noopener.',
+            'Workers report on a deployment only for the current execution attempt on their own node: reports from a node the work moved away from, or for a superseded attempt, are refused, and delayed heartbeats are ignored by sequence number.',
+            'Token counts reported by provider machines are treated as claims: estimated output tokens are capped by the response bytes and input tokens by the request size the gateway counted itself. Operators see providers whose claims exceed what was observed.',
             'CI pins every action to a commit SHA and runs dependency, secret, static-analysis, container and configuration scans on every pull request.',
           ]}
         />
@@ -99,11 +99,11 @@ export default function SecurityGuide() {
         <List
           items={[
             'Token counts come from the provider’s machine. The size caps bound inflation but do not prove the provider ran the right model; signatures prove a message is intact, not that the work was done honestly.',
-            'A provider could keep a broken runtime “READY”: customers see failed requests, but resource time is still charged until an operator refunds it.',
+            'A provider could keep a broken runtime “READY”: customers see failed requests, and the cost estimate still counts its ready time.',
             'Tokens are kept in the browser’s localStorage. The CSP limits where an injected script could send them, but it still allows inline scripts.',
             'Workload containers run as the image’s default user (root for the Ollama image), and GPU deployments see every GPU on the machine.',
             'Per-email login throttling lets someone who knows your address delay your sign-in by up to a minute.',
-            'Customer balances can go below zero by up to one billing interval before deployments stop.',
+            'AgentMesh does not verify payments between customers and providers; disputes are settled between them.',
             'The audit log is not tamper-evident, and secrets live in environment variables rather than a secret manager.',
           ]}
         />
@@ -113,13 +113,12 @@ export default function SecurityGuide() {
         <Table
           head={['Feature', 'Status', 'Detail']}
           rows={[
-            ['Paystack payments and payouts', <StatusPill key="1" status="test-mode" />, 'Built against Paystack’s documented API and tested against a stand-in; not yet run against Paystack itself.'],
-            ['Live (real-money) payments', <StatusPill key="2" status="planned" />, 'Disabled unless PAYSTACK_ALLOW_LIVE=true is set after a review.'],
+
             ['vLLM on GPUs', <StatusPill key="3" status="unverified" />, 'Unit-tested; not run on real GPU hardware. Default image tags are unverified.'],
             ['Docker worker', <StatusPill key="4" status="unverified" />, 'Isolation tests against a real Docker daemon exist and run in CI; they were not run on the development machine (no Docker access). No GPU detection in the container.'],
             ['Installable worker on macOS', <StatusPill key="5" status="unverified" />, 'launchd service files are generated and unit-tested but not run on a Mac.'],
             ['Prebuilt worker releases', <StatusPill key="6" status="planned" />, 'The release workflow and install flow are built and the install was tested on Linux against locally served assets; no release is published yet.'],
-            ['Multi-replica billing with Redis', <StatusPill key="7" status="unverified" />, 'Concurrency safety rests on database compare-and-set and transactions; tested against one MongoDB replica set, not across real replicas.'],
+            ['Multi-replica placement and estimates with Redis', <StatusPill key="7" status="unverified" />, 'Concurrency safety rests on database compare-and-set, unique indexes and transactions; tested against one MongoDB replica set (and two API replicas in CI), not across real production replicas.'],
             ['Confidential computing', <StatusPill key="8" status="planned" />, 'Not implemented.'],
           ]}
         />

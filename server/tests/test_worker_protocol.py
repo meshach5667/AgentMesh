@@ -191,7 +191,10 @@ async def test_graceful_disconnect_stops_scheduling_immediately(client, db, enro
     _, customer = await make_user("customer")
     resp = await client.post("/api/v1/deployments", json={"model_id": str(ollama_model.id)}, headers=customer)
     assert resp.status_code == 503
-    # The next heartbeat brings it back.
+    # Back after an outage, it must pass NODE_RECOVERY_HEARTBEATS health checks before it gets work again.
+    await client.post("/api/v1/worker/heartbeat", json={"worker_version": "t"}, headers=node["headers"])
+    resp = await client.post("/api/v1/deployments", json={"model_id": str(ollama_model.id)}, headers=customer)
+    assert resp.status_code == 503 and resp.json()["detail"]["reasons"] == {"node_degraded": 1}
     await client.post("/api/v1/worker/heartbeat", json={"worker_version": "t"}, headers=node["headers"])
     resp = await client.post("/api/v1/deployments", json={"model_id": str(ollama_model.id)}, headers=customer)
     assert resp.status_code == 201

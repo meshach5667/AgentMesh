@@ -115,6 +115,10 @@ class HeartbeatRequest(BaseModel):
     # Local availability: False while paused, draining, or outside the provider's schedule.
     available: bool = True
     unavailable_reason: Literal["paused", "draining", "schedule"] | None = None
+    # Ordering: a random id per worker process and a counter it increases with every heartbeat. A heartbeat older
+    # than the last one applied (same boot id, lower or equal sequence) is ignored. Optional for older workers.
+    boot_id: str | None = Field(None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    seq: int | None = Field(None, ge=0, le=2**62)
 
     @model_validator(mode="after")
     def _allocation_needs_hardware(self) -> "HeartbeatRequest":
@@ -133,6 +137,8 @@ class HeartbeatResponse(BaseModel):
     # Newest worker version announced by the operator, if any (see WORKER_RELEASE_MANIFEST).
     latest_worker_version: str | None = None
     command_signing_key: SigningKey | None = None
+    # True when this heartbeat arrived after a newer one and was ignored.
+    stale: bool = False
 
 
 class PollRequest(BaseModel):
@@ -168,3 +174,6 @@ class DeploymentStatusReport(BaseModel):
     message: str | None = Field(None, max_length=500)
     error_code: str | None = Field(None, max_length=100, pattern=r"^[A-Z0-9_]+$")
     model_digest: str | None = Field(None, max_length=128, pattern=r"^[A-Za-z0-9:]+$")
+    # The execution attempt the report is about (from the DEPLOY payload). A report for a superseded attempt is
+    # refused. Optional for older workers.
+    attempt_id: uuid.UUID | None = None

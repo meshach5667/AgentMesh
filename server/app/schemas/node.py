@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class NodeOut(BaseModel):
@@ -33,8 +33,28 @@ class NodeOut(BaseModel):
     last_metrics: dict[str, float] | None = None
     quarantined_at: datetime | None = None
     quarantine_reason: str | None = None
+    degraded_until: datetime | None = None
+    consecutive_failures: int = 0
+    recovery_heartbeats: int = 0
+    # Derived from health evidence (heartbeat age, recovery, failure cooldown, pause, reservations):
+    # ACTIVE, BUSY, DEGRADED, DRAINING, OFFLINE, or the operator's SUSPENDED / QUARANTINED / REVOKED.
+    health: str | None = None
+    # Whether the scheduler may place new work on it right now.
+    schedulable: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _health(cls, data: Any, handler):
+        from app.documents.node import Node
+        from app.services.scheduler_service import health_state, schedulable
+
+        out = handler(data)
+        if isinstance(data, Node):
+            out.health = health_state(data)
+            out.schedulable = schedulable(data)
+        return out
 
 
 class EnrollmentTokenCreate(BaseModel):

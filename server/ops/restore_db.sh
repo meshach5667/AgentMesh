@@ -5,8 +5,8 @@
 #     ops/restore_db.sh agentmesh-....archive.gz
 #
 # Restore into a new database and point the API at it (MONGODB_DB) after checking it; never restore over a live one.
-# The API creates any missing collections and indexes at startup. Afterwards GET /api/v1/admin/reconciliation to
-# confirm the ledger is consistent.
+# The API creates any missing collections and indexes at startup. Afterwards check GET /api/v1/admin/overview (node
+# health, deployments, recovery activity) before pointing traffic at it.
 set -euo pipefail
 
 file="${1:?usage: restore_db.sh <archive>}"

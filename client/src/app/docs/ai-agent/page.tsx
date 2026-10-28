@@ -16,13 +16,13 @@ export default function AiAgentGuide() {
         <P>
           Customers describe a deployment in plain language (<C>/customer/ai</C>) and authorize limits. A language model turns the
           request into a structured plan and diagnoses failures, using Google&apos;s Gemini API. Everything with consequences runs in
-          the control plane&apos;s own code: catalog checks, limits, prices, wallet balance, node selection, capacity reservation,
+          the control plane&apos;s own code: catalog checks, limits, providers&apos; prices, node selection, capacity reservation,
           submission, verification, and stopping.
         </P>
         <Table
           head={['Component', 'Runs on', 'Responsible for']}
           rows={[
-            ['Control plane', 'The API (e.g. Render)', 'Auth, scheduling, reservations, billing, workflow state, audit, limit enforcement, and the calls to Gemini'],
+            ['Control plane', 'The API (e.g. Render)', 'Auth, scheduling, reservations, cost estimates, workflow state, audit, limit enforcement, and the calls to Gemini'],
             ['Gemini API', 'Google', 'Answers planning and recovery questions with JSON'],
             ['Compute nodes', 'Provider machines', 'Customer model deployments, through the existing worker'],
           ]}
@@ -68,7 +68,7 @@ export default function AiAgentGuide() {
       <Section id="offline" title="When Gemini is unavailable">
         <List
           items={[
-            'The control plane, database, billing, and every running customer deployment keep working. Deployment state lives in the database, not in the model conversation.',
+            'The control plane, database, failover, and every running customer deployment keep working. Deployment state lives in the database, not in the model conversation.',
             'A failed call (timeout, 429 or 5xx) is queued again and retried on the next background pass, up to AI_MAX_ATTEMPTS; the AI service shows as degraded meanwhile.',
             'New AI requests are accepted and queued (up to AI_QUEUE_MAX_LENGTH). A call not answered within AI_QUEUE_TTL_SECONDS fails with “No AI decision was made”; nothing is deployed.',
             'Deterministic steps continue: verification, duration and spend limits, stopping and cancellation all work without the model.',
@@ -80,7 +80,7 @@ export default function AiAgentGuide() {
         <P>Customers set these per request; they are enforced in code, never by the prompt:</P>
         <List
           items={[
-            'Maximum spend: the plan’s estimate must fit, the wallet must cover it, and the deployment is stopped when rated charges plus unrated READY time reach it.',
+            'Maximum spend: the plan’s estimate at the chosen machine’s price must fit, placement may not pick a machine dearer than the limit allows per hour, and the deployment is stopped when its cost estimate plus not-yet-estimated READY time reaches it. The customer pays the provider directly.',
             'Maximum duration: the deployment is stopped when it is reached.',
             'Maximum CPU cores, memory, and GPU memory (0 = no GPU).',
             'Maximum automatic recovery attempts (platform ceiling 3).',
@@ -88,10 +88,10 @@ export default function AiAgentGuide() {
             'Agent steps and tool calls per run (platform settings).',
           ]}
         />
-        <Callout tone="warning" title="Budget is checked, not held">
-          The ledger has no holds, so “reserve budget” means: the wallet must cover the estimate when the deployment is created, node
-          capacity is reserved atomically in the same transaction as the existing prepaid check, and spending is enforced by stopping
-          the deployment. Another deployment could still use the same balance in the meantime.
+        <Callout tone="warning" title="A limit on estimated cost">
+          AgentMesh holds no money, so the spending limit applies to the estimated cost at the providers’ published prices. It is
+          enforced by refusing plans over the limit, capping the hourly price placement may choose, and stopping the deployment when
+          the estimate reaches the limit.
         </Callout>
       </Section>
 

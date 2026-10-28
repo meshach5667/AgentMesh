@@ -8,7 +8,7 @@ from fastapi import APIRouter, Header, HTTPException, Response
 
 from app.core.config import settings
 from app.core.database import session_scope
-from app.documents import Deployment, Node, Payment, Payout
+from app.documents import Deployment, Node
 
 router = APIRouter()
 STARTED = time.time()
@@ -73,8 +73,6 @@ async def metrics(authorization: str = Header(default="")):
         for metric, doc in (
             ("agentmesh_nodes", Node),
             ("agentmesh_deployments", Deployment),
-            ("agentmesh_payments", Payment),
-            ("agentmesh_payouts", Payout),
         ):
             out.append(f"# TYPE {metric} gauge")
             rows = await db.aggregate(doc, [{"$group": {"_id": "$status", "n": {"$sum": 1}}}, {"$sort": {"_id": 1}}])

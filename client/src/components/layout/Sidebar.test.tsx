@@ -1,6 +1,8 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { Sidebar } from './Sidebar';
+import fs from 'fs';
+import path from 'path';
+import { Sidebar, customerSections, operatorSections, providerSections } from './Sidebar';
 
 let pathname = '/provider/nodes/register';
 let role = 'provider';
@@ -21,7 +23,8 @@ describe('Sidebar', () => {
     pathname = '/operator';
     render(<Sidebar />);
     expect(screen.getByText('Audit Log')).toBeInTheDocument();
-    expect(screen.getByText('Finance')).toBeInTheDocument();
+    expect(screen.getByText('Partners')).toBeInTheDocument();
+    expect(screen.queryByText('Finance')).toBeNull();
     expect(screen.getByText('Admin')).toBeInTheDocument();
     expect(screen.queryByText('Network Map')).toBeNull();
   });
@@ -31,5 +34,13 @@ describe('Sidebar', () => {
     pathname = '/customer';
     render(<Sidebar />);
     expect(screen.getByRole('link', { name: /AI Deploy/ })).not.toHaveTextContent('Soon');
+  });
+
+  it('links only to pages that exist, and never to retired payment pages', () => {
+    const hrefs = [...customerSections, ...providerSections, ...operatorSections].flatMap((sec) => sec.links.map((l) => l.href));
+    for (const href of hrefs) {
+      expect(fs.existsSync(path.join(__dirname, '../../app', href, 'page.tsx'))).toBe(true);
+      expect(href).not.toMatch(/wallet|transactions|earnings|payouts|refunds|revenue|reconciliation|subscription|pricing/);
+    }
   });
 });

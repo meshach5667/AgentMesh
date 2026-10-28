@@ -16,7 +16,7 @@ import pytest
 from app.core.config import settings
 from app.core.database import session_scope
 from app.core.timeutil import utcnow
-from app.documents import AiInferenceRequest, AiRun, AiRunEvent, Charge, Deployment, PricingRule
+from app.documents import AiInferenceRequest, AiRun, AiRunEvent, CostEstimate, Deployment
 from app.services.ai import agent, gemini, inference_queue, tools, workflow
 from app.services.ai.policy import AutonomyLimits, DeploymentPlan, check_plan
 from app.services.ai.workflow import TERMINAL, TRANSITIONS, R
@@ -384,32 +384,28 @@ async def test_transient_inference_error_is_retried_and_secrets_redacted(client,
 # --- Policy and budget ---------------------------------------------------------------------------------
 
 
-async def _price(db, cpu="100"):
-    db.add(
-        PricingRule(
-            id=uuid.uuid4(),
-            version=1,
-            currency="NGN",
-            effective_from=utcnow() - timedelta(days=1),
-            cpu_core_hour=Decimal(cpu),
-            ram_gb_hour=Decimal(0),
-            vram_gb_hour=Decimal(0),
-            input_tokens_per_million=Decimal(0),
-            output_tokens_per_million=Decimal(0),
-            platform_fee_rate=Decimal("0.1"),
-        )
-    )
-    await db.commit()
+async def _price(client, node, cpu="100"):
+    """The provider prices its machine (per CPU core-hour, in NGN)."""
+    body = {
+        "currency": "NGN",
+        "cpu_core_hour": cpu,
+        "ram_gb_hour": "0",
+        "vram_gb_hour": "0",
+        "input_tokens_per_million": "0",
+        "output_tokens_per_million": "0",
+    }
+    resp = await client.put(f"/api/v1/nodes/{node['node_id']}/pricing", json=body, headers=node["provider_headers"])
+    assert resp.status_code == 200, resp.text
 
 
-async def test_plan_over_budget_or_wallet_is_rejected_and_never_submitted(
+async def test_plan_over_budget_is_rejected_and_never_submitted(
     client, db, make_user, connected, ollama_model, monkeypatch
 ):
     monkeypatch.setattr(settings, "AI_MAX_AGENT_STEPS", 2)
-    await _price(db, cpu="100")  # 1 core -> 100 NGN/h
+    node, _ = connected
+    await _price(client, node, cpu="100")  # 1 core -> 100 NGN/h on the only machine
     user, customer = await make_user("customer")
     user_id = user.id
-    await client.post("/api/v1/wallets/deposit", json={"amount": "1000"}, headers=customer)
     run = (await start(client, customer, limits=LIMITS | {"max_spend": "150"})).json()
     await model_turn(client, final_plan(ollama_model, duration_hours=2))  # 200 > 150
     r = await run_of(db, run["id"])
@@ -419,10 +415,10 @@ async def test_plan_over_budget_or_wallet_is_rejected_and_never_submitted(
     assert r.status == "FAILED" and r.error_code == "AGENT_STEP_LIMIT" and r.deployment_ids == []
     assert await db.find(Deployment) == []
 
-    limits = AutonomyLimits.model_validate(LIMITS | {"max_spend": "100000"})
-    plan = DeploymentPlan(model_id=mid(ollama_model), duration_hours=100)  # 10,000 NGN > wallet 1,000
+    limits = AutonomyLimits.model_validate(LIMITS | {"max_spend": "100000", "max_duration_hours": 100})
+    plan = DeploymentPlan(model_id=mid(ollama_model), duration_hours=100)  # 10,000 NGN: within the limit
     check = await check_plan(db, plan, limits, user_id)
-    assert not check.ok and any("wallet balance" in v for v in check.violations)
+    assert check.ok and check.priced and check.total == Decimal(10000)  # no wallet: customers pay providers
 
 
 async def test_resource_and_runtime_limits(db, make_user, ollama_model):
@@ -450,31 +446,15 @@ async def test_spend_limit_stops_a_running_deployment(client, db, make_user, con
     dep_id = (await run_of(db, run["id"])).deployment_id
     await report(client, node, dep_id, "READY")
     assert await workflow.advance(uuid.UUID(run["id"])) == "READY"
-    # Billing rates 60 NGN against the deployment: over the authorized 50.
-    from app.services import ledger_service
-
-    wallet = await ledger_service.wallet_for_user(db, (await run_of(db, run["id"])).user_id)
-    rule = PricingRule(
-        id=uuid.uuid4(),
-        version=1,
-        currency="NGN",
-        effective_from=utcnow() + timedelta(days=1),
-        platform_fee_rate=Decimal("0.1"),
-    )
-    db.add(rule)
-    await db.flush()
+    # The cost estimate reaches 60 NGN: over the authorized 50.
     db.add(
-        Charge(
+        CostEstimate(
             deployment_id=dep_id,
-            customer_wallet_id=wallet.id,
-            pricing_rule_id=rule.id,
             period_start=utcnow() - timedelta(hours=1),
             period_end=utcnow(),
             resource_amount=Decimal(60),
             token_amount=Decimal(0),
             amount=Decimal(60),
-            provider_amount=Decimal(54),
-            platform_fee=Decimal(6),
             currency="NGN",
         )
     )
