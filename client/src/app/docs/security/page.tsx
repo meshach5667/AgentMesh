@@ -32,7 +32,8 @@ export default function SecurityGuide() {
             ['Two-factor secrets', 'Encrypted (AES-256-GCM), bound to your account.'],
             ['Sign-in sessions', 'IP address and browser for each session, deleted when the session expires (14 days at most).'],
             ['Provider payment arrangements', 'What providers publish for customers (methods, instructions, links, terms). No card numbers, PINs, one-time codes or passwords: these are rejected.'],
-            ['Customer payments', 'No. Customers pay providers directly; AgentMesh never sees card or bank credentials.'],
+            ['Customer payments', 'The amount, currency, reference and verification result of each credit payment. Card and bank details stay with the provider’s gateway; AgentMesh never sees them. For gateway payments your account email is sent to the provider’s gateway, as checkout requires it.'],
+            ['Provider gateway keys', 'Encrypted (AES-256-GCM), bound to the provider and gateway; never returned by the API, and sent only to the gateway’s official API host.'],
             ['Provider hardware', 'CPU model and cores, RAM, free disk, OS, architecture, GPU model and VRAM. Public statistics show counts only.'],
           ]}
         />
@@ -103,7 +104,7 @@ export default function SecurityGuide() {
             'Tokens are kept in the browser’s localStorage. The CSP limits where an injected script could send them, but it still allows inline scripts.',
             'Workload containers run as the image’s default user (root for the Ollama image), and GPU deployments see every GPU on the machine.',
             'Per-email login throttling lets someone who knows your address delay your sign-in by up to a minute.',
-            'AgentMesh does not verify payments between customers and providers; disputes are settled between them.',
+            'Gateway payments are verified with the provider’s own gateway account, but a transfer is credited on the provider’s word alone; refunds and disputes are settled between customer and provider.',
             'The audit log is not tamper-evident, and secrets live in environment variables rather than a secret manager.',
           ]}
         />

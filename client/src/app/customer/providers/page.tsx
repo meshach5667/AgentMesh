@@ -10,7 +10,7 @@ import { PageSkeleton } from '@/components/ui/Skeleton';
 import { useOffers } from '@/hooks/useProviders';
 import { errorMessage } from '@/lib/errors';
 import { money, runtimeLabel } from '@/lib/format';
-import { PAYMENT_METHOD_LABEL } from '@/types';
+import { GATEWAY_LABEL, PAYMENT_METHOD_LABEL } from '@/types';
 
 /** Compute discovery: providers with machines taking work now, their lowest prices and how they take payment. */
 export default function ProvidersPage() {
@@ -23,7 +23,7 @@ export default function ProvidersPage() {
     <div className="space-y-6">
       <PageHeader
         title="Compute providers"
-        description="Independent providers with machines that can take work right now. Each sets their own prices and is paid directly by you; AgentMesh charges nothing."
+        description="Independent providers with machines that can take work right now. Each sets their own prices; you buy prepaid credit with a provider (paid to them directly, verified by AgentMesh) to use their priced machines. AgentMesh charges nothing."
       />
       {offers.length === 0 ? (
         <EmptyState>No provider has a machine taking work right now. Check back soon.</EmptyState>
@@ -63,6 +63,12 @@ export default function ProvidersPage() {
                     ))}
                     {o.prices.length > 0 && o.free_machines > 0 && <Pill tone="green">{o.free_machines} free</Pill>}
                   </div>
+                  {o.gateways.length > 0 && (
+                    <p>
+                      <span className="text-muted-foreground">Instant verification: </span>
+                      {o.gateways.map((g) => GATEWAY_LABEL[g]).join(', ')}
+                    </p>
+                  )}
                   <p>
                     <span className="text-muted-foreground">Payment: </span>
                     {o.accepts_payment_arrangement

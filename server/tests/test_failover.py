@@ -20,7 +20,7 @@ from app.documents import (
     ResourceReservation,
 )
 from app.services import cost_service
-from tests.conftest import HARDWARE
+from tests.conftest import HARDWARE, give_credit
 
 GPU_HARDWARE = HARDWARE | {"gpus": [{"vendor": "nvidia", "model": "Test GPU", "vram_mb": 16384}]}
 
@@ -279,10 +279,12 @@ async def test_10_a_gpu_workload_never_lands_on_a_cpu_only_node(client, db, enro
 async def test_11_a_dearer_replacement_needs_the_customers_approval(client, db, enroll_node, make_user, ollama_model):
     cheap = await enroll_node()
     await _set_price(client, cheap, "5")
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    await give_credit(db, customer_user, cheap)
     dep = await _deploy(client, customer, ollama_model)
     dear = await enroll_node()
     await _set_price(client, dear, "50")
+    await give_credit(db, customer_user, dear)
     await _report(client, cheap, dep["id"], "FAILED", error_code="INSUFFICIENT_MEMORY", message="oom")
     paused = await _dep(db, dep["id"])
     assert paused.status == "NEEDS_ATTENTION" and paused.error_code == "PRICE_APPROVAL_REQUIRED"
@@ -300,10 +302,12 @@ async def test_11_a_dearer_replacement_needs_the_customers_approval(client, db, 
 async def test_11b_an_explicit_limit_is_never_exceeded_by_recovery(client, db, enroll_node, make_user, ollama_model):
     cheap = await enroll_node()
     await _set_price(client, cheap, "5")
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    await give_credit(db, customer_user, cheap)
     dep = await _deploy(client, customer, ollama_model, max_hourly_price="10")
     dear = await enroll_node()
     await _set_price(client, dear, "50")
+    await give_credit(db, customer_user, dear)
     await _report(client, cheap, dep["id"], "FAILED", error_code="INSUFFICIENT_MEMORY", message="oom")
     assert (await _dep(db, dep["id"])).status == "PENDING"  # waits for a machine within the limit
     assert await monitors.run_pending_placements(now=utcnow() + timedelta(hours=1)) == 0
@@ -438,7 +442,8 @@ async def test_17_repeated_failures_never_duplicate_results_or_cost_estimates(
     nodes = [await enroll_node(provider=provider, ram_mb=ram) for ram in (8192, 6144, 4096)]
     for n in nodes:
         await _set_price(client, n, "10")
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    await give_credit(db, customer_user, nodes[0])
     dep = await _deploy(client, customer, ollama_model, max_hourly_price="100")
     start = utcnow() - timedelta(hours=1)
     for i, n in enumerate(nodes[:2]):

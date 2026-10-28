@@ -92,6 +92,13 @@ class DeploymentOut(BaseModel):
     next_placement_at: datetime | None = None
     pending_since: datetime | None = None
     placement_retries: int = 0
+    # A planned move in progress: the replacement is starting while the current node keeps serving.
+    migrating_node_id: uuid.UUID | None = None
+    migration_started_at: datetime | None = None
+    # Prepaid credit this deployment draws on at its current placement (unset on a free machine).
+    priced: bool = False
+    credit_provider_id: uuid.UUID | None = None
+    credit_currency: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.main import app
+from tests.conftest import give_credit
 
 PROFILE = {
     "display_name": "Lagos GPU Co",
@@ -98,7 +99,8 @@ async def test_customers_see_offers_prices_and_how_to_pay_before_choosing(
         },
         headers=provider,
     )
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    await give_credit(db, customer_user, node)
     offers = (await client.get("/api/v1/providers", headers=customer)).json()
     (offer,) = offers
     assert offer["display_name"] == "Lagos GPU Co" and offer["machines_available"] == 1
@@ -134,23 +136,31 @@ async def test_a_chosen_provider_without_capacity_is_not_silently_replaced(
     assert resp.status_code == 503 and resp.json()["detail"]["reasons"] == {"other_provider": 1}
 
 
-async def test_providers_participate_free_and_no_payment_state_exists(client, make_user, enroll_node):
-    """Enrolling, pricing and publishing need no payment to AgentMesh; nothing records payments as completed."""
+async def test_providers_participate_free_and_agentmesh_holds_no_money(client, make_user, enroll_node):
+    """Enrolling, pricing and publishing need no payment to AgentMesh, and the platform has no gateway account, wallet,
+    payout, commission or subscription of its own: gateways are only ever the providers' own accounts."""
     _, provider = await make_user("provider")
     node = await enroll_node(provider=provider)
     assert (await client.put("/api/v1/providers/me", json=PROFILE, headers=provider)).status_code == 200
     shown = (await client.get(f"/api/v1/nodes/{node['node_id']}", headers=provider)).json()
     assert shown["schedulable"] is True
     paths = " ".join(sorted({getattr(r, "path", "") for r in app.routes}))
-    for word in ("paystack", "wallet", "payout", "topup", "commission", "subscription", "checkout", "refund"):
+    for word in ("wallet", "payout", "commission", "subscription", "refund", "webhook"):
         assert word not in paths.lower(), word
 
 
-def test_no_payment_gateway_code_or_dependency_remains():
+def test_the_platform_has_no_payment_account_of_its_own():
+    from app.core.config import Settings
+    from app.services import gateways
+
+    fields = " ".join(Settings.model_fields).upper()
+    assert not any(word in fields for word in ("PAYSTACK", "STRIPE", "FLUTTERWAVE", "PAYOUT", "FEE_RATE"))
     root = Path(__file__).resolve().parents[1]
-    sources = [p for p in (root / "app").rglob("*.py")]
-    assert not [p for p in sources if "paystack" in p.read_text().lower()]
     for name in ("requirements.txt", "requirements-lock.txt"):
-        path = root / name
-        if path.exists():
-            assert "paystack" not in path.read_text().lower()
+        text = (root / name).read_text().lower()
+        assert not any(sdk in text for sdk in ("paystack", "stripe", "flutterwave"))  # plain HTTPS calls only
+    assert set(gateways.HOSTS.values()) == {
+        "https://api.paystack.co",
+        "https://api.flutterwave.com",
+        "https://api.stripe.com",
+    }

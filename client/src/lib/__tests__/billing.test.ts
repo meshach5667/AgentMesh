@@ -1,4 +1,4 @@
-import { hourlyResourcePrice, isFree, safeExternalUrl, totalsByCurrency } from '../billing';
+import { hourlyResourcePrice, isFree, isGatewayCheckout, safeExternalUrl, totalsByCurrency } from '../billing';
 import type { CostEstimate, Prices } from '@/types';
 
 const prices = (over: Partial<Prices> = {}): Prices => ({
@@ -45,6 +45,15 @@ describe('pricing helpers', () => {
       null,
     ]) {
       expect(safeExternalUrl(bad)).toBeNull();
+    }
+  });
+
+  it('sends customers only to gateways\' own checkout pages', () => {
+    expect(isGatewayCheckout('https://checkout.paystack.com/abc')).toBe(true);
+    expect(isGatewayCheckout('https://checkout.flutterwave.com/pay/x')).toBe(true);
+    expect(isGatewayCheckout('https://checkout.stripe.com/c/pay/cs_test_1')).toBe(true);
+    for (const bad of ['http://checkout.paystack.com/x', 'https://checkout.paystack.com.evil.io/x', 'https://evil.io/?checkout.stripe.com', null]) {
+      expect(isGatewayCheckout(bad)).toBe(false);
     }
   });
 });

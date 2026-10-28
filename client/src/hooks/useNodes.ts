@@ -89,3 +89,12 @@ export const useNodeEvents = (id: string) =>
     enabled: !!id,
     refetchInterval: 30000,
   });
+
+/** Move every serving deployment off a machine without interrupting it (planned move), and stop new placements. */
+export const useEvacuateNode = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.post<{ moving: number; staying: number }>(`/nodes/${id}/evacuate`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['nodes'] }),
+  });
+};

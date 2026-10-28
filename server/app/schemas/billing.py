@@ -88,6 +88,9 @@ class RuntimeQuote(BaseModel):
     cheapest: RatesOut | None = Field(description="Rates of the machine placement would pick now (null: free)")
     hourly: Decimal | None = Field(description="Hourly price of the reservation on that machine (null: no machine)")
     provider: dict | None = Field(description="Who runs that machine and how they take payment")
+    credit: dict | None = Field(
+        None, description="On a priced machine: your prepaid credit with its provider, what is needed, and if enough"
+    )
 
 
 class QuoteOut(BaseModel):

@@ -10,12 +10,14 @@ cheapest first, then the most free memory, then reputation, then node id. Sponso
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from app.core.config import settings
 from app.core.database import Session
 from app.core.timeutil import utcnow
 from app.documents.node import Node, NodeStatus
 from app.documents.reservation import ResourceReservation
+from app.services import credit_service
 from app.services.catalog_service import ResourceRequest
 from app.services.node_pricing_service import PriceLimits, Rates, rates_at
 
@@ -31,6 +33,7 @@ REASON_PRICE = "over_price_limit"  # the node charges more than the deployment's
 REASON_CURRENCY = "other_currency"  # priced in a currency other than the deployment's, so not comparable
 REASON_PROVIDER = "other_provider"  # not run by the provider the deployment is restricted to
 REASON_DEGRADED = "node_degraded"  # late heartbeats, recovering from an outage, or repeated recent failures
+REASON_NO_CREDIT = "no_prepaid_credit"  # priced machine; the customer lacks enough verified credit with its provider
 
 REASON_TEXT = {
     REASON_UNAVAILABLE: "nodes are offline, paused, or not reporting heartbeats",
@@ -44,6 +47,7 @@ REASON_TEXT = {
     REASON_CURRENCY: "nodes are priced in another currency",
     REASON_PROVIDER: "nodes belong to other providers than the one you chose",
     REASON_DEGRADED: "nodes are degraded (late heartbeats, recovering, or failing repeatedly)",
+    REASON_NO_CREDIT: "nodes need prepaid credit with their provider (buy credit to use them)",
 }
 
 
@@ -129,8 +133,11 @@ async def evaluate_nodes(
     exclude: set | None = None,
     limits: PriceLimits | None = None,
     providers: set | None = None,
+    customer_id=None,
 ) -> Evaluation:
-    """Nodes that can take ``req`` within ``limits`` (and of one of ``providers``, if given), cheapest first."""
+    """Nodes that can take ``req`` within ``limits`` (and of one of ``providers``, if given), cheapest first. With a
+    ``customer_id``, priced machines are eligible only while that customer holds enough verified prepaid credit with
+    the machine's provider; free machines need none."""
     nodes = await db.find(Node, {"mode": {"$ne": None}})
     ev = Evaluation()
     now = utcnow()
@@ -167,6 +174,7 @@ async def evaluate_nodes(
         else:
             ev.eligible.append(node)
     ev.rates = await rates_at(db, [n.id for n in ev.eligible], now)
+    credit = await credit_service.balances_for(db, customer_id) if customer_id is not None else None
     within = []
     for n in ev.eligible:
         rates = ev.rates[n.id]
@@ -174,6 +182,16 @@ async def evaluate_nodes(
             ev.reasons[REASON_CURRENCY] += 1
         elif not limits.allows(rates, req.cpu_cores, req.ram_mb, req.vram_mb):
             ev.reasons[REASON_PRICE] += 1
+        elif (
+            credit is not None
+            and rates is not None
+            and not rates.is_free()
+            and not credit_service.covers(
+                credit.get((n.owner_id, rates.currency), Decimal(0)),
+                rates.hourly(req.cpu_cores, req.ram_mb, req.vram_mb),
+            )
+        ):
+            ev.reasons[REASON_NO_CREDIT] += 1
         else:
             within.append(n)
     ev.eligible = within
@@ -190,7 +208,9 @@ async def evaluate_nodes(
     return ev
 
 
-async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceRequest, rates: Rates | None = None) -> bool:
+async def try_reserve(
+    db: Session, node: Node, deployment_id, req: ResourceRequest, rates: Rates | None = None, standby: bool = False
+) -> bool:
     """Atomically reserve capacity on one node. The conditional update only succeeds if the node still has
     room at the moment it executes, so concurrent requests cannot oversubscribe. ``rates`` (what the node charges
     now) is kept with the reservation as the most the deployment will be billed there. Does not commit."""
@@ -219,6 +239,7 @@ async def try_reserve(db: Session, node: Node, deployment_id, req: ResourceReque
             disk_mb=req.disk_mb,
             vram_mb=req.vram_mb,
             rates=(rates or Rates.free()).snapshot(),
+            status="STANDBY" if standby else "ACTIVE",
         )
     )
     return True
@@ -231,12 +252,15 @@ async def schedule(
     exclude: set | None = None,
     limits: PriceLimits | None = None,
     providers: set | None = None,
+    customer_id=None,
+    standby: bool = False,
 ) -> tuple[Node, Rates | None]:
     """Reserve capacity on the cheapest eligible node; returns it and the rates it charges. A node that fills up
-    between evaluation and reservation is skipped for the next one."""
-    ev = await evaluate_nodes(db, req, exclude, limits, providers)
+    between evaluation and reservation is skipped for the next one. ``standby`` holds capacity for the target of a
+    planned move (see placement_service.start_migration)."""
+    ev = await evaluate_nodes(db, req, exclude, limits, providers, customer_id)
     for node in ev.eligible:
-        if await try_reserve(db, node, deployment_id, req, ev.rates[node.id]):
+        if await try_reserve(db, node, deployment_id, req, ev.rates[node.id], standby):
             return node, ev.rates[node.id]
         ev.reasons[REASON_CAPACITY] += 1  # lost a race for this node's capacity
     raise NoEligibleNode(ev)
@@ -253,6 +277,32 @@ async def release_reservation(db: Session, deployment_id) -> bool:
         {"$set": {"status": "RELEASED", "released_at": utcnow()}},
     )
     if not claimed:
+        return False
+    await db.update_one(
+        Node,
+        {"_id": reservation.node_id},
+        {
+            "$inc": {
+                "reserved_cpu_cores": -reservation.cpu_cores,
+                "reserved_ram_mb": -reservation.ram_mb,
+                "reserved_disk_mb": -reservation.disk_mb,
+                "reserved_vram_mb": -reservation.vram_mb,
+            }
+        },
+    )
+    return True
+
+
+async def release_standby(db: Session, deployment_id) -> bool:
+    """Release capacity held for a planned move that did not complete. Does not commit."""
+    reservation = await db.find_one(ResourceReservation, {"deployment_id": deployment_id, "status": "STANDBY"})
+    if reservation is None:
+        return False
+    if not await db.update_one(
+        ResourceReservation,
+        {"_id": reservation.id, "status": "STANDBY"},
+        {"$set": {"status": "RELEASED", "released_at": utcnow()}},
+    ):
         return False
     await db.update_one(
         Node,

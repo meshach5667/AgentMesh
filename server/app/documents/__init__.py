@@ -5,6 +5,7 @@ from app.documents.api_key import ApiKey
 from app.documents.audit import AuditLog
 from app.documents.base import Doc
 from app.documents.billing import CostEstimate, NodePrice
+from app.documents.credit import CreditBalance, CreditEntry, CreditPayment, ProviderGateway
 from app.documents.deployment import Deployment, DeploymentAttempt, DeploymentEvent
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeHardware
@@ -25,6 +26,9 @@ DOCUMENTS: list[type[Doc]] = [
     AuditLog,
     AuthSession,
     CostEstimate,
+    CreditBalance,
+    CreditEntry,
+    CreditPayment,
     Customer,
     Deployment,
     DeploymentAttempt,
@@ -39,6 +43,7 @@ DOCUMENTS: list[type[Doc]] = [
     NodePrice,
     NodeSession,
     Provider,
+    ProviderGateway,
     RefreshToken,
     ResourceReservation,
     SponsorCampaign,

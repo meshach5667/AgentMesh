@@ -180,3 +180,25 @@ async def ollama_model(db):
     await db.commit()
     await db.refresh(model)
     return model
+
+
+async def give_credit(db, customer_user, node: dict, amount: str = "1000000", currency: str = "NGN") -> None:
+    """Verified prepaid credit for ``customer_user`` with the provider running ``node`` (as a confirmed payment
+    would give), so tests can use priced machines."""
+    from decimal import Decimal
+
+    from app.documents import Customer, Node
+    from app.services import credit_service
+
+    customer = await db.find_one(Customer, {"user_id": customer_user.id})
+    node_row = await db.get(Node, uuid.UUID(str(node["node_id"])))
+    await credit_service.post(
+        db,
+        customer_id=customer.id,
+        provider_id=node_row.owner_id,
+        currency=currency,
+        amount=Decimal(amount),
+        kind="payment",
+        key=f"test-credit:{customer.id}:{node_row.owner_id}:{currency}:{uuid.uuid4().hex}",
+    )
+    await db.commit()

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity, BarChart3, BookOpen, Box, Calculator, HandCoins, KeyRound, LayoutDashboard, LogOut, Megaphone, PlusCircle, ScrollText,
-  Server, Settings, Sparkles, Store, type LucideIcon,
+  Server, Settings, Sparkles, Store, Wallet, type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
@@ -35,6 +35,7 @@ export const customerSections: Section[] = [
     title: 'Usage',
     links: [
       { href: '/customer/usage', label: 'Requests', icon: BarChart3 },
+      { href: '/customer/credits', label: 'Prepaid credit', icon: Wallet },
       { href: '/customer/costs', label: 'Estimated costs', icon: Calculator },
     ],
   },
@@ -54,6 +55,7 @@ export const providerSections: Section[] = [
     title: 'Pricing & payment',
     links: [
       { href: '/provider/payments', label: 'Profile & payment', icon: HandCoins },
+      { href: '/provider/credits', label: 'Customer payments', icon: Wallet },
       { href: '/provider/estimates', label: 'Estimated amounts', icon: Calculator },
     ],
   },

@@ -171,7 +171,7 @@ export default function ProviderGuide() {
           head={['Action', 'Where', 'Effect']}
           rows={[
             ['Pause new work', 'Dashboard, or worker pause', 'No new placements; running deployments keep serving.'],
-            ['Drain', <C key="d">{`${WORKER_BIN.split('/').pop()} drain`}</C>, 'Stop taking work and stop running deployments; AgentMesh moves them to other nodes when possible.'],
+            ['Drain', <C key="d">{`${WORKER_BIN.split('/').pop()} drain`}</C>, 'Stop taking work; running deployments keep serving for up to 15 minutes while AgentMesh starts replacements elsewhere, then anything left stops.'],
             ['Resume', 'Dashboard, or worker resume', 'Take work again (within your schedule). Dashboard and local pause are independent; both must be off.'],
             ['Revoke', 'Dashboard', 'Disables the node’s credential at once; deployments move elsewhere when possible.'],
           ]}
@@ -205,7 +205,8 @@ export default function ProviderGuide() {
             'Your machine gets new work only while its heartbeats are on time. A late heartbeat (over 45 seconds) pauses new placements; after 90 seconds of silence it is marked offline and its deployments are restarted on other machines.',
             'When it comes back, it must send a couple of healthy heartbeats before it gets new work again. Work that moved away while it was gone is not given back: if your worker still runs it, the control plane tells it to stop.',
             'Three failed placements in a row (for example out of memory, or a runtime that will not start) bench the machine for 10 minutes.',
-            'Each machine page shows its health (Active, Busy, Degraded, Draining, Offline) and a history of these events. Pausing or draining a machine stops new placements; running work continues until it stops or you drain it.',
+            'Each machine page shows its health (Active, Busy, Degraded, Draining, Offline) and a history of these events. Pausing a machine stops new placements; running work continues.',
+            'To take a machine out of service without interrupting customers, use Move work off on its page, or run agentmesh-worker drain on it. Each running deployment is started on another machine first; traffic switches when the replacement is ready and the copy on your machine is stopped two minutes later. After a drain the worker keeps serving for up to 15 minutes (AGENTMESH_DRAIN_GRACE_SECONDS) while this happens, then stops anything left.',
           ]}
         />
       </Section>
@@ -227,8 +228,10 @@ export default function ProviderGuide() {
           items={[
             'Under Profile & payment, set the name customers see and your payment arrangement: methods (bank transfer, payment links, mobile money, invoice), currencies, instructions, links, minimums and terms. Signed-in customers see it on the providers page and on deployments that run on your machines.',
             'Links must be plain https addresses of public websites. Instructions must never ask customers for PINs, one-time codes, passwords or card details; AgentMesh rejects them.',
-            'Estimated amounts lists what work on your machines comes to at your prices, per customer reference. Customers see the same reference on their deployment and quote it when they pay you.',
-            'AgentMesh does not collect, hold, split or pay out money, takes no commission, and does not record or verify payments. Agree what happens if a payment is late with your customers in your terms.',
+            'Customers buy prepaid credit with you before your priced machines serve them. Connect your own Paystack, Flutterwave or Stripe account under Profile & payment (secret key; checked with the gateway, stored encrypted, never shown again): customers then pay you there and AgentMesh verifies each payment with your account before crediting it.',
+            'Customers can also pay by transfer and record it; Customer payments lists those for you to confirm. Confirm only once the money is in your account: confirming credits the customer at once.',
+            'Usage on your machines draws customers’ credit down at your prices; a customer whose credit runs out is paused automatically. Estimated amounts lists the usage per customer reference.',
+            'The money goes straight to you: AgentMesh never holds, splits or pays out money and takes no commission. Refunds of unused credit are between you and your customers.',
             'Served Usage shows the requests your nodes answered.',
           ]}
         />

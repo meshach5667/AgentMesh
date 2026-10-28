@@ -32,6 +32,7 @@ from app.documents.node import Node
 from app.documents.reservation import ResourceReservation
 from app.documents.usage import UsageRecord
 from app.documents.user import Customer, Provider, User
+from app.services import credit_service
 from app.services.node_pricing_service import Rates, estimated_rates, node_price_changes
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ def ready_intervals(events: list[DeploymentEvent], now: datetime, fallback_node:
             continue  # progress note
         if e.to_status == S.READY.value and opened is None:
             opened = (e.created_at, e.node_id or fallback_node)
+        elif e.to_status == S.READY.value and opened is not None and e.node_id and e.node_id != opened[1]:
+            # Planned move: READY continues on another node from this instant.
+            out.append(Interval(opened[0], e.created_at, opened[1]))
+            opened = (e.created_at, e.node_id)
         elif e.to_status != S.READY.value and opened is not None:
             out.append(Interval(opened[0], e.created_at, opened[1]))
             opened = None
@@ -211,12 +216,30 @@ async def estimate_deployment(db: Session, dep: Deployment, now: datetime) -> li
             )
             db.add(estimate)
             out.append(estimate)
+            if dep.customer_id is not None and estimate.provider_id is not None:
+                await credit_service.post(
+                    db,
+                    customer_id=dep.customer_id,
+                    provider_id=estimate.provider_id,
+                    currency=estimate.currency,
+                    amount=-amount,
+                    kind="usage",
+                    key=f"estimate:{estimate.id}",
+                    estimate_id=estimate.id,
+                    deployment_id=dep.id,
+                )
     moved = await db.update_one(
         Deployment, {"_id": dep.id, "metered_until": dep.metered_until}, {"$set": {"metered_until": now}}
     )
     if not moved:
         raise RuntimeError(f"Estimate watermark for deployment {dep.id} moved concurrently")
     dep.metered_until = now
+    if dep.priced and dep.customer_id and dep.credit_provider_id and dep.credit_currency:
+        left = await credit_service.balance(db, dep.customer_id, dep.credit_provider_id, dep.credit_currency)
+        if left <= 0:
+            from app.services import placement_service
+
+            await placement_service.pause_for_credit(db, dep)
     return out
 
 

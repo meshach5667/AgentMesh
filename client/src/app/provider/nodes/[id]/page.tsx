@@ -11,7 +11,7 @@ import { CapacityBars } from '@/components/nodes/CapacityBars';
 import { NodePricingCard } from '@/components/pricing/NodePricingCard';
 import { NodeHealthCard } from '@/components/nodes/NodeHealthCard';
 import { PageSkeleton } from '@/components/ui/Skeleton';
-import { useNode, useRevokeNode, useSetAccepting, useSetAcceptsCommunity } from '@/hooks/useNodes';
+import { useEvacuateNode, useNode, useRevokeNode, useSetAccepting, useSetAcceptsCommunity } from '@/hooks/useNodes';
 import { errorMessage } from '@/lib/errors';
 import { ago, dateTime, runtimeLabel } from '@/lib/format';
 import { nodeAvailability } from '@/lib/nodes';
@@ -22,6 +22,7 @@ export default function NodeDetailPage() {
   const setAccepting = useSetAccepting();
   const setCommunity = useSetAcceptsCommunity();
   const revoke = useRevokeNode();
+  const evacuate = useEvacuateNode();
 
   if (isLoading) return <PageSkeleton />;
   if (error || !node) return <ErrorState message={errorMessage(error, 'Node not found')} retry={() => refetch()} />;
@@ -55,6 +56,25 @@ export default function NodeDetailPage() {
                   Resume
                 </Button>
               )}
+              <ConfirmButton
+                variant="outline"
+                confirmLabel="Move work off without interruption"
+                disabled={evacuate.isPending}
+                onConfirm={() =>
+                  evacuate
+                    .mutateAsync(node.id)
+                    .then((r) =>
+                      toast.success(
+                        r.staying
+                          ? `${r.moving} moving; ${r.staying} keep running here (no replacement, or the customer chose manual failover)`
+                          : `${r.moving} deployment(s) moving to other machines`,
+                      ),
+                    )
+                    .catch((e) => toast.error(errorMessage(e)))
+                }
+              >
+                Move work off
+              </ConfirmButton>
               <ConfirmButton
                 confirmLabel="Revoke: stops its deployments"
                 onConfirm={() => act(revoke.mutateAsync(node.id), 'Node revoked')}
@@ -190,8 +210,10 @@ export default function NodeDetailPage() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        &quot;Pause new work&quot; stops AgentMesh from placing new deployments here; running ones keep serving. To stop
-        running deployments too, run <code className="font-mono">agentmesh-worker drain</code> on the machine.
+        &quot;Pause new work&quot; stops AgentMesh from placing new deployments here; running ones keep serving. &quot;Move
+        work off&quot; also moves each running deployment to another machine without interrupting it: the replacement
+        starts first, traffic switches when it is ready, and the copy here stops afterwards. Running{' '}
+        <code className="font-mono">agentmesh-worker drain</code> on the machine does the same.
         &quot;Revoke&quot; disables the node&apos;s credential and stops its deployments immediately; AgentMesh moves them to
         other nodes when it can.
       </p>

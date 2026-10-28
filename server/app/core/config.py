@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     PLACEMENT_RETRY_BASE_SECONDS: int = 15
     PLACEMENT_RETRY_MAX_SECONDS: int = 300
     PLACEMENT_PENDING_MAX_SECONDS: int = 3600
+    # Planned moves (make-before-break): after traffic switches to the new node, the old copy keeps running this long
+    # so requests already in flight there can finish before it is stopped.
+    MIGRATION_DRAIN_SECONDS: int = 120
     MONITOR_INTERVAL_SECONDS: int = 15
     BACKGROUND_JOBS_ENABLED: bool = True
 
@@ -114,6 +117,13 @@ class Settings(BaseSettings):
     # Prices. Providers price each machine in a currency of their choice; this is the currency a deployment's price
     # limits use when the customer names none. AgentMesh never processes payments: customers pay providers directly.
     DEFAULT_CURRENCY: str = "NGN"
+    # Prepaid credit. Customers buy credit with a provider (verified through the provider's own gateway account, or
+    # confirmed by the provider) before using its priced machines. Being placed on one needs credit for this many hours
+    # of the reservation at its price; gateway payments not settled within PAYMENT_VERIFY_WINDOW_HOURS are failed.
+    CREDIT_MIN_PREPAID_HOURS: float = 1.0
+    PAYMENT_VERIFY_WINDOW_HOURS: int = 24
+    # The dashboard's public URL: customers return here from a provider's gateway checkout.
+    FRONTEND_URL: str = "http://localhost:3000"
     COST_ESTIMATE_INTERVAL_SECONDS: int = 300  # how often READY time and tokens are turned into cost estimates
 
     # Retention (app.services.retention_service, run hourly by the background monitor). Cost estimates and records

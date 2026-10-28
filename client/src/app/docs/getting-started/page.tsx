@@ -65,14 +65,15 @@ export default function GettingStarted() {
           head={['Area', 'Status', 'Notes']}
           rows={[
             ['Deploying approved models on Ollama or llama.cpp, OpenAI-compatible API with streaming', <StatusPill key="1" status="working" />, 'Verified end to end on real models.'],
-            ['Health monitoring, cheapest-first placement, readiness checks, automatic failover with attempt history', <StatusPill key="2" status="working" />, 'Failover restarts the model on a replacement node; it is not a live migration.'],
+            ['Health monitoring, cheapest-first placement, readiness checks, automatic failover with attempt history', <StatusPill key="2" status="working" />, 'Failover restarts the model on a replacement node; planned moves (drain, Move work off) switch with no gap.'],
+            ['Gateway payment verification against live Paystack, Flutterwave and Stripe accounts', <StatusPill key="2g" status="unverified" />, 'Built to their documented APIs and tested against simulated gateways; not yet run against the real services.'],
             ['API keys, per-deployment scoping, per-request usage metering', <StatusPill key="3" status="working" />, 'Token counts come from the runtime on the provider’s machine and are not independently verified.'],
             ['Installable worker for Linux', <StatusPill key="4" status="working" />, 'Installer, service, pause/drain, signed updates and real inference verified on Linux.'],
             ['Installable worker on macOS', <StatusPill key="5" status="unverified" />, 'Service files are generated and unit-tested but not run on a Mac. Resource limits are advisory on macOS.'],
             ['Docker worker', <StatusPill key="6" status="unverified" />, 'Unit-tested with a fake Docker client; not yet run against a real Docker daemon.'],
             ['Prebuilt worker downloads (GitHub Releases)', <StatusPill key="7" status="planned" />, <>The release workflow exists; downloads work once the first <C>worker-v*</C> release is published on <A href={RELEASES_URL}>GitHub Releases</A>.</>],
             ['vLLM on GPU nodes', <StatusPill key="8" status="unverified" />, 'Built and unit-tested; not run on real GPU hardware.'],
-            ['Provider prices, payment arrangements and cost estimates', <StatusPill key="9" status="working" />, 'Customers pay providers directly; AgentMesh records estimates and processes no payments.'],
+            ['Provider prices, payment arrangements and cost estimates', <StatusPill key="9" status="working" />, 'Customers buy prepaid credit with a provider (paid to the provider directly, verified through the provider’s gateway or confirmation) before priced service; AgentMesh holds no money.'],
             ['Confidential computing', <StatusPill key="11" status="planned" />, 'Not implemented. Providers can see the data their machines process.'],
           ]}
         />

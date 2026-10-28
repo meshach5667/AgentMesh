@@ -71,6 +71,7 @@ export default function ApiGuide() {
             <><C>config</C> accepts only <C>num_ctx</C> (512–8192), <C>region</C> and <C>require_gpu</C>. Anything else is rejected.</>,
             <>Retrying with the same <C>idempotency_key</C> returns the same deployment.</>,
             <>Providers price each machine. The deployment goes to the cheapest healthy machine that fits within <C>max_hourly_price</C> (per hour of its reservation) and <C>max_token_price</C> (per million input or output tokens), in <C>currency</C>. Optional <C>provider_id</C> restricts it to one provider; <C>failover_policy</C> is <C>any_provider</C> (default), <C>same_provider</C> or <C>manual</C>. <C>POST /deployments/quote</C> takes the same body and prices it without creating anything.</>,
+            <>A priced machine needs verified prepaid credit with its provider (see <C>/credits</C>); without it the 503 lists <C>no_prepaid_credit</C>, and inference returns <C>402 credit_exhausted</C> once credit is used up.</>,
             <>When the node fails the deployment moves (new attempt) or waits: <C>PENDING</C> retries automatically with backoff; <C>NEEDS_ATTENTION</C> waits for you (manual policy, or only dearer machines). <C>PATCH /deployments/&#123;id&#125;</C> changes limits or policy; <C>POST /deployments/&#123;id&#125;/retry</C> places it now; <C>GET /deployments/&#123;id&#125;/attempts</C> lists every placement.</>,
             <>No node available: <C>503</C> with <C>{'{"detail": {"code": "no_eligible_node", "reasons": {...}, "by_runtime": {...}}}'}</C>.</>,
           ]}
@@ -221,6 +222,13 @@ console.log(reply.choices[0].message.content);`}
             [<C key="3d">GET /deployments/&#123;id&#125;/pricing</C>, 'What a deployment is estimated at now, who runs its machine, how to pay them, and your payment reference.'],
             [<C key="4">GET /billing/estimates?deployment_id=…</C>, 'Estimated cost of each window of use (not payments).'],
             [<C key="5">GET /billing/estimates/summary?days=30</C>, 'Estimated totals per currency and per day.'],
+            [<C key="5c">GET /credits</C>, 'Your prepaid credit with each provider and your payments (providers: their customers’ credit and payments to them).'],
+            [<C key="5t">POST /credits/topups</C>, <>Buy credit with a provider: <C>{'{"provider_id": …, "amount": "5000", "currency": "NGN", "method": "gateway", "gateway": "paystack"}'}</C> returns the provider&apos;s checkout URL; <C>{'"method": "manual"'}</C> with a <C>reference</C> records a transfer for the provider to confirm.</>],
+            [<C key="5v">POST /credits/topups/&#123;id&#125;/verify</C>, 'Verify a gateway payment with the provider’s gateway now (credited once if it succeeded).'],
+            [<C key="5d">POST /credits/topups/&#123;id&#125;/decision</C>, 'Providers: confirm or reject a transfer.'],
+            [<C key="5g">GET /providers/me/gateways</C>, 'Providers: your connected gateways (keys are never returned).'],
+            [<C key="5gp">PUT /providers/me/gateways/&#123;gateway&#125;</C>, <>Providers: connect <C>paystack</C>, <C>flutterwave</C> or <C>stripe</C> with <C>{'{"secret_key": "…"}'}</C>; the key is checked with the gateway, then stored encrypted. <C>DELETE</C> disconnects it.</>],
+            [<C key="5e">POST /nodes/&#123;id&#125;/evacuate</C>, 'Providers: stop new work on a machine and move its deployments elsewhere without interruption.'],
             [<C key="7">GET /stats/public</C>, 'Network counts; no authentication.'],
           ]}
         />

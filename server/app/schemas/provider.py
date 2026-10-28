@@ -152,6 +152,9 @@ class ProviderOffer(BaseModel):
     prices: list[dict] = Field(description="Per currency: lowest CPU core-hour, RAM GB-hour and token prices")
     payment_methods: list[str]
     accepts_payment_arrangement: bool = Field(description="Whether the provider published how to pay them")
+    gateways: list[str] = Field(
+        default_factory=list, description="Gateways the provider connected: payments there are verified automatically"
+    )
 
 
 class ProviderDetail(ProviderOffer):

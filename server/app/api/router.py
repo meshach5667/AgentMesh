@@ -6,6 +6,7 @@ from app.api.v1 import (
     api_keys,
     auth,
     billing,
+    credits,
     deployments,
     gateway,
     models,
@@ -30,5 +31,6 @@ api_router.include_router(worker.router, prefix="/worker", tags=["worker protoco
 api_router.include_router(usage.router, prefix="/usage", tags=["usage"])
 api_router.include_router(stats.router, prefix="/stats", tags=["stats"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
+api_router.include_router(credits.router, prefix="/credits", tags=["prepaid credit"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai deployment agent"])
 api_router.include_router(sponsored.router, prefix="/sponsored", tags=["sponsored placements"])

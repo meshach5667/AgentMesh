@@ -28,6 +28,10 @@ class WorkerSettings(BaseSettings):
     # "drain" also stops running workloads so AgentMesh moves them to other nodes.
     AVAILABILITY_SCHEDULE: str = ""
     OUTSIDE_SCHEDULE: str = "pause"
+    # After `agentmesh-worker drain`, keep serving this long so the control plane can move each deployment to another
+    # node first (it starts the replacement, switches traffic, then stops the copy here). Whatever is still here
+    # afterwards is stopped. 0 stops everything at once.
+    DRAIN_GRACE_SECONDS: int = 900
 
     # Resources the provider allows AgentMesh to use. Unset values fall back to conservative defaults
     # (half the CPU and RAM, at most 20 GB of disk, no GPU) - never the whole machine.

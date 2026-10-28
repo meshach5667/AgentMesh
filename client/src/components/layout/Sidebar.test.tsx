@@ -40,7 +40,8 @@ describe('Sidebar', () => {
     const hrefs = [...customerSections, ...providerSections, ...operatorSections].flatMap((sec) => sec.links.map((l) => l.href));
     for (const href of hrefs) {
       expect(fs.existsSync(path.join(__dirname, '../../app', href, 'page.tsx'))).toBe(true);
-      expect(href).not.toMatch(/wallet|transactions|earnings|payouts|refunds|revenue|reconciliation|subscription|pricing/);
+      expect(href).not.toMatch(/transactions|earnings|payouts|refunds|revenue|reconciliation|subscription|pricing/);
+      expect(href).not.toMatch(/commission|checkout/);
     }
   });
 });

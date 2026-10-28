@@ -48,6 +48,9 @@ export default function OperatorGuide() {
             [<><C>COMMAND_SIGNING_KEY</C>, <C>COMMAND_SIGNING_PREVIOUS_KEY</C></>, 'Optional explicit Ed25519 seeds for signed commands; rotate by moving the current one to PREVIOUS.'],
             [<><C>AI_RUN_RETENTION_DAYS</C>, <C>USAGE_RECORD_RETENTION_DAYS</C>, <C>AUDIT_LOG_RETENTION_DAYS</C> and others</>, 'Retention per data class (see Security & limitations).'],
             [<C key="3">PUBLIC_BASE_URL</C>, 'Public https URL of the API (deployment endpoints are built from it).'],
+            [<C key="3f">FRONTEND_URL</C>, 'Public URL of the dashboard: customers return here from a provider’s gateway checkout.'],
+            [<><C>CREDIT_MIN_PREPAID_HOURS</C>, <C>PAYMENT_VERIFY_WINDOW_HOURS</C></>, 'Credit needed to start on a priced machine (hours of its reservation, default 1), and how long pending gateway payments are re-checked (default 24 h).'],
+            [<C key="3m">MIGRATION_DRAIN_SECONDS</C>, 'After a planned move switches traffic, how long the old copy keeps serving in-flight requests (default 120).'],
             [<C key="4">CORS_ORIGINS</C>, 'Dashboard origins allowed to call the API.'],
             [<><C>COORDINATION_BACKEND=redis</C>, <C>REDIS_URL</C></>, 'Needed only for more than one API replica. Use a password-protected Redis that is not reachable from the internet: replicas trust its messages.'],
             [<C key="6">DEFAULT_CURRENCY</C>, 'Currency of a deployment’s price limits when the customer names none (default NGN). Providers price machines in their own currency; AgentMesh processes no payments.'],
@@ -110,10 +113,11 @@ python scripts/create_operator.py lead@example.com --role admin`}
 
       <Section id="business-model" title="Payments and fees">
         <P>
-          AgentMesh processes no payments. Providers price their own machines and publish how customers pay them; customers pay providers
-          directly. The platform holds no balances, takes no commission, charges no subscription, and runs no payment gateway, so there are no
-          payment keys or webhooks to configure. Cost estimates (READY time and tokens at each machine&apos;s prices) are recorded so both sides
-          can see what usage comes to.
+          AgentMesh holds no money. Providers price their own machines; customers buy prepaid credit with a provider by paying the provider
+          directly, through the provider&apos;s own Paystack, Flutterwave or Stripe account (verified by AgentMesh with that account&apos;s API) or
+          by transfer the provider confirms. Priced service needs verified credit, and usage draws it down. The platform has no gateway account,
+          payment keys or webhooks of its own, takes no commission and charges no subscription. Providers&apos; gateway keys are encrypted at
+          rest (AES-256-GCM under <C>DATA_ENCRYPTION_KEY</C>, bound to the provider) and only ever sent to the gateway&apos;s official API host.
         </P>
         <P>
           Databases upgraded from the earlier payment system keep its collections (<C>charges</C>, <C>transactions</C>, <C>wallets</C>,{' '}

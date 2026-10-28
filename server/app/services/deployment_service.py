@@ -18,7 +18,14 @@ from app.documents.reservation import ResourceReservation
 from app.documents.user import Customer, Provider, User
 from app.documents.worker import CommandType
 from app.schemas.deployment import DeploymentCreate, DeploymentUpdate
-from app.services import audit_service, node_pricing_service, placement_service, provider_service, worker_service
+from app.services import (
+    audit_service,
+    credit_service,
+    node_pricing_service,
+    placement_service,
+    provider_service,
+    worker_service,
+)
 from app.services import deployment_lifecycle as lifecycle
 from app.services.catalog_service import (
     DeploymentConfig,
@@ -97,7 +104,9 @@ async def create_deployment(db: Session, deployment_data: DeploymentCreate, user
         )
         providers = {deployment_data.provider_id} if deployment_data.provider_id else None
         try:
-            node, rates = await schedule(db, deployment.id, candidate_req, limits=limits, providers=providers)
+            node, rates = await schedule(
+                db, deployment.id, candidate_req, limits=limits, providers=providers, customer_id=customer.id
+            )
         except NoEligibleNode as exc:
             failures[candidate.runtime] = {
                 "message": exc.evaluation.explain(),
@@ -193,6 +202,7 @@ async def _stop(db: Session, deployment: Deployment, actor: str, message: str) -
         await lifecycle.transition(db, deployment, final, actor=actor, message=message, next_placement_at=None)
         deployment.cleanup_status = "done"
         return
+    await placement_service.abort_migration(db, deployment, actor=actor, reason="the deployment was stopped")
     await placement_service.end_attempt(db, deployment, "stopped")
     await lifecycle.transition(db, deployment, S.STOPPING, actor=actor, message=message)
     if status == S.SCHEDULED and await worker_service.cancel_undelivered(db, deployment.id, CommandType.DEPLOY):
@@ -339,6 +349,16 @@ async def quote(db: Session, body: DeploymentCreate, user_id: uuid.UUID) -> dict
         best_node = ev.eligible[0] if ev.eligible else None
         best = ev.rates[best_node.id] if best_node else None
         provider = await db.get(Provider, best_node.owner_id) if best_node else None
+        credit = None
+        if best_node is not None and best is not None and not best.is_free():
+            have = await credit_service.balance(db, customer.id, best_node.owner_id, best.currency)
+            needed = credit_service.credit_needed(best.hourly(req.cpu_cores, req.ram_mb, req.vram_mb))
+            credit = {
+                "currency": best.currency,
+                "balance": have,
+                "needed": needed,
+                "enough": credit_service.covers(have, best.hourly(req.cpu_cores, req.ram_mb, req.vram_mb)),
+            }
         out.append(
             {
                 "runtime": artifact.runtime,
@@ -349,6 +369,7 @@ async def quote(db: Session, body: DeploymentCreate, user_id: uuid.UUID) -> dict
                 "cheapest": node_pricing_service.rates_out(best),
                 "hourly": (best.hourly(req.cpu_cores, req.ram_mb, req.vram_mb) if best else 0) if best_node else None,
                 "provider": provider_service.card(provider) if provider else None,
+                "credit": credit,
             }
         )
     return {"currency": limits.currency, "by_runtime": out}

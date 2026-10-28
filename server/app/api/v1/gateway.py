@@ -33,6 +33,7 @@ from app.documents.deployment import Deployment
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.usage import UsageRecord
 from app.documents.user import Customer, User
+from app.services import credit_service
 from app.services.api_key_service import API_KEY_PREFIX, resolve_api_key
 from app.services.tunnel import NodeUnavailable, broker
 
@@ -258,6 +259,13 @@ async def _gateway_post(deployment_id: str, path: str, request: Request, db: Ses
         dep = await _resolve_deployment(db, user, api_key, deployment_id)
         _check_path(dep, path, "POST", via_ollama_prefix)
         _require_ready(dep)
+        if dep.priced and dep.customer_id and dep.credit_provider_id and dep.credit_currency:
+            # Priced service only while verified prepaid credit with this machine's provider remains.
+            left = await credit_service.balance(db, dep.customer_id, dep.credit_provider_id, dep.credit_currency)
+            if left <= 0:
+                raise GatewayError(
+                    402, "credit_exhausted", "Your prepaid credit with this provider is used up; top up to continue"
+                )
         principal = f"key:{api_key.id}" if api_key else f"user:{user.id}"
         allowed, retry_after = await limiters.requests.allow(principal, settings.GATEWAY_RATE_LIMIT_PER_MINUTE)
         if not allowed:

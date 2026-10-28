@@ -24,7 +24,7 @@ const FEATURES = [
   {
     icon: HandCoins,
     title: 'Pay providers directly',
-    body: 'Providers publish their own prices and payment terms. You pay them directly; AgentMesh takes no commission and shows itemised cost estimates.',
+    body: 'Providers set their own prices. You buy prepaid credit with them directly, verified by AgentMesh before service starts; no commission, itemised cost estimates.',
   },
   {
     icon: ShieldCheck,

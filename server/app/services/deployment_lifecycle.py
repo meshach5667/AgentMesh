@@ -6,6 +6,8 @@
     SCHEDULED | PROVISIONING | STARTING | UNHEALTHY -> PENDING | NEEDS_ATTENTION   (node failed, no move now)
     PENDING | NEEDS_ATTENTION -> SCHEDULED             (placed on a replacement)
     READY | UNHEALTHY -> PROVISIONING                  (restart on the same node)
+    READY -> NEEDS_ATTENTION                           (paused: prepaid credit used up)
+    READY -> READY on another node                     (planned move completed; recorded by record_node_change)
     any state holding a node -> STOPPING -> STOPPED (was ever READY) | CANCELLED (never READY)
     PENDING | NEEDS_ATTENTION -> STOPPED | CANCELLED   (stopped while holding no node)
     any non-terminal -> FAILED
@@ -34,7 +36,7 @@ TRANSITIONS: dict[S, frozenset[S]] = {
     S.SCHEDULED: frozenset({S.PROVISIONING, S.STARTING, S.READY, S.PENDING, S.NEEDS_ATTENTION, S.STOPPING, S.FAILED}),
     S.PROVISIONING: frozenset({S.SCHEDULED, S.STARTING, S.READY, S.PENDING, S.NEEDS_ATTENTION, S.STOPPING, S.FAILED}),
     S.STARTING: frozenset({S.SCHEDULED, S.READY, S.PENDING, S.NEEDS_ATTENTION, S.STOPPING, S.FAILED}),
-    S.READY: frozenset({S.UNHEALTHY, S.PROVISIONING, S.STOPPING, S.FAILED}),
+    S.READY: frozenset({S.UNHEALTHY, S.PROVISIONING, S.NEEDS_ATTENTION, S.STOPPING, S.FAILED}),
     S.UNHEALTHY: frozenset({S.READY, S.SCHEDULED, S.PROVISIONING, S.PENDING, S.NEEDS_ATTENTION, S.STOPPING, S.FAILED}),
     S.STOPPING: frozenset({S.STOPPED, S.CANCELLED, S.FAILED}),
     S.STOPPED: frozenset(),
@@ -122,6 +124,25 @@ async def record_event(
             message=message,
             node_id=deployment.node_id,
             kind=kind,
+            attempt=attempt,
+        )
+    )
+
+
+async def record_node_change(
+    db: Session, deployment: Deployment, *, actor: str, message: str, attempt: int | None = None
+) -> None:
+    """A serving deployment switched node (planned move). Recorded as READY -> READY with the new node, so READY
+    time after the switch is attributed to the new node."""
+    db.add(
+        DeploymentEvent(
+            deployment_id=deployment.id,
+            from_status=S.READY.value,
+            to_status=S.READY.value,
+            actor=actor,
+            message=message,
+            node_id=deployment.node_id,
+            kind="migrated",
             attempt=attempt,
         )
     )

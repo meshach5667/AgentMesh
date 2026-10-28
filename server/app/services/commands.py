@@ -6,7 +6,9 @@ from app.core.timeutil import utcnow
 from app.documents.worker import CommandStatus, CommandType, NodeCommand
 
 
-async def enqueue_command(db: Session, node_id, deployment_id, type_: CommandType, payload: dict) -> NodeCommand:
+async def enqueue_command(
+    db: Session, node_id, deployment_id, type_: CommandType, payload: dict, not_before=None
+) -> NodeCommand:
     """Queue a command. A STOP is not duplicated while an identical one is outstanding. Does not commit."""
     if type_ == CommandType.STOP:
         existing = await db.find_one(
@@ -28,6 +30,7 @@ async def enqueue_command(db: Session, node_id, deployment_id, type_: CommandTyp
         status=CommandStatus.PENDING.value,
         attempts=0,
         max_attempts=settings.COMMAND_MAX_ATTEMPTS,
+        not_before=not_before,
     )
     db.add(cmd)
     return cmd

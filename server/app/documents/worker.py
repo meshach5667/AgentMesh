@@ -52,6 +52,8 @@ class NodeCommand(Doc):
     attempts: int = 0
     max_attempts: int = 3
     lease_expires_at: datetime | None = None
+    # Not delivered before this time (e.g. the STOP of an old copy after a planned move lets in-flight requests end).
+    not_before: datetime | None = None
     error: str | None = None
     # Signed authorization of the current lease (app.core.signing): its nonce must accompany the ack.
     auth_nonce: str | None = None

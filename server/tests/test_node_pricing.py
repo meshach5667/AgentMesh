@@ -10,6 +10,7 @@ import pytest
 from app.core.timeutil import utcnow
 from app.documents import AuditLog, CostEstimate, NodePrice, UsageRecord
 from app.services import cost_service
+from tests.conftest import give_credit
 from tests.test_cost_estimates import _set_ready_at
 
 
@@ -74,7 +75,9 @@ async def test_placement_picks_the_cheapest_machine(client, db, enroll_node, mak
     await _set_price(client, dear, cpu="9")
     await _set_price(client, cheap, cpu="3")
     await _set_price(client, middle, cpu="5")
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    for n in (dear, cheap, middle):
+        await give_credit(db, customer_user, n)
 
     quote = await client.post("/api/v1/deployments/quote", json={"model_id": str(ollama_model.id)}, headers=customer)
     assert quote.status_code == 200, quote.text
@@ -101,7 +104,9 @@ async def test_price_limits_and_currency_are_respected(client, db, enroll_node, 
     ngn, usd = await enroll_node(), await enroll_node()
     await _set_price(client, ngn, cpu="50")  # 70 NGN/h for this reservation
     await _set_price(client, usd, cpu="1", currency="USD")
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    await give_credit(db, customer_user, ngn)
+    await give_credit(db, customer_user, usd, currency="USD")
 
     refused = await _deploy(client, customer, ollama_model, max_hourly_price="30")
     assert refused.status_code == 503
@@ -134,7 +139,8 @@ async def test_estimates_never_exceed_the_placement_rates(client, db, enroll_nod
         NodePrice, {"node_id": uuid.UUID(node["node_id"])}, {"$set": {"effective_from": utcnow() - timedelta(days=1)}}
     )
     await db.commit()
-    _, customer = await make_user("customer")
+    customer_user, customer = await make_user("customer")
+    await give_credit(db, customer_user, node)
     dep = (await _deploy(client, customer, ollama_model)).json()
     await client.post(
         f"/api/v1/worker/deployments/{dep['id']}/status", json={"state": "READY"}, headers=node["headers"]

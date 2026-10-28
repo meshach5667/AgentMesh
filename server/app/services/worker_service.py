@@ -26,7 +26,7 @@ from app.documents.model import ModelArtifact
 from app.documents.node import BLOCKED_NODE_STATUSES, Node, NodeHardware, NodeStatus
 from app.documents.node_session import NodeChallenge, NodeSession
 from app.documents.user import Provider
-from app.documents.worker import CommandStatus, NodeCommand, NodeEnrollmentToken
+from app.documents.worker import CommandStatus, CommandType, NodeCommand, NodeEnrollmentToken
 from app.schemas.worker import (
     Allocation,
     CommandOut,
@@ -381,7 +381,12 @@ async def heartbeat(db: Session, node: Node, req: HeartbeatRequest) -> Heartbeat
     node.last_metrics = {k: float(v) for k, v in list(req.metrics.items())[:32]}
     _apply_capabilities(node, req.hardware, req.allocation, req.runtimes)
     node.worker_available = req.available
+    was_reason = node.worker_unavailable_reason
     node.worker_unavailable_reason = None if req.available else (req.unavailable_reason or "paused")
+    if not req.available and req.unavailable_reason == "draining" and was_reason != req.unavailable_reason:
+        # The provider is taking the machine out of service: move its serving deployments to other nodes without
+        # interrupting them (the worker keeps serving them during its drain grace period).
+        await placement_service.evacuate_node(db, node, actor="system", reason="the provider is draining the node")
 
     stop: list[uuid.UUID] = []
     reported = {r.deployment_id: r for r in req.deployments}
@@ -390,6 +395,8 @@ async def heartbeat(db: Session, node: Node, req: HeartbeatRequest) -> Heartbeat
         known = {d.id: d for d in rows}
         for dep_id, report in reported.items():
             dep = known.get(dep_id)
+            if dep is not None and dep.migrating_node_id == node.id and dep.deleted_at is None:
+                continue  # the standby copy of a planned move, warming up here
             if dep is None or dep.node_id != node.id or dep.deleted_at is not None:
                 stop.append(dep_id)
                 continue
@@ -434,9 +441,14 @@ async def _lease_once(db: Session, node: Node, max_commands: int) -> list[Comman
         NodeCommand,
         {
             "node_id": node.id,
-            "$or": [
-                {"status": CommandStatus.PENDING.value},
-                {"status": CommandStatus.LEASED.value, "lease_expires_at": {"$lt": now}},
+            "$and": [
+                {
+                    "$or": [
+                        {"status": CommandStatus.PENDING.value},
+                        {"status": CommandStatus.LEASED.value, "lease_expires_at": {"$lt": now}},
+                    ]
+                },
+                {"$or": [{"not_before": None}, {"not_before": {"$lte": now}}]},
             ],
             "$expr": {"$lt": ["$attempts", "$max_attempts"]},
         },
@@ -518,7 +530,9 @@ async def ack_command(
     cmd.completed_at = now
     if status == "failed" and cmd.deployment_id:
         dep = await db.get(Deployment, cmd.deployment_id)
-        if dep and S(dep.status) not in lifecycle.TERMINAL and dep.node_id == node.id:
+        if dep and dep.migrating_node_id == node.id and cmd.type == CommandType.DEPLOY.value:
+            await placement_service.abort_migration(db, dep, actor="worker", reason=error or "the new node refused it")
+        elif dep and S(dep.status) not in lifecycle.TERMINAL and dep.node_id == node.id:
             await placement_service.fail_or_reschedule(
                 db,
                 dep,
@@ -540,8 +554,29 @@ def deployment_endpoint(dep: Deployment) -> str:
 # --- Deployment status reports -------------------------------------------------------------------------
 
 
+async def _report_migration(db: Session, node: Node, dep: Deployment, report: DeploymentStatusReport) -> dict:
+    """Progress of the standby copy of a planned move, from its target node. READY switches traffic to it; a failure
+    cancels the move and the deployment keeps serving where it was."""
+    if report.attempt_id is not None and report.attempt_id != dep.migrating_attempt_id:
+        raise HTTPException(status_code=409, detail="This execution attempt has been superseded")
+    if report.state == "READY":
+        if report.model_digest:
+            dep.model_digest = report.model_digest
+        await placement_service.complete_migration(db, dep)
+    elif report.state in ("FAILED", "STOPPED"):
+        await placement_service.abort_migration(
+            db, dep, actor="worker", reason=f"the new node reported {report.error_code or report.state}"
+        )
+    elif report.message:
+        await lifecycle.record_event(db, dep, actor="worker", message=f"Planned move: {report.message}")
+    await db.commit()
+    return {"status": dep.status}
+
+
 async def report_deployment_status(db: Session, node: Node, deployment_id: str, report: DeploymentStatusReport) -> dict:
     dep = await db.get(Deployment, parse_uuid(deployment_id, "Deployment"))
+    if dep is not None and dep.migrating_node_id == node.id and dep.node_id != node.id:
+        return await _report_migration(db, node, dep, report)
     if dep is None or dep.node_id != node.id:
         raise HTTPException(status_code=404, detail="Deployment not found")
     if report.attempt_id is not None and dep.attempt_id is not None and report.attempt_id != dep.attempt_id:

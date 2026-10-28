@@ -65,6 +65,15 @@ class Deployment(Doc):
     failover_policy: str = "any_provider"
     # Current execution attempt (see DeploymentAttempt). Worker reports naming another attempt are stale.
     attempt_id: uuid.UUID | None = None
+    # A planned move in progress (make-before-break): a standby attempt starting on another node while this one keeps
+    # serving. Traffic switches when the standby is READY; the old copy is stopped after MIGRATION_DRAIN_SECONDS.
+    migrating_attempt_id: uuid.UUID | None = None
+    migrating_node_id: uuid.UUID | None = None
+    migration_started_at: datetime | None = None
+    # Prepaid credit this deployment draws on: set from its current placement (None/False when its machine is free).
+    priced: bool = False
+    credit_provider_id: uuid.UUID | None = None
+    credit_currency: str | None = None
     # While PENDING: when placement is retried next, when waiting began, and how many retries were made.
     next_placement_at: datetime | None = None
     pending_since: datetime | None = None
@@ -98,9 +107,11 @@ class DeploymentAttempt(Doc):
     node_id: uuid.UUID
     provider_id: uuid.UUID | None = None
     active: bool = True
-    # assigned -> running (READY at least once) -> ended
+    # assigned -> running (READY at least once) -> ended; "standby" while starting as the target of a planned move
+    # (not active, so it never counts as the deployment's current attempt until the switch).
     state: str = "assigned"
-    # How it ended: node_failed, workload_failed, stopped, superseded
+    # How it ended: node_failed, workload_failed, stopped, superseded (replaced by a planned move), cancelled (the
+    # standby of a planned move that did not complete)
     outcome: str | None = None
     error_code: str | None = None
     error_message: str | None = None

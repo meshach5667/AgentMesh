@@ -1,5 +1,5 @@
 // Mirrors server/app/schemas/billing.py and provider.py. Decimal amounts arrive as strings.
-// AgentMesh processes no payments: customers pay providers directly. Amounts here are providers' published prices
+// Customers pay providers directly (AgentMesh verifies, never holds, the money). Amounts here are providers' published prices
 // and estimates of what usage costs at them.
 
 /** A machine's price list, in the provider's chosen currency. */
@@ -101,6 +101,8 @@ export interface ProviderOffer {
   prices: (Partial<Prices> & { currency: string })[];
   payment_methods: PaymentMethod[];
   accepts_payment_arrangement: boolean;
+  /** Gateways the provider connected: payments there are verified automatically. */
+  gateways: GatewayName[];
 }
 
 export interface ProviderDetail extends ProviderOffer {
@@ -118,6 +120,8 @@ export interface RuntimeQuote {
   /** Hourly price of the reservation there; null when no machine fits. */
   hourly: string | null;
   provider: ProviderCard | null;
+  /** On a priced machine: your prepaid credit with its provider and what placement needs. */
+  credit: { currency: string; balance: string; needed: string; enough: boolean } | null;
 }
 
 export interface Quote {
@@ -166,4 +170,51 @@ export interface CostSummary {
   since: string;
   totals: { currency: string; amount: string; resource_amount: string; token_amount: string; ready_hours: number }[];
   by_day: { day: string; currency: string; amount: string; deployments: number }[];
+}
+
+export type GatewayName = 'paystack' | 'flutterwave' | 'stripe';
+
+export const GATEWAY_LABEL: Record<GatewayName, string> = { paystack: 'Paystack', flutterwave: 'Flutterwave', stripe: 'Stripe' };
+
+/** A provider's own gateway account (the key itself is never returned). */
+export interface ConnectedGateway {
+  gateway: GatewayName;
+  key_hint: string;
+  mode: 'test' | 'live';
+  verified_at: string | null;
+}
+
+export type CreditPaymentState = 'PENDING' | 'VERIFIED' | 'FAILED' | 'REJECTED' | 'REVIEW';
+
+/** A payment that funds prepaid credit with a provider. Money goes to the provider, never to AgentMesh. */
+export interface CreditPayment {
+  id: string;
+  provider_id: string;
+  customer_ref: string;
+  method: 'gateway' | 'manual';
+  gateway: GatewayName | null;
+  amount: string;
+  currency: string;
+  reference: string;
+  checkout_url: string | null;
+  state: CreditPaymentState;
+  gateway_status: string | null;
+  note: string | null;
+  reason: string | null;
+  verified_at: string | null;
+  created_at: string;
+}
+
+export interface CreditBalanceRow {
+  provider_id: string;
+  provider: string;
+  currency: string;
+  balance: string;
+  /** Set for providers: which customer holds this balance. */
+  customer_ref: string | null;
+}
+
+export interface Credits {
+  balances: CreditBalanceRow[];
+  payments: CreditPayment[];
 }

@@ -34,6 +34,7 @@ from app.documents.deployment import Deployment, DeploymentAttempt
 from app.documents.deployment import DeploymentStatus as S
 from app.documents.model import Model, ModelArtifact
 from app.documents.node import Node, NodeStatus
+from app.documents.reservation import ResourceReservation
 from app.documents.worker import CommandType
 from app.services import audit_service, node_pricing_service
 from app.services import deployment_lifecycle as lifecycle
@@ -48,10 +49,12 @@ from app.services.commands import cancel_undelivered, enqueue_command
 from app.services.node_pricing_service import Rates
 from app.services.scheduler_service import (
     REASON_CURRENCY,
+    REASON_NO_CREDIT,
     REASON_PRICE,
     NoEligibleNode,
     node_is_fresh,
     release_reservation,
+    release_standby,
     schedule,
 )
 
@@ -141,7 +144,16 @@ async def start_attempt(db: Session, dep: Deployment, node: Node, rates: Rates |
     db.add(attempt)
     await db.flush()
     dep.attempt_id = attempt.id
+    _set_credit_source(dep, node, rates)
     return attempt
+
+
+def _set_credit_source(dep: Deployment, node: Node, rates: Rates | None) -> None:
+    """Which provider's prepaid credit the deployment draws on at its current placement (none on a free machine)."""
+    priced = rates is not None and not rates.is_free()
+    dep.priced = priced
+    dep.credit_provider_id = node.owner_id if priced else None
+    dep.credit_currency = rates.currency if priced and rates is not None else None
 
 
 async def current_attempt(db: Session, dep: Deployment) -> DeploymentAttempt | None:
@@ -251,12 +263,21 @@ async def place(db: Session, dep: Deployment, *, actor: str, note: str, last: De
         vram_mb=req.vram_mb,
     )
     node, rates = await schedule(
-        db, dep.id, req, exclude=await _excluded(dep), limits=limits, providers=await _providers(db, dep, last)
+        db,
+        dep.id,
+        req,
+        exclude=await _excluded(dep),
+        limits=limits,
+        providers=await _providers(db, dep, last),
+        customer_id=dep.customer_id,
     )
     await start_attempt(db, dep, node, rates)
     fields: dict[str, Any] = {
         "node_id": node.id,
         "attempt_id": dep.attempt_id,
+        "priced": dep.priced,
+        "credit_provider_id": dep.credit_provider_id,
+        "credit_currency": dep.credit_currency,
         "schedule_attempts": dep.schedule_attempts + 1,
         "next_placement_at": None,
         "pending_since": None,
@@ -286,8 +307,25 @@ def _needs_price_approval(dep: Deployment, exc: NoEligibleNode) -> bool:
 
 
 async def _wait(db: Session, dep: Deployment, *, actor: str, exc: NoEligibleNode, number: int) -> None:
-    """No node fits now: wait for approval (dearer nodes only) or retry later (PENDING). Does not commit."""
+    """No node fits now: wait for approval (dearer nodes only), for prepaid credit, or retry later (PENDING).
+    Does not commit."""
     now = utcnow()
+    if exc.evaluation.reasons.get(REASON_NO_CREDIT, 0) > 0 and not _needs_price_approval(dep, exc):
+        await lifecycle.transition(
+            db,
+            dep,
+            S.NEEDS_ATTENTION,
+            actor=actor,
+            message=(
+                "The machines that could run it need prepaid credit with their provider. Buy credit with a provider; "
+                "the deployment is placed automatically once the payment is verified."
+            ),
+            error_code="CREDIT_EXHAUSTED",
+            kind="credit_required",
+            attempt=number,
+            node_id=None,
+        )
+        return
     if _needs_price_approval(dep, exc):
         message = (
             "Only machines that cost more than the previous placement are available. Approve a higher price "
@@ -346,6 +384,7 @@ async def fail_or_reschedule(
     status = S(dep.status)
     if status in lifecycle.TERMINAL or status in (S.PENDING, S.NEEDS_ATTENTION, S.STOPPING):
         return False
+    await abort_migration(db, dep, actor=actor, reason="the deployment's current node failed")
     old_node = dep.node_id
     await release_reservation(db, dep.id)
     node_fault = code in RESCHEDULABLE_CODES
@@ -475,6 +514,213 @@ async def retry_placement(db: Session, dep: Deployment, *, actor: str) -> bool:
         await _wait(db, dep, actor=actor, exc=exc, number=number)
         return False
     return True
+
+
+# --- Planned moves (make-before-break) ---------------------------------------------------------------------
+
+
+async def start_migration(db: Session, dep: Deployment, *, actor: str, reason: str) -> Node | None:
+    """Start moving a serving deployment to another node without interrupting it: reserve capacity there and start a
+    standby attempt while the current node keeps serving. Traffic switches when the standby reports READY
+    (complete_migration). Returns the target node, or None when no move was started (not serving, already moving,
+    the customer chose manual failover, or no eligible node). Does not commit."""
+    if S(dep.status) != S.READY or dep.migrating_attempt_id is not None or dep.failover_policy == "manual":
+        return None
+    current = await current_attempt(db, dep)
+    req = await requirements_for(db, dep)
+    source = worker_source(await artifact_for(db, dep))
+    replacing = Rates.from_snapshot(current.rates) if current is not None and current.rates else None
+    limits = node_pricing_service.limits_for(
+        dep.currency,
+        dep.max_hourly_price,
+        dep.max_token_price,
+        replacing=replacing,
+        cpu_cores=req.cpu_cores,
+        ram_mb=req.ram_mb,
+        vram_mb=req.vram_mb,
+    )
+    exclude = await _excluded(dep)
+    if dep.node_id:
+        exclude.add(dep.node_id)
+    try:
+        node, rates = await schedule(
+            db,
+            dep.id,
+            req,
+            exclude=exclude,
+            limits=limits,
+            providers=await _providers(db, dep, current),
+            customer_id=dep.customer_id,
+            standby=True,
+        )
+    except NoEligibleNode as exc:
+        await lifecycle.record_event(
+            db,
+            dep,
+            actor=actor,
+            message=f"Could not start a planned move ({reason}): {exc.evaluation.explain()} It keeps running here.",
+            kind="migration_skipped",
+        )
+        return None
+    newest = await db.find_one(DeploymentAttempt, {"deployment_id": dep.id}, sort=[("number", -1)])
+    attempt = DeploymentAttempt(
+        deployment_id=dep.id,
+        number=(newest.number if newest else 0) + 1,
+        node_id=node.id,
+        provider_id=node.owner_id,
+        active=False,
+        state="standby",
+        rates=(rates or Rates.free()).snapshot(),
+    )
+    db.add(attempt)
+    await db.flush()
+    now = utcnow()
+    fields = {"migrating_attempt_id": attempt.id, "migrating_node_id": node.id, "migration_started_at": now}
+    if not await db.update_one(
+        Deployment, {"_id": dep.id, "status": S.READY.value, "migrating_attempt_id": None}, {"$set": fields}
+    ):
+        raise RuntimeError(f"Deployment {dep.id} changed state concurrently")
+    for k, v in fields.items():
+        setattr(dep, k, v)
+    payload = deploy_payload(dep, req, source) | {"attempt_id": str(attempt.id)}
+    await enqueue_command(db, node.id, dep.id, CommandType.DEPLOY, payload)
+    await lifecycle.record_event(
+        db,
+        dep,
+        actor=actor,
+        message=f"Planned move started ({reason}): starting on another node while this one keeps serving",
+        kind="migration_started",
+        attempt=attempt.number,
+    )
+    return node
+
+
+async def complete_migration(db: Session, dep: Deployment, actor: str = "worker") -> bool:
+    """The standby is READY: switch traffic to it, end the old attempt, and stop the old copy after
+    MIGRATION_DRAIN_SECONDS so requests in flight there can finish. Does not commit."""
+    if dep.migrating_attempt_id is None or S(dep.status) not in (S.READY, S.UNHEALTHY):
+        return False
+    target = await db.get(DeploymentAttempt, dep.migrating_attempt_id)
+    node = await db.get(Node, dep.migrating_node_id) if dep.migrating_node_id else None
+    if target is None or node is None:
+        return False
+    old_node = dep.node_id
+    await release_reservation(db, dep.id)
+    await db.update_one(
+        ResourceReservation, {"deployment_id": dep.id, "status": "STANDBY"}, {"$set": {"status": "ACTIVE"}}
+    )
+    await end_attempt(db, dep, "superseded", None, "Replaced by a planned move")
+    now = utcnow()
+    await db.update_one(
+        DeploymentAttempt,
+        {"_id": target.id},
+        {"$set": {"active": True, "state": "running", "ready_at": now}},
+    )
+    rates = Rates.from_snapshot(target.rates) if target.rates else None
+    _set_credit_source(dep, node, rates)
+    fields: dict[str, Any] = {
+        "node_id": node.id,
+        "attempt_id": target.id,
+        "migrating_attempt_id": None,
+        "migrating_node_id": None,
+        "migration_started_at": None,
+        "schedule_attempts": dep.schedule_attempts + 1,
+        "priced": dep.priced,
+        "credit_provider_id": dep.credit_provider_id,
+        "credit_currency": dep.credit_currency,
+        "last_health_at": now,
+    }
+    await db.update_one(Deployment, {"_id": dep.id}, {"$set": fields})
+    for k, v in fields.items():
+        setattr(dep, k, v)
+    message = "Planned move complete: now serving on the new node"
+    if S(dep.status) == S.UNHEALTHY:
+        await lifecycle.transition(
+            db, dep, S.READY, actor=actor, message=message, kind="migrated", attempt=target.number
+        )
+    else:
+        await lifecycle.record_node_change(db, dep, actor=actor, message=message, attempt=target.number)
+    if old_node:
+        await enqueue_command(
+            db,
+            old_node,
+            dep.id,
+            CommandType.STOP,
+            {"deployment_id": str(dep.id)},
+            not_before=now + timedelta(seconds=settings.MIGRATION_DRAIN_SECONDS),
+        )
+    await db.update_one(Node, {"_id": node.id}, {"$set": {"consecutive_failures": 0}})
+    audit_service.record(
+        db,
+        actor_id=None,
+        action="deployment.migrated",
+        resource_type="deployment",
+        resource_id=dep.id,
+        details={"from_node": str(old_node) if old_node else None, "to_node": str(node.id)},
+    )
+    return True
+
+
+async def abort_migration(db: Session, dep: Deployment, *, actor: str, reason: str) -> bool:
+    """Cancel a planned move in progress: release the standby's capacity, end its attempt and stop it there. The
+    deployment keeps running where it was. Does not commit."""
+    if dep.migrating_attempt_id is None:
+        return False
+    target_node = dep.migrating_node_id
+    await release_standby(db, dep.id)
+    await db.update_one(
+        DeploymentAttempt,
+        {"_id": dep.migrating_attempt_id, "state": "standby"},
+        {"$set": {"state": "ended", "outcome": "cancelled", "error_message": reason[:500], "ended_at": utcnow()}},
+    )
+    if target_node:
+        if not await cancel_undelivered(db, dep.id, CommandType.DEPLOY):
+            await enqueue_command(db, target_node, dep.id, CommandType.STOP, {"deployment_id": str(dep.id)})
+    fields = {"migrating_attempt_id": None, "migrating_node_id": None, "migration_started_at": None}
+    await db.update_one(Deployment, {"_id": dep.id}, {"$set": fields})
+    for k, v in fields.items():
+        setattr(dep, k, v)
+    await lifecycle.record_event(
+        db, dep, actor=actor, message=f"Planned move cancelled: {reason}", kind="migration_failed"
+    )
+    return True
+
+
+async def evacuate_node(db: Session, node: Node, *, actor: str, reason: str) -> dict[str, int]:
+    """Move every serving deployment off a node without interrupting them (where a replacement exists). Does not
+    commit."""
+    moving = staying = 0
+    for dep in await db.find(Deployment, {"node_id": node.id, "status": S.READY.value}):
+        if dep.migrating_attempt_id is not None or await start_migration(db, dep, actor=actor, reason=reason):
+            moving += 1
+        else:
+            staying += 1
+    return {"moving": moving, "staying": staying}
+
+
+async def pause_for_credit(db: Session, dep: Deployment) -> bool:
+    """Stop serving a deployment whose prepaid credit with its provider is used up. It waits (NEEDS_ATTENTION,
+    CREDIT_EXHAUSTED) and is placed again automatically once a top-up is verified. Does not commit."""
+    status = S(dep.status)
+    if status not in (S.SCHEDULED, S.PROVISIONING, S.STARTING, S.READY, S.UNHEALTHY):
+        return False
+    await abort_migration(db, dep, actor="system", reason="prepaid credit is used up")
+    old_node = dep.node_id
+    await release_reservation(db, dep.id)
+    await end_attempt(db, dep, "stopped", "CREDIT_EXHAUSTED", "Prepaid credit with this provider is used up")
+    if old_node:
+        await _stop_on_old_node(db, dep, old_node)
+    return await lifecycle.transition(
+        db,
+        dep,
+        S.NEEDS_ATTENTION,
+        actor="system",
+        message="Paused: your prepaid credit with this provider is used up. Top up to resume automatically.",
+        error_code="CREDIT_EXHAUSTED",
+        kind="credit_exhausted",
+        node_id=None,
+        priced=False,
+    )
 
 
 async def restart(db: Session, dep: Deployment) -> None:

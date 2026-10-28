@@ -6,7 +6,7 @@ from app.documents.audit import AuditLog
 from app.documents.user import UserRole
 from app.schemas.billing import DefaultPricesIn, DefaultPricesOut, NodePricingOut, Prices
 from app.schemas.node import EnrollmentTokenCreate, EnrollmentTokenOut, NodeCreate, NodeOut, NodeUpdate
-from app.services import node_pricing_service, node_service, worker_service
+from app.services import node_pricing_service, node_service, placement_service, worker_service
 
 router = APIRouter()
 
@@ -97,6 +97,21 @@ async def set_node_pricing(
     node = await node_service.get_node_for_user(db, id, current_user)
     await node_pricing_service.set_node_price(db, node, req.model_dump(), current_user)
     return await node_pricing_service.node_pricing(db, node)
+
+
+@router.post("/{id}/evacuate")
+async def evacuate_node(id: str, db: Session = Depends(get_db), current_user=Depends(require_roles(UserRole.provider))):
+    """Take this machine out of service without interrupting customers: stop new placements and move each serving
+    deployment to another node (the replacement starts first; traffic switches when it is ready; the copy here is
+    stopped afterwards). Deployments with no eligible replacement, or whose owner chose manual failover, keep running
+    here."""
+    node = await node_service.get_node_for_user(db, id, current_user)
+    node.accepting_workloads = False
+    result = await placement_service.evacuate_node(
+        db, node, actor="provider", reason="the provider is evacuating the node"
+    )
+    await db.commit()
+    return result
 
 
 @router.post("/{id}/revoke", response_model=NodeOut)

@@ -22,7 +22,7 @@ export function PricingSection() {
           <ul className="mt-6 space-y-3 text-muted-foreground">
             <li>Every machine has its own price list, in its provider&apos;s currency: per CPU core-hour, per GB-hour of memory and GPU memory, and per million tokens.</li>
             <li>Your deployment goes to the cheapest machine that fits, within your price limits, and you only owe for time it is ready, plus tokens.</li>
-            <li>You pay the provider directly, using the payment arrangement they publish. AgentMesh takes no commission, charges no fees and holds no money.</li>
+            <li>You buy prepaid credit with a provider, paying them directly through their own Paystack, Flutterwave or Stripe account or by transfer. AgentMesh verifies the payment before their machines serve you, takes no commission, charges no fees and never holds the money.</li>
             <li>Joining is free for customers and providers alike.</li>
           </ul>
         </div>

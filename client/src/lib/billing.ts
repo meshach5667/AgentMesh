@@ -40,3 +40,16 @@ export function safeExternalUrl(raw: string | null | undefined): string | null {
     return null;
   }
 }
+
+const CHECKOUT_HOSTS = ['checkout.paystack.com', 'checkout.flutterwave.com', 'checkout.stripe.com'];
+
+/** Only ever send customers to a gateway's own hosted checkout page (never to a URL from anywhere else). */
+export function isGatewayCheckout(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && CHECKOUT_HOSTS.includes(u.hostname);
+  } catch {
+    return false;
+  }
+}

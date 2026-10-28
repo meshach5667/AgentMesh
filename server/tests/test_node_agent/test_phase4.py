@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import plistlib
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -80,14 +81,29 @@ async def test_pause_reports_unavailable_but_keeps_workloads(worker):
     assert DEP in w.workloads  # running work continues
 
 
-async def test_drain_stops_workloads_so_they_move(worker):
-    w = worker()
+async def test_drain_without_grace_stops_workloads_so_they_move(worker):
+    w = worker(DRAIN_GRACE_SECONDS=0)
     await w.handle_command(deploy_cmd())
     await _settle(w)
     w.state.set_control(paused=True, draining=True)
     await w.heartbeat_once()
     assert DEP not in w.workloads and w.runtime.removed == [DEP]
     assert w.client.reports[-1] == (DEP, "STOPPED", "NODE_UNAVAILABLE")
+
+
+async def test_drain_keeps_serving_during_the_grace_then_stops(worker, monkeypatch):
+    """The control plane moves the deployment while the worker keeps serving; leftovers stop after the grace."""
+    w = worker(DRAIN_GRACE_SECONDS=60)
+    await w.handle_command(deploy_cmd())
+    await _settle(w)
+    w.state.set_control(paused=True, draining=True)
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    await w.heartbeat_once()
+    assert DEP in w.workloads and w.runtime.removed == []  # still serving while it is being moved
+    clock[0] += 61
+    await w.heartbeat_once()
+    assert DEP not in w.workloads and w.runtime.removed == [DEP]
 
 
 async def test_deploy_while_paused_is_handed_back(worker):

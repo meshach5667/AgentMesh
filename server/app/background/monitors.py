@@ -35,6 +35,8 @@ async def _fail(db, dep: Deployment, code: str, message: str, *, cleanup: bool) 
 async def handle_node_loss(db, node: Node, reason: str) -> None:
     """A node went away. Deployments still provisioning there move immediately; serving deployments become
     UNHEALTHY and move only if the node does not come back within UNHEALTHY_GRACE_SECONDS. Does not commit."""
+    for dep in await db.find(Deployment, {"migrating_node_id": node.id}):
+        await placement_service.abort_migration(db, dep, actor="system", reason="the new node went away")
     deps = await db.find(Deployment, {"node_id": node.id, "status": {"$in": [*PROVISIONING_STATES, S.READY.value]}})
     for dep in deps:
         if dep.status == S.READY.value:
@@ -157,6 +159,14 @@ async def run_deployment_timeouts(now: datetime | None = None) -> int:
                     await release_reservation(db, dep.id)
                     changed += 1
 
+        stuck = await db.find(
+            Deployment,
+            {"migration_started_at": {"$lt": now - timedelta(seconds=settings.PROVISION_MAX_SECONDS)}},
+        )
+        for dep in stuck:
+            await placement_service.abort_migration(db, dep, actor="system", reason="the new node took too long")
+            changed += 1
+
         unhealthy = await db.find(Deployment, {"status": S.UNHEALTHY.value})
         for dep in unhealthy:
             if now - (dep.updated_at or dep.created_at) > timedelta(seconds=settings.UNHEALTHY_GRACE_SECONDS):
@@ -185,7 +195,11 @@ async def run_command_leases(now: datetime | None = None) -> int:
             cmd.completed_at = now
             if cmd.type == CommandType.DEPLOY.value and cmd.deployment_id:
                 dep = await db.get(Deployment, cmd.deployment_id)
-                if dep and dep.status in PROVISIONING_STATES:
+                if dep and dep.migrating_node_id == cmd.node_id:
+                    await placement_service.abort_migration(
+                        db, dep, actor="system", reason="the new node did not pick up the deployment"
+                    )
+                elif dep and dep.status in PROVISIONING_STATES:
                     await _fail(
                         db, dep, "NODE_UNRESPONSIVE", "The node did not acknowledge the deployment", cleanup=False
                     )
@@ -211,7 +225,7 @@ RETENTION_EVERY_SECONDS = 3600
 
 
 async def monitor_loop(redis=None) -> None:
-    from app.services import cost_service, retention_service
+    from app.services import cost_service, credit_service, retention_service
     from app.services.ai import workflow as ai_workflow
 
     owner = uuid.uuid4().hex
@@ -229,6 +243,7 @@ async def monitor_loop(redis=None) -> None:
             run_command_leases,
             run_deployment_timeouts,
             run_pending_placements,
+            credit_service.run_pending,
             ai_workflow.run_due,  # deterministic steps; needs no inference machine to be online
         ]
         now = time.monotonic()

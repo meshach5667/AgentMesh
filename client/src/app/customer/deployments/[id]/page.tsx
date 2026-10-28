@@ -25,6 +25,7 @@ import {
 } from '@/hooks/useDeployments';
 import { useModel } from '@/hooks/useModels';
 import { useEstimates } from '@/hooks/useBilling';
+import { useCredits } from '@/hooks/useCredits';
 import { EstimatesTable } from '@/components/billing/EstimatesTable';
 import { RecoveryCard } from '@/components/deployments/RecoveryCard';
 import { PaymentArrangement } from '@/components/providers/PaymentArrangement';
@@ -240,13 +241,16 @@ function CostsCard({
 }) {
   const rates = pricing?.rates;
   const provider = pricing?.provider;
+  const credits = useCredits();
+  const credit = provider && rates ? credits.data?.balances.find((b) => b.provider_id === provider.id && b.currency === rates.currency) : undefined;
   return (
     <Card>
       <CardHeader>
         <CardTitle>Cost and payment</CardTitle>
         <CardDescription>
-          Estimates at the provider&apos;s published prices, from READY time and runtime-reported tokens. You pay the
-          provider directly; AgentMesh processes no payments.
+          Estimates at the provider&apos;s published prices, from READY time and runtime-reported tokens. Priced machines
+          serve you while you hold verified prepaid credit with their provider; usage draws it down. You pay the
+          provider directly; AgentMesh verifies payments and never holds your money.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -262,6 +266,16 @@ function CostsCard({
             <Field label="Tokens (per million)">
               {rates ? `${money(rates.input_tokens_per_million, rates.currency)} in · ${money(rates.output_tokens_per_million, rates.currency)} out` : '—'}
             </Field>
+            {rates && provider && (
+              <Field label={`Your credit with ${provider.display_name}`}>
+                <span className={credit && Number(credit.balance) > 0 ? '' : 'text-destructive'}>
+                  {money(credit?.balance ?? 0, rates.currency)}
+                </span>{' '}
+                <Link href="/customer/credits" className="text-xs underline underline-offset-4">
+                  Buy credit
+                </Link>
+              </Field>
+            )}
             <p className="text-xs text-muted-foreground sm:col-span-2">
               You are never estimated above the prices in force when the deployment was placed on this machine; if the
               provider lowers them, the lower price applies.

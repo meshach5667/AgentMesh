@@ -8,9 +8,10 @@ from decimal import Decimal
 import pytest
 
 from app.core.timeutil import utcnow
-from app.documents import DOCUMENTS, CostEstimate, Deployment, DeploymentEvent, NodePrice, UsageRecord
+from app.documents import DOCUMENTS, CostEstimate, CreditEntry, Deployment, DeploymentEvent, NodePrice, UsageRecord
 from app.services import cost_service
 from app.services.cost_service import Interval, ready_intervals
+from tests.conftest import give_credit
 
 PRICES = {
     "currency": "NGN",
@@ -34,11 +35,15 @@ async def _price_node(client, db, node, **over):
     await db.commit()
 
 
-async def _ready_deployment(client, db, enroll_node, make_user, model, *, provider=None, priced=True, **price):
+async def _ready_deployment(
+    client, db, enroll_node, make_user, model, *, provider=None, priced=True, credit="1000000", **price
+):
     node = await enroll_node(provider=provider)
     if priced:
         await _price_node(client, db, node, **price)
     customer_user, customer = await make_user("customer")
+    if priced and credit:
+        await give_credit(db, customer_user, node, credit)
     resp = await client.post("/api/v1/deployments", json={"model_id": str(model.id)}, headers=customer)
     assert resp.status_code == 201, resp.text
     dep = resp.json()
@@ -182,18 +187,54 @@ async def test_unhealthy_time_is_not_counted(client, db, enroll_node, make_user,
     assert est.ready_seconds == pytest.approx(900, abs=1)
 
 
-async def test_deploying_never_needs_a_balance_and_nothing_is_stopped_for_funds(
+async def test_priced_service_needs_verified_credit_which_usage_draws_down(
     client, db, enroll_node, make_user, ollama_model
 ):
-    """Payment is arranged with the provider: a priced machine takes a deployment from a customer with no balance,
-    and a large estimate never stops it."""
-    dep, *_ = await _ready_deployment(client, db, enroll_node, make_user, ollama_model, cpu_core_hour="100000")
-    start = utcnow() - timedelta(hours=3)
+    """No credit with the provider: no placement on its priced machine. With credit: placed; each estimate draws the
+    credit down once; when it is used up the deployment pauses and the gateway refuses requests."""
+    node = await enroll_node()
+    await _price_node(client, db, node)  # 30 NGN/h for this reservation
+    customer_user, customer = await make_user("customer")
+    refused = await client.post("/api/v1/deployments", json={"model_id": str(ollama_model.id)}, headers=customer)
+    assert refused.status_code == 503 and refused.json()["detail"]["reasons"] == {"no_prepaid_credit": 1}
+    await give_credit(db, customer_user, node, "20")  # less than one hour (30)
+    still = await client.post("/api/v1/deployments", json={"model_id": str(ollama_model.id)}, headers=customer)
+    assert still.status_code == 503
+    await give_credit(db, customer_user, node, "25")  # 45 in total: enough for an hour
+    dep = (await client.post("/api/v1/deployments", json={"model_id": str(ollama_model.id)}, headers=customer)).json()
+    await client.post(
+        f"/api/v1/worker/deployments/{dep['id']}/status", json={"state": "READY"}, headers=node["headers"]
+    )
+    start = utcnow() - timedelta(hours=2)
     await _set_ready_at(db, dep["id"], start)
-    await cost_service.run_estimates(start + timedelta(hours=3))
+
+    await cost_service.run_estimates(start + timedelta(hours=1))  # 30 used: 15 left, keeps serving
     db.expire_all()
-    still = await db.get(Deployment, uuid.UUID(dep["id"]))
-    assert still.status == "READY" and still.error_code is None
+    assert (await db.get(Deployment, uuid.UUID(dep["id"]))).status == "READY"
+    await cost_service.run_estimates(start + timedelta(hours=1))  # same instant again: nothing drawn twice
+    credits = (await client.get("/api/v1/credits", headers=customer)).json()
+    assert Decimal(credits["balances"][0]["balance"]) == Decimal(15)
+
+    await cost_service.run_estimates(start + timedelta(hours=2))  # another 30: used up
+    db.expire_all()
+    paused = await db.get(Deployment, uuid.UUID(dep["id"]))
+    assert paused.status == "NEEDS_ATTENTION" and paused.error_code == "CREDIT_EXHAUSTED" and paused.node_id is None
+    entries = await db.find(CreditEntry, {"kind": "usage"})
+    assert len(entries) == 2 and len({e.key for e in entries}) == 2
+
+
+async def test_the_gateway_refuses_requests_once_credit_is_used_up(client, db, enroll_node, make_user, ollama_model):
+    dep, node, customer_user, customer = await _ready_deployment(client, db, enroll_node, make_user, ollama_model)
+    from bson import Decimal128
+
+    from app.documents import CreditBalance
+
+    await db.update_many(CreditBalance, {}, {"$set": {"balance": Decimal128("0")}})
+    await db.commit()
+    resp = await client.post(
+        f"/api/v1/deployments/{dep['id']}/ollama/api/chat", json={"messages": []}, headers=customer
+    )
+    assert resp.status_code == 402 and resp.json()["error"]["code"] == "credit_exhausted"
 
 
 async def test_estimated_output_tokens_are_bounded_by_measured_bytes(client, db, enroll_node, make_user, ollama_model):

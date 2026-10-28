@@ -13,6 +13,7 @@ import functools
 import logging
 import re
 import secrets
+import time
 from dataclasses import asdict
 from datetime import datetime
 
@@ -154,6 +155,7 @@ class Worker:
         self.runtime = next(iter(runtimes.values()))  # primary runtime (kept for callers that expect one)
         self.boot_id = secrets.token_hex(8)
         self._heartbeat_seq = 0
+        self._drain_since: float | None = None
         creds = self.state.load_credentials()
         self.keys = KeyRing(settings.data_path)
         if client is None:
@@ -468,7 +470,21 @@ class Worker:
             logger.info("Availability: %s", "available" if available else f"unavailable ({reason})")
             self._last_availability = (available, reason)
         if drain and self.workloads:
-            await self.drain(reason or "draining")
+            # An explicit drain gives the control plane time to move each deployment without interruption (it sends
+            # STOP once the replacement serves); a schedule drain, and anything left after the grace, stops now.
+            if reason == "draining" and self.settings.DRAIN_GRACE_SECONDS > 0:
+                if self._drain_since is None:
+                    self._drain_since = time.monotonic()
+                    logger.info(
+                        "Draining: serving for up to %ss while the control plane moves workloads",
+                        self.settings.DRAIN_GRACE_SECONDS,
+                    )
+                elif time.monotonic() - self._drain_since > self.settings.DRAIN_GRACE_SECONDS:
+                    await self.drain(reason)
+            else:
+                await self.drain(reason or "draining")
+        elif not drain:
+            self._drain_since = None
         payload = {
             "worker_version": WORKER_VERSION,
             **(await self.capabilities_payload()),

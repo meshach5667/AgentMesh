@@ -81,6 +81,7 @@ async def offers(db: Session, provider_id: uuid.UUID | None = None) -> list[dict
     for n in nodes:
         by_provider.setdefault(n.owner_id, []).append(n)
     providers = {p.id: p for p in await db.find(Provider, {"_id": {"$in": list(by_provider)}})}
+    connected = await _gateways_by_provider(db, list(by_provider))
     out: list[dict[str, Any]] = []
     for pid, machines in by_provider.items():
         provider = providers.get(pid)
@@ -134,6 +135,7 @@ async def offers(db: Session, provider_id: uuid.UUID | None = None) -> list[dict
                 ],
                 "payment_methods": list(payment.methods) if payment else [],
                 "accepts_payment_arrangement": has_arrangement(payment),
+                "gateways": connected.get(pid, []),
                 "payment": payment.model_dump(mode="json") if payment else None,
             }
         )
@@ -168,5 +170,15 @@ async def detail(db: Session, provider: Provider) -> dict:
         "prices": [],
         "payment_methods": list(payment.methods) if payment else [],
         "accepts_payment_arrangement": has_arrangement(payment),
+        "gateways": (await _gateways_by_provider(db, [provider.id])).get(provider.id, []),
         "payment": payment.model_dump(mode="json") if payment else None,
     }
+
+
+async def _gateways_by_provider(db: Session, provider_ids: list) -> dict[uuid.UUID, list[str]]:
+    from app.documents.credit import ProviderGateway
+
+    out: dict[uuid.UUID, list[str]] = {}
+    for g in await db.find(ProviderGateway, {"provider_id": {"$in": provider_ids}}, sort=[("gateway", 1)]):
+        out.setdefault(g.provider_id, []).append(g.gateway)
+    return out

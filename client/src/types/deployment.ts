@@ -63,6 +63,13 @@ export interface Deployment {
   next_placement_at: string | null;
   pending_since: string | null;
   placement_retries: number;
+  /** A planned move in progress: the replacement is starting while the current node keeps serving. */
+  migrating_node_id: string | null;
+  migration_started_at: string | null;
+  /** Prepaid credit this deployment draws on (unset on a free machine). */
+  priced: boolean;
+  credit_provider_id: string | null;
+  credit_currency: string | null;
 }
 
 export interface DeploymentAttempt {
@@ -70,7 +77,7 @@ export interface DeploymentAttempt {
   number: number;
   active: boolean;
   state: 'assigned' | 'running' | 'ended';
-  outcome: 'node_failed' | 'workload_failed' | 'stopped' | 'superseded' | null;
+  outcome: 'node_failed' | 'workload_failed' | 'stopped' | 'superseded' | 'cancelled' | null;
   error_code: string | null;
   error_message: string | null;
   assigned_at: string;

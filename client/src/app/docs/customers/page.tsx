@@ -118,6 +118,7 @@ export default function CustomerGuide() {
             'A move restarts the model on the new machine from its pinned source and verifies it again. It is not a live migration: requests in flight on the failed node are lost and can be retried. The id, endpoint and API keys stay the same.',
             'Failures caused by the model itself, such as a model that cannot answer a test prompt, are not retried elsewhere because another node would fail the same way.',
             'Failover policy: "any provider" (default), "same provider only", or "ask me first" (never moved automatically). Change it, and your price limits, on the deployment page.',
+            'Planned moves: when a provider takes a machine out of service (Move work off, or draining the worker), your deployment is moved without interruption. The replacement starts first, traffic switches the moment it is ready, and the old copy keeps serving in-flight requests for two more minutes before it stops. If the replacement fails, nothing changes.',
             'The deployment page lists every attempt: which provider ran it, when it served, and why it ended.',
           ]}
         />
@@ -175,9 +176,11 @@ print(reply.choices[0].message.content)`}
             'Each machine has its own prices, set by its provider in their own currency: per CPU core-hour, per GB-hour of memory and of GPU memory, and per million input and output tokens. A machine without prices is free.',
             'Your deployment goes to the cheapest machine that fits within your price limits. Machines priced in a different currency from your limits are used only if they are free.',
             'You are never estimated above the prices in force when your deployment was placed on its machine. If the provider lowers them, the lower price applies; a rise only applies to new placements.',
-            <>You pay the provider <strong>directly</strong>. The deployment page shows who runs it, how they take payment (bank transfer, payment links, terms, minimums) and your payment reference to quote. AgentMesh does not process, verify, hold or refund payments and takes no commission.</>,
+            <>To use a provider&apos;s priced machines you first buy <strong>prepaid credit</strong> with that provider, under <strong>Prepaid credit</strong>. You pay the provider <strong>directly</strong>: through their own Paystack, Flutterwave or Stripe account (AgentMesh verifies the payment with their gateway the moment you return from checkout), or by transfer, which is credited when the provider confirms receiving it. The money never passes through AgentMesh, which takes no commission.</>,
+            'Placement uses a priced machine only if your verified credit with its provider covers an hour of the reservation. Usage draws the credit down at the machine’s prices; when it is used up, requests are refused (402) and the deployment pauses (NEEDS_ATTENTION). It restarts automatically once a new payment is verified. Credit can dip below zero by at most one estimate window (about 5 minutes of use).',
+            'Refunds of unused credit are between you and the provider; AgentMesh does not hold money to refund.',
             <><strong>Estimated costs</strong> shows what your deployments come to: reserved resources multiplied by READY time, plus tokens, per currency. Downloads, startup and unhealthy time are not counted, nor are failed requests. These are estimates, not bills or payments.</>,
-            'AgentMesh never stops a deployment for lack of funds: payment terms, including what happens if a payment is late, are between you and the provider.',
+
             'Dashboards may show items labelled “Sponsored” or “Referral link” if the operator enabled them. They are chosen without your personal data, never affect where your deployment runs, and you can dismiss them.',
           ]}
         />

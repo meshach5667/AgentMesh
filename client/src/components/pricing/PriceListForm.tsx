@@ -121,8 +121,9 @@ export function PriceListForm({
         })}
       </div>
       <p className="text-xs text-muted-foreground">
-        Customers pay you these prices directly, using the payment arrangement on your profile. AgentMesh takes no
-        commission and processes no payments. Set every price to 0 to offer the machine free.
+        Customers pay you these prices directly and buy prepaid credit with you first: AgentMesh verifies the payment
+        (through your gateway account or your confirmation) before your machine serves them, takes no commission and
+        never holds the money. Set every price to 0 to offer the machine free.
       </p>
       {children}
       <Button type="submit" disabled={pending}>

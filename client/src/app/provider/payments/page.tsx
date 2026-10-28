@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ErrorState, PageHeader } from '@/components/common/Notices';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { DefaultPricesCard } from '@/components/pricing/DefaultPricesCard';
+import { GatewaysCard } from '@/components/providers/GatewaysCard';
 import { PaymentArrangement } from '@/components/providers/PaymentArrangement';
 import { useMyProviderProfile, useUpdateProviderProfile } from '@/hooks/useProviders';
 import { safeExternalUrl } from '@/lib/billing';
@@ -100,7 +101,7 @@ function ProfileForm({ initial }: { initial: ProviderCard }) {
     <div className="space-y-6">
       <PageHeader
         title="Profile & payment"
-        description="How customers find you and pay you. Customers pay you directly; AgentMesh takes no fee and never handles the money."
+        description="How customers find you and pay you. Customers pay you directly and AgentMesh verifies the payment before your priced machines serve them; it takes no fee and never holds the money."
       />
       <form onSubmit={submit} className="space-y-6" noValidate>
         <Card>
@@ -213,6 +214,8 @@ function ProfileForm({ initial }: { initial: ProviderCard }) {
           <PaymentArrangement payment={payment} providerName={name || 'You'} reference="AB12CD34" />
         </CardContent>
       </Card>
+
+      <GatewaysCard />
 
       <DefaultPricesCard />
     </div>

@@ -215,6 +215,15 @@ export function DeployForm({ model, providerId }: { model: Model; providerId?: s
               <li key={a.id}>
                 <span className="font-medium text-foreground">{runtimeLabel(a.runtime)}:</span> {r.cpu_cores} CPU,{' '}
                 {mb(r.ram_mb)} RAM, {mb(r.disk_mb)} disk{r.gpu_required ? `, ${mb(r.vram_mb)} GPU memory` : ''}
+                {q?.credit && !q.credit.enough && (
+                  <span className="block text-xs text-destructive" data-testid={`credit-${a.runtime}`}>
+                    Needs {money(q.credit.needed, q.credit.currency)} prepaid credit with{' '}
+                    {q.provider?.display_name ?? 'its provider'} (you have {money(q.credit.balance, q.credit.currency)}).{' '}
+                    <Link href="/customer/credits" className="underline underline-offset-4">
+                      Buy credit
+                    </Link>
+                  </span>
+                )}
                 {q && (
                   <span data-testid={`hourly-${a.runtime}`}>
                     {' '}
@@ -235,9 +244,9 @@ export function DeployForm({ model, providerId }: { model: Model; providerId?: s
           })}
         </ul>
         <p className="mt-2 text-xs text-muted-foreground">
-          Figures come from the catalog and live machine prices, and are estimates. You pay the provider directly, using
-          the payment arrangement shown on the deployment once it is placed; AgentMesh charges nothing and never holds
-          your money.
+          Figures come from the catalog and live machine prices, and are estimates. A priced machine is used only while
+          you hold verified prepaid credit with its provider (enough for an hour of the reservation); you pay the provider
+          directly and AgentMesh charges nothing.
         </p>
       </div>
 

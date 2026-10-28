@@ -16,7 +16,8 @@ const OUTCOME: Record<string, { text: string; tone: 'red' | 'amber' | 'gray' }> 
   node_failed: { text: 'Node failed', tone: 'red' },
   workload_failed: { text: 'Workload failed', tone: 'red' },
   stopped: { text: 'Stopped', tone: 'gray' },
-  superseded: { text: 'Superseded', tone: 'gray' },
+  superseded: { text: 'Replaced without interruption', tone: 'gray' },
+  cancelled: { text: 'Move cancelled', tone: 'amber' },
 };
 
 export const POLICY_TEXT: Record<FailoverPolicy, { label: string; help: string }> = {
@@ -68,6 +69,13 @@ export function RecoveryCard({ dep }: { dep: Deployment }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
+        {dep.migrating_node_id && (
+          <p role="status" className="rounded-md border border-brand/25 bg-brand-soft p-3 text-sm">
+            Moving to another machine without interruption: the replacement is starting while the current machine keeps
+            serving. Traffic switches the moment it is ready
+            {dep.migration_started_at ? ` (started ${dateTime(dep.migration_started_at)})` : ''}.
+          </p>
+        )}
         {dep.status === 'PENDING' && (
           <p role="status" className="rounded-md border border-amber-500/30 bg-amber-500/[0.06] p-3 text-sm">
             Waiting for a suitable node. Next automatic try {dep.next_placement_at ? `at ${dateTime(dep.next_placement_at)}` : 'soon'}
@@ -78,7 +86,9 @@ export function RecoveryCard({ dep }: { dep: Deployment }) {
           <p role="alert" className="rounded-md border border-rose-500/30 bg-rose-500/[0.06] p-3 text-sm">
             {dep.error_code === 'PRICE_APPROVAL_REQUIRED'
               ? 'Only machines that cost more than its previous placement are available. Raise your price limit below to approve a higher price, then retry.'
-              : 'Automatic recovery is off for this deployment. Retry when you are ready.'}
+              : dep.error_code === 'CREDIT_EXHAUSTED'
+                ? 'Paused: it needs prepaid credit with the provider of a suitable machine. Buy credit under Prepaid credit; it restarts automatically once the payment is verified.'
+                : 'Automatic recovery is off for this deployment. Retry when you are ready.'}
           </p>
         )}
 

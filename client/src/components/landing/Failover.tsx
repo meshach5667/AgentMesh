@@ -18,7 +18,8 @@ export function Failover() {
           <p className="mt-4 text-lg text-muted-foreground">
             Machines on a community network come and go. AgentMesh watches them and restarts affected deployments on
             another suitable machine automatically. It is a restart, not a live migration: requests in flight on the
-            failed node are lost and can be retried.
+            failed node are lost and can be retried. When a provider takes a machine out of service on purpose, the move has
+            no gap at all: the replacement starts first and traffic switches only once it is ready.
           </p>
         </div>
         <ol className="mt-14 grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-4">

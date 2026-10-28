@@ -74,8 +74,10 @@ export function PaymentArrangement({
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        You pay {providerName} directly. AgentMesh does not process, verify, hold or refund payments, and does not
-        charge any fee.
+        You pay {providerName} directly; the money never passes through AgentMesh, which charges no fee. Your payment
+        becomes prepaid credit once it is verified (through {providerName}&apos;s gateway account, or their
+        confirmation of your transfer). AgentMesh does not hold money or handle refunds: agree those with{' '}
+        {providerName}.
       </p>
     </div>
   );
